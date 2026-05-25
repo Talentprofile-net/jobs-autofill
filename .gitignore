@@ -1,0 +1,15 @@
+node_modules/
+.wxt/
+.output/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*.local
+*.tsbuildinfo
+.vscode/
+.idea/
+.yarn/cache
+*.DS_Store
+**/.DS_Store

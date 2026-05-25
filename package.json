@@ -1,0 +1,27 @@
+{
+  "name": "talentprofile-autofill",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@floating-ui/dom": "^1.7.6",
+    "@use-gesture/vanilla": "^10.3.1",
+    "i18n-iso-countries": "^7.14.0",
+    "svelte": "^5.55.9"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@types/chrome": "^0.1.42",
+    "@wxt-dev/module-svelte": "^2.0.5",
+    "svelte-check": "^4.4.8",
+    "typescript": "^6.0.3",
+    "wxt": "^0.20.26"
+  }
+}
