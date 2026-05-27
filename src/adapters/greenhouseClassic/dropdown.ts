@@ -1,9 +1,12 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements } from '~/core/getElements'
 import { findOption, xpathLiteral } from '~/core/match'
+import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+
+const SELECTION_SETTLE_MS = 100
 
 export class Dropdown extends GreenhouseBaseInput {
   static XPATH = xpaths.SIMPLE_DROPDOWN
@@ -44,7 +47,9 @@ export class Dropdown extends GreenhouseBaseInput {
   }
 
   private toggleDropdown(): void {
-    this.select2ContainerAElement?.dispatchEvent(new MouseEvent('mousedown'))
+    this.select2ContainerAElement?.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true }),
+    )
   }
 
   currentValue(): string {
@@ -54,25 +59,34 @@ export class Dropdown extends GreenhouseBaseInput {
   async fill(value: ProfileValue): Promise<boolean> {
     if (value.kind !== 'choice') return false
     const candidates = [value.preferred, ...value.fallbacks]
-    let filled = false
-    await fieldFillerQueue.enqueue(async () => {
-      if (!this.dropdownIsOpen) this.toggleDropdown()
-      if (!this.dropdownIsOpen) return
-      const dd = this.dropdownElement
-      if (!dd) return
-      const items = getElements(dd, './/li')
+    return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
-        const match = findOption(items, (li) => li.innerText, candidate)
-        if (match) {
+        if (await verifySelection(() => this.currentValue(), candidate, 0)) {
+          return true
+        }
+      }
+
+      try {
+        if (!this.dropdownIsOpen) this.toggleDropdown()
+        if (!this.dropdownIsOpen) return false
+        const dd = this.dropdownElement
+        if (!dd) return false
+        const items = getElements(dd, './/li')
+        for (const candidate of candidates) {
+          const match = findOption(items, (li) => li.innerText, candidate)
+          if (!match) continue
           match.dispatchEvent(
             new Event('mouseup', { bubbles: true, cancelable: true }),
           )
-          filled = true
-          break
+          await sleep(SELECTION_SETTLE_MS)
+          if (await verifySelection(() => this.currentValue(), candidate, 0)) {
+            return true
+          }
         }
+        return false
+      } finally {
+        if (this.dropdownIsOpen) this.toggleDropdown()
       }
-      if (this.dropdownIsOpen) this.toggleDropdown()
     })
-    return filled
   }
 }

@@ -1,6 +1,6 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { findOption } from '~/core/match'
-import { selectMatches } from '~/core/multiChoiceSelection'
+import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { GenericBaseField } from './GenericBaseField'
 import type { ProfileValue } from '~/field/types'
 
@@ -13,6 +13,7 @@ export class GenericSelect extends GenericBaseField {
     super(element)
     if ((element as HTMLSelectElement).multiple) {
       this.fieldType = 'MultiSelect'
+      this.destructiveByDefault = false
     }
   }
 
@@ -20,13 +21,11 @@ export class GenericSelect extends GenericBaseField {
     return this.element as HTMLSelectElement
   }
 
-  currentValue(): string {
+  currentValue(): string | string[] {
     if (this.selectElement.multiple) {
-      return Array.from(this.selectElement.selectedOptions)
-        .map((o) => o.innerText)
-        .join(', ')
+      return Array.from(this.selectElement.selectedOptions).map((o) => o.text)
     }
-    return this.selectElement.selectedOptions[0]?.innerText ?? ''
+    return this.selectElement.selectedOptions[0]?.text ?? ''
   }
 
   private async fillSingle(value: ProfileValue): Promise<boolean> {
@@ -34,20 +33,19 @@ export class GenericSelect extends GenericBaseField {
     const select = this.selectElement
     const candidates = [value.preferred, ...value.fallbacks]
     const options = Array.from(select.options)
-    let filled = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
-        const option = findOption(options, (o) => o.innerText, candidate)
+        const option = findOption(options, (o) => o.text, candidate)
         if (option) {
+          if (select.selectedIndex === option.index) return true
           select.selectedIndex = option.index
           select.dispatchEvent(new Event('input', { bubbles: true }))
           select.dispatchEvent(new Event('change', { bubbles: true }))
-          filled = true
-          return
+          return select.selectedIndex === option.index
         }
       }
+      return false
     })
-    return filled
   }
 
   private async fillMulti(value: ProfileValue): Promise<boolean> {
@@ -56,23 +54,51 @@ export class GenericSelect extends GenericBaseField {
     const options = Array.from(select.options)
     if (options.length === 0) return false
 
-    let filled = false
-    await fieldFillerQueue.enqueue(async () => {
-      const matched = selectMatches(options, (o) => o.innerText, value)
-      if (matched.length === 0) return
+    return fieldFillerQueue.enqueue(async () => {
+      const selected = options.filter((o) => o.selected)
+      const hasExisting = selected.length > 0
+      const plan = planSelection(options, selected, (o) => o.text, value)
+
+      const shouldDeselect = this.destructiveByDefault || !hasExisting
+
       let changed = false
-      for (const option of matched) {
+      if (shouldDeselect) {
+        for (const option of plan.toDeselect) {
+          if (option.selected) {
+            option.selected = false
+            changed = true
+          }
+        }
+      }
+      for (const option of plan.toSelect) {
         if (!option.selected) {
           option.selected = true
           changed = true
         }
       }
-      if (!changed) return
-      select.dispatchEvent(new Event('input', { bubbles: true }))
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-      filled = true
+      if (changed) {
+        select.dispatchEvent(new Event('input', { bubbles: true }))
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+
+      if (shouldDeselect) {
+        return verifySelectedSet(
+          options,
+          (o) => o.text,
+          (o) => o.selected,
+          value,
+        )
+      }
+
+      const desiredTexts =
+        value.kind === 'multiChoice' ? value.preferred : [value.preferred]
+      return desiredTexts.every((t) =>
+        options.some(
+          (o) =>
+            o.selected && o.text.toLowerCase().trim() === t.toLowerCase().trim(),
+        ),
+      )
     })
-    return filled
   }
 
   async fill(value: ProfileValue): Promise<boolean> {

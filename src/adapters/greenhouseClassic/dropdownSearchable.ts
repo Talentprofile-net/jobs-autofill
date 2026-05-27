@@ -1,9 +1,13 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements, waitForElement } from '~/core/getElements'
-import { optionMatches, xpathLiteral } from '~/core/match'
+import { setNativeInputValue } from '~/core/reactProps'
+import { optionMatches, optionMatchesRelaxed, xpathLiteral } from '~/core/match'
+import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+
+const SELECTION_SETTLE_MS = 100
 
 export class DropdownSearchable extends GreenhouseBaseInput {
   static XPATH = xpaths.DROPDOWN_SEARCHABLE
@@ -28,7 +32,9 @@ export class DropdownSearchable extends GreenhouseBaseInput {
   }
 
   private toggleDropdown(): void {
-    this.select2ContainerAElement?.dispatchEvent(new MouseEvent('mousedown'))
+    this.select2ContainerAElement?.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true }),
+    )
   }
 
   private get dropdownId(): string | null {
@@ -52,7 +58,7 @@ export class DropdownSearchable extends GreenhouseBaseInput {
   }
 
   private resetSearchInput(searchInput: HTMLInputElement): void {
-    searchInput.value = ''
+    setNativeInputValue(searchInput, '')
     searchInput.dispatchEvent(new InputEvent('input', { bubbles: true }))
   }
 
@@ -65,7 +71,7 @@ export class DropdownSearchable extends GreenhouseBaseInput {
       `.//div[@class="select2-search"]/input`,
     ) as HTMLInputElement | null
     if (!searchInput) return null
-    this.resetSearchInput(searchInput)
+    if (searchInput.value !== '') this.resetSearchInput(searchInput)
     const resultsXpath = [
       `.//ul`,
       `[not(./li[starts-with(text(),"Searching")])]`,
@@ -74,36 +80,50 @@ export class DropdownSearchable extends GreenhouseBaseInput {
       onlyNew: true,
       timeout: 600,
     })
-    searchInput.value = value
+    setNativeInputValue(searchInput, value)
     searchInput.dispatchEvent(new InputEvent('input', { bubbles: true }))
     const results = await resultsPromise
     if (!results) return null
-    return getElements(results, `./li`).find((el) => optionMatches(el.innerText, value)) ?? null
+    return (
+      getElements(results, `./li`).find((el) =>
+        optionMatches(el.innerText, value),
+      ) ??
+      getElements(results, `./li`).find((el) =>
+        optionMatchesRelaxed(el.innerText, value),
+      ) ??
+      null
+    )
   }
 
   async fill(value: ProfileValue): Promise<boolean> {
     if (value.kind !== 'choice') return false
     const candidates = [value.preferred, ...value.fallbacks]
-    let filled = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
+      for (const candidate of candidates) {
+        if (await verifySelection(() => this.currentValue(), candidate, 0)) {
+          return true
+        }
+      }
+
       try {
         for (const candidate of candidates) {
           if (!this.dropdownIsOpen) this.toggleDropdown()
           const dropdownEl = this.dropdownElement
           if (!dropdownEl) continue
           const match = await this.performSearch(dropdownEl, candidate)
-          if (match) {
-            match.dispatchEvent(
-              new Event('mouseup', { bubbles: true, cancelable: true }),
-            )
-            filled = true
-            break
+          if (!match) continue
+          match.dispatchEvent(
+            new Event('mouseup', { bubbles: true, cancelable: true }),
+          )
+          await sleep(SELECTION_SETTLE_MS)
+          if (await verifySelection(() => this.currentValue(), candidate, 0)) {
+            return true
           }
         }
+        return false
       } finally {
         if (this.dropdownIsOpen) this.toggleDropdown()
       }
     })
-    return filled
   }
 }

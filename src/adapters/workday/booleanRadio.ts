@@ -1,12 +1,47 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements } from '~/core/getElements'
 import { findOption } from '~/core/match'
+import { sleep, verifySelection } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 
-const TRUE_LABELS = ['Yes', 'True', 'Present', 'Current']
-const FALSE_LABELS = ['No', 'False', 'Not current']
+const TRUE_LABELS = [
+  'Yes',
+  'True',
+  'Present',
+  'Current',
+  'Oui',
+  'Ja',
+  'Sí',
+  'Si',
+  'Sì',
+  'Tak',
+  '是',
+  'はい',
+  'Да',
+  'Sim',
+]
+const FALSE_LABELS = [
+  'No',
+  'False',
+  'Not current',
+  'Non',
+  'Nein',
+  'Nie',
+  '否',
+  'いいえ',
+  'Нет',
+  'Não',
+]
+const TRUE_VALUES = ['true', '1', 'yes', 'y', 'on']
+const FALSE_VALUES = ['false', '0', 'no', 'n', 'off']
+const SELECTION_SETTLE_MS = 100
+
+type RadioOption = { input: HTMLInputElement; label: string }
+
+const normalize = (s: string): string =>
+  s.replace(/\s+/g, ' ').trim().toLowerCase()
 
 export class BooleanRadio extends WorkdayBaseInput {
   static XPATH = xpaths.BOOLEAN_RADIO
@@ -16,21 +51,12 @@ export class BooleanRadio extends WorkdayBaseInput {
     return getElement(this.element, './/legend')?.innerText ?? ''
   }
 
-  private get checkedRadioElement(): HTMLElement | null {
-    const xpath = [
-      ".//input[@type='radio'][@aria-checked='true']",
-      '/ancestor::div',
-      '[label]',
-    ].join('')
-    return getElement(this.element, xpath)
-  }
-
-  private get radioOptions(): { input: HTMLInputElement; label: string }[] {
+  private get radioOptions(): RadioOption[] {
     const wrappers = getElements(
       this.element,
       ".//div[label][.//input[@type='radio']]",
     )
-    const out: { input: HTMLInputElement; label: string }[] = []
+    const out: RadioOption[] = []
     for (const wrapper of wrappers) {
       const input = getElement(wrapper, ".//input[@type='radio']") as HTMLInputElement | null
       const labelEl = getElement(wrapper, './label')
@@ -42,7 +68,21 @@ export class BooleanRadio extends WorkdayBaseInput {
   }
 
   currentValue(): string {
-    return this.checkedRadioElement?.textContent ?? ''
+    const checked = this.radioOptions.find((o) => o.input.checked)
+    return checked?.label ?? ''
+  }
+
+  private findOptionByInputValue(
+    options: RadioOption[],
+    expectedValues: string[],
+  ): RadioOption | null {
+    const normalizedExpected = new Set(expectedValues.map((v) => normalize(v)))
+    for (const opt of options) {
+      const value = opt.input.value
+      if (!value) continue
+      if (normalizedExpected.has(normalize(value))) return opt
+    }
+    return null
   }
 
   async fill(value: ProfileValue): Promise<boolean> {
@@ -59,18 +99,45 @@ export class BooleanRadio extends WorkdayBaseInput {
             ? TRUE_LABELS
             : FALSE_LABELS
 
-    let filled = false
-    await fieldFillerQueue.enqueue(async () => {
-      const options = this.radioOptions
+    const options = this.radioOptions
+
+    return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
-        const match = findOption(options, (o) => o.label, candidate)
-        if (match) {
-          match.input.click()
-          filled = true
-          return
+        if (await verifySelection(() => this.currentValue(), candidate, 0)) {
+          return true
         }
       }
+
+      if (value.kind === 'boolean') {
+        const expectedValues = value.value ? TRUE_VALUES : FALSE_VALUES
+        const byValue = this.findOptionByInputValue(options, expectedValues)
+        if (byValue) {
+          byValue.input.click()
+          await sleep(SELECTION_SETTLE_MS)
+          if (byValue.input.checked) return true
+        }
+      }
+
+      for (const candidate of candidates) {
+        const match = findOption(options, (o) => o.label, candidate)
+        if (!match) continue
+        match.input.click()
+        await sleep(SELECTION_SETTLE_MS)
+        if (await verifySelection(() => this.currentValue(), candidate, 0)) {
+          return true
+        }
+      }
+
+      if (value.kind === 'boolean' && options.length === 2) {
+        const target = value.value ? options[0] : options[1]
+        if (!target.input.checked) {
+          target.input.click()
+          await sleep(SELECTION_SETTLE_MS)
+        }
+        return target.input.checked
+      }
+
+      return false
     })
-    return filled
   }
 }

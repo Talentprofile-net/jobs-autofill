@@ -58,14 +58,15 @@ export const waitForElement = (
   }: WaitForElementOptions = {},
 ): Promise<HTMLElement | null> => {
   return new Promise((resolve) => {
-    const initial = getElementFromNode(parent, xpath)
-    if (!onlyNew && initial) {
-      return resolve(initial)
+    if (!onlyNew) {
+      const initial = getElementFromNode(parent, xpath)
+      if (initial) {
+        return resolve(initial)
+      }
     }
     const observer = new MutationObserver(() => {
       const found = getElementFromNode(parent, xpath)
       if (!found) return
-      if (onlyNew && initial && found === initial) return
       observer.disconnect()
       clearTimeout(timer)
       resolve(found)

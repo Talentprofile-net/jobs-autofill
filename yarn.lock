@@ -569,6 +569,23 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@sindresorhus/slugify@npm:^3.0.0":
+  version: 3.0.0
+  resolution: "@sindresorhus/slugify@npm:3.0.0"
+  dependencies:
+    "@sindresorhus/transliterate": ^2.0.0
+    escape-string-regexp: ^5.0.0
+  checksum: 3b8be3b58b8e14644d6061d2243e50051abc788f68663aeb807c3f2fdfdd54261c5921fc87f1a1b1bd98c9831991b659cc5c78f4a40242be0f4b539ed6f4e6be
+  languageName: node
+  linkType: hard
+
+"@sindresorhus/transliterate@npm:^2.0.0":
+  version: 2.3.1
+  resolution: "@sindresorhus/transliterate@npm:2.3.1"
+  checksum: 0e7033ea99e6fa72dd18a27a9d1a6ecff3e120e6d4ba96995b5c9f5abb1250b0e0920d4e9bf95f05fb8168d0630da59d771b364282b7c925092713dbdd0615eb
+  languageName: node
+  linkType: hard
+
 "@sveltejs/acorn-typescript@npm:^1.0.10":
   version: 1.0.10
   resolution: "@sveltejs/acorn-typescript@npm:1.0.10"
@@ -3532,6 +3549,7 @@ __metadata:
   resolution: "talentprofile-autofill@workspace:."
   dependencies:
     "@floating-ui/dom": ^1.7.6
+    "@sindresorhus/slugify": ^3.0.0
     "@sveltejs/vite-plugin-svelte": ^7.1.2
     "@types/chrome": ^0.1.42
     "@use-gesture/vanilla": ^10.3.1

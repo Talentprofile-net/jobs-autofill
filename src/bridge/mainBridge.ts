@@ -1,14 +1,18 @@
 import { BRIDGE_MAGIC } from '~/config'
 import type { Profile, ProfileNote } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
+import type { AtsName } from '~/field/types'
 import type {
+  AnswerCaptureRecord,
   AuthStatus,
   ContentScriptRequest,
   FieldResolveRequest,
+  FieldResolveResult,
   MainWorldRequest,
   ProfileSummary,
   ResolvedOriginMode,
 } from './types'
+import type { LearnedAnswerResult } from '~/resolver/learnedAnswers'
 
 type Envelope<T> = {
   magic: typeof BRIDGE_MAGIC
@@ -30,11 +34,13 @@ const BATCH_TIMEOUT_MS = 15_000
 const AUTH_REQUEST_TIMEOUT_MS = 5_000
 const NOTE_OP_TIMEOUT_MS = 10_000
 const MODE_REQUEST_TIMEOUT_MS = 3_000
+const LEARNED_BATCH_TIMEOUT_MS = 8_000
+const FLUSH_TIMEOUT_MS = 15_000
 
 const sendFromMain = (payload: MainWorldRequest): void => {
   const envelope: Envelope<MainWorldRequest> = {
-    magic: BRIDGE_MAGIC,
     from: 'main',
+    magic: BRIDGE_MAGIC,
     payload,
   }
   window.postMessage(envelope, window.location.origin)
@@ -46,17 +52,11 @@ const isFromContent = (data: unknown): data is Envelope<ContentScriptRequest> =>
   return env.magic === BRIDGE_MAGIC && env.from === 'content'
 }
 
-const announceReady = (): void => {
-  sendFromMain({ id: crypto.randomUUID(), kind: 'mainWorld.ready' })
-}
-
 const startListener = (() => {
   let started = false
   return () => {
     if (started) return
     started = true
-
-    announceReady()
 
     window.addEventListener('message', (event: MessageEvent) => {
       if (event.source !== window) return
@@ -66,7 +66,7 @@ const startListener = (() => {
       const msg = event.data.payload
 
       if (msg.kind === 'mainWorld.ping') {
-        announceReady()
+        sendFromMain({ id: crypto.randomUUID(), kind: 'mainWorld.ready' })
         return
       }
 
@@ -80,7 +80,9 @@ const startListener = (() => {
         msg.kind === 'note.updateResult' ||
         msg.kind === 'note.deleteResult' ||
         msg.kind === 'note.touchResult' ||
-        msg.kind === 'mode.result'
+        msg.kind === 'mode.result' ||
+        msg.kind === 'learnedAnswersResult' ||
+        msg.kind === 'answers.flushResult'
       ) {
         const pendingReq = pending.get(msg.id)
         if (pendingReq) {
@@ -102,6 +104,8 @@ const startListener = (() => {
         return
       }
     })
+
+    sendFromMain({ id: crypto.randomUUID(), kind: 'mainWorld.ready' })
   }
 })()
 
@@ -121,11 +125,11 @@ const sendRequest = <T extends ContentScriptRequest>(
       }
     }, timeoutMs)
     pending.set(id, {
-      timer,
       resolve: (msg) => {
         const v = extract(msg)
         resolve(v ?? fallback)
       },
+      timer,
     })
     sendFromMain(message)
   })
@@ -138,20 +142,20 @@ export const resolveValueForField = async (
 ): Promise<ProfileValue> => {
   const id = crypto.randomUUID()
   const result = await sendRequest(
-    { id, kind: 'resolveFieldValue', fieldName, fieldType, section },
+    { fieldName, fieldType, id, kind: 'resolveFieldValue', section },
     REQUEST_TIMEOUT_MS,
     (msg) =>
       msg.kind === 'fieldValueResult'
-        ? ({ id: msg.id, kind: msg.kind, value: msg.value } as any)
+        ? ({ id: msg.id, kind: msg.kind, profileField: msg.profileField, value: msg.value } as any)
         : null,
-    { id, kind: 'fieldValueResult', value: { kind: 'timeout' } } as any,
+    { id, kind: 'fieldValueResult', profileField: null, value: { kind: 'timeout' } } as any,
   )
   return (result as any).value as ProfileValue
 }
 
 export const resolveValuesForFields = async (
   fields: FieldResolveRequest[],
-): Promise<Map<string, ProfileValue>> => {
+): Promise<Map<string, FieldResolveResult>> => {
   startListener()
   const id = crypto.randomUUID()
   const tagged = fields.map((f) => ({
@@ -163,34 +167,128 @@ export const resolveValuesForFields = async (
     const timer = setTimeout(() => {
       if (pending.has(id)) {
         pending.delete(id)
-        const fallback = new Map<string, ProfileValue>()
-        for (const t of tagged) fallback.set(t.requestId, { kind: 'timeout' })
+        const fallback = new Map<string, FieldResolveResult>()
+        for (const t of tagged) {
+          fallback.set(t.requestId, {
+            profileField: null,
+            requestId: t.requestId,
+            value: { kind: 'timeout' },
+          })
+        }
         resolve(fallback)
       }
     }, BATCH_TIMEOUT_MS)
     pending.set(id, {
-      timer,
       resolve: (msg) => {
-        const out = new Map<string, ProfileValue>()
+        const out = new Map<string, FieldResolveResult>()
         if (msg.kind === 'fieldValuesResult') {
           for (const v of msg.values) {
             if (requestIdSet.has(v.requestId)) {
-              out.set(v.requestId, v.value)
+              out.set(v.requestId, v)
             }
           }
         }
         for (const t of tagged) {
-          if (!out.has(t.requestId)) out.set(t.requestId, { kind: 'unsupported' })
+          if (!out.has(t.requestId)) {
+            out.set(t.requestId, {
+              profileField: null,
+              requestId: t.requestId,
+              value: { kind: 'unsupported' },
+            })
+          }
         }
         resolve(out)
       },
+      timer,
     })
     sendFromMain({
+      fields: tagged,
       id,
       kind: 'resolveFieldValues',
-      fields: tagged,
     })
   })
+}
+
+export const resolveLearnedAnswersBatchViaBridge = async (
+  fields: Array<{
+    requestId: string
+    fieldName: string
+    fieldType: string
+    section: string
+  }>,
+): Promise<LearnedAnswerResult[]> => {
+  startListener()
+  const id = crypto.randomUUID()
+  return new Promise<LearnedAnswerResult[]>((resolve) => {
+    const timer = setTimeout(() => {
+      if (pending.has(id)) {
+        pending.delete(id)
+        resolve(
+          fields.map((f) => ({
+            matchedAnswerId: null,
+            requestId: f.requestId,
+            value: { kind: 'timeout' as const },
+          })),
+        )
+      }
+    }, LEARNED_BATCH_TIMEOUT_MS)
+    pending.set(id, {
+      resolve: (msg) => {
+        if (msg.kind === 'learnedAnswersResult') {
+          const requestIdSet = new Set(fields.map((f) => f.requestId))
+          const out: LearnedAnswerResult[] = []
+          for (const r of msg.results) {
+            if (requestIdSet.has(r.requestId)) out.push(r)
+          }
+          const seen = new Set(out.map((r) => r.requestId))
+          for (const f of fields) {
+            if (!seen.has(f.requestId)) {
+              out.push({
+                matchedAnswerId: null,
+                requestId: f.requestId,
+                value: { kind: 'unsupported' as const },
+              })
+            }
+          }
+          resolve(out)
+        } else {
+          resolve(
+            fields.map((f) => ({
+              matchedAnswerId: null,
+              requestId: f.requestId,
+              value: { kind: 'unsupported' as const },
+            })),
+          )
+        }
+      },
+      timer,
+    })
+    sendFromMain({ fields, id, kind: 'resolveLearnedAnswers' })
+  })
+}
+
+export const flushAnswersViaBridge = async (params: {
+  records: AnswerCaptureRecord[]
+  pageUrl: string
+  ats: AtsName
+}): Promise<{ ok: boolean; error?: string }> => {
+  const id = crypto.randomUUID()
+  const result = await sendRequest(
+    {
+      ats: params.ats,
+      id,
+      kind: 'answers.flush',
+      pageUrl: params.pageUrl,
+      records: params.records,
+    },
+    FLUSH_TIMEOUT_MS,
+    (msg) =>
+      msg.kind === 'answers.flushResult'
+        ? ({ error: msg.error, id: msg.id, kind: msg.kind, ok: msg.ok } as any)
+        : null,
+    { error: 'Timed out', id, kind: 'answers.flushResult', ok: false } as any,
+  )
+  return { error: (result as any).error, ok: (result as any).ok }
 }
 
 export const onBridgeMessage = (handler: Handler): (() => void) => {
@@ -263,15 +361,15 @@ export const createNote = async (
 ): Promise<{ note: ProfileNote | null; error?: string }> => {
   const id = crypto.randomUUID()
   const result = await sendRequest(
-    { id, kind: 'note.create', content },
+    { content, id, kind: 'note.create' },
     NOTE_OP_TIMEOUT_MS,
     (msg) =>
       msg.kind === 'note.createResult'
-        ? ({ id: msg.id, kind: msg.kind, note: msg.note, error: msg.error } as any)
+        ? ({ error: msg.error, id: msg.id, kind: msg.kind, note: msg.note } as any)
         : null,
-    { id, kind: 'note.createResult', note: null, error: 'Timed out' } as any,
+    { error: 'Timed out', id, kind: 'note.createResult', note: null } as any,
   )
-  return { note: (result as any).note, error: (result as any).error }
+  return { error: (result as any).error, note: (result as any).note }
 }
 
 export const updateNote = async (
@@ -280,15 +378,15 @@ export const updateNote = async (
 ): Promise<{ note: ProfileNote | null; error?: string }> => {
   const id = crypto.randomUUID()
   const result = await sendRequest(
-    { id, kind: 'note.update', noteId, content },
+    { content, id, kind: 'note.update', noteId },
     NOTE_OP_TIMEOUT_MS,
     (msg) =>
       msg.kind === 'note.updateResult'
-        ? ({ id: msg.id, kind: msg.kind, note: msg.note, error: msg.error } as any)
+        ? ({ error: msg.error, id: msg.id, kind: msg.kind, note: msg.note } as any)
         : null,
-    { id, kind: 'note.updateResult', note: null, error: 'Timed out' } as any,
+    { error: 'Timed out', id, kind: 'note.updateResult', note: null } as any,
   )
-  return { note: (result as any).note, error: (result as any).error }
+  return { error: (result as any).error, note: (result as any).note }
 }
 
 export const deleteNote = async (
@@ -301,13 +399,13 @@ export const deleteNote = async (
     (msg) =>
       msg.kind === 'note.deleteResult'
         ? ({
+            error: msg.error,
             id: msg.id,
             kind: msg.kind,
             noteId: msg.noteId,
-            error: msg.error,
           } as any)
         : null,
-    { id, kind: 'note.deleteResult', noteId: null, error: 'Timed out' } as any,
+    { error: 'Timed out', id, kind: 'note.deleteResult', noteId: null } as any,
   )
   return {
     deletedId: (result as any).noteId,
@@ -324,11 +422,11 @@ export const touchNote = async (
     NOTE_OP_TIMEOUT_MS,
     (msg) =>
       msg.kind === 'note.touchResult'
-        ? ({ id: msg.id, kind: msg.kind, ok: msg.ok, error: msg.error } as any)
+        ? ({ error: msg.error, id: msg.id, kind: msg.kind, ok: msg.ok } as any)
         : null,
-    { id, kind: 'note.touchResult', ok: false, error: 'Timed out' } as any,
+    { error: 'Timed out', id, kind: 'note.touchResult', ok: false } as any,
   )
-  return { ok: (result as any).ok, error: (result as any).error }
+  return { error: (result as any).error, ok: (result as any).ok }
 }
 
 export const getOriginMode = async (): Promise<ResolvedOriginMode> => {

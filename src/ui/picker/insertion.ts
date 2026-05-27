@@ -61,17 +61,52 @@ const appendBrSeparatedText = (target: HTMLElement, value: string): void => {
   }
 }
 
+const textBeforeCaret = (el: HTMLElement, range: Range): string => {
+  const preRange = document.createRange()
+  preRange.selectNodeContents(el)
+  preRange.setEnd(range.startContainer, range.startOffset)
+  return preRange.toString()
+}
+
+const lastCharOfElementText = (el: HTMLElement): string => {
+  const text = el.innerText ?? el.textContent ?? ''
+  return text.length > 0 ? text[text.length - 1] : ''
+}
+
 const insertIntoContentEditable = (el: HTMLElement, value: string): void => {
   el.focus()
   const lines = value.split('\n')
   const sel = window.getSelection()
+
+  let prefix = ''
+  let useSelection = false
+  let range: Range | null = null
+
   if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
-    const range = sel.getRangeAt(0)
+    range = sel.getRangeAt(0)
+    useSelection = true
+    const before = textBeforeCaret(el, range)
+    prefix = computePrefix(before)
+  } else {
+    const lastChar = lastCharOfElementText(el)
+    if (lastChar.length > 0 && lastChar !== '\n' && lastChar !== ' ') {
+      prefix = ' '
+    }
+  }
+
+  const linesWithPrefix = lines.slice()
+  if (prefix.length > 0 && linesWithPrefix.length > 0) {
+    linesWithPrefix[0] = prefix + linesWithPrefix[0]
+  }
+
+  if (useSelection && range) {
     range.deleteContents()
     const frag = document.createDocumentFragment()
-    for (let i = 0; i < lines.length; i++) {
+    for (let i = 0; i < linesWithPrefix.length; i++) {
       if (i > 0) frag.appendChild(document.createElement('br'))
-      if (lines[i].length > 0) frag.appendChild(document.createTextNode(lines[i]))
+      if (linesWithPrefix[i].length > 0) {
+        frag.appendChild(document.createTextNode(linesWithPrefix[i]))
+      }
     }
     const lastNode = frag.lastChild
     range.insertNode(frag)
@@ -79,12 +114,18 @@ const insertIntoContentEditable = (el: HTMLElement, value: string): void => {
       const newRange = document.createRange()
       newRange.setStartAfter(lastNode)
       newRange.collapse(true)
-      sel.removeAllRanges()
-      sel.addRange(newRange)
+      sel?.removeAllRanges()
+      sel?.addRange(newRange)
     }
   } else {
-    appendBrSeparatedText(el, value)
+    for (let i = 0; i < linesWithPrefix.length; i++) {
+      if (i > 0) el.appendChild(document.createElement('br'))
+      if (linesWithPrefix[i].length > 0) {
+        el.appendChild(document.createTextNode(linesWithPrefix[i]))
+      }
+    }
   }
+
   el.dispatchEvent(
     new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }),
   )

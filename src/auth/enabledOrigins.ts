@@ -21,16 +21,22 @@ const isCurrentEntry = (v: unknown): v is StoredEnabledOrigin => {
   return true
 }
 
+const writeRaw = async (entries: CurrentStorage): Promise<void> => {
+  await browser.storage.local.set({ [STORAGE_KEY]: entries })
+}
+
 const readRaw = async (): Promise<CurrentStorage> => {
   const res = await browser.storage.local.get(STORAGE_KEY)
   const raw = res[STORAGE_KEY] as CurrentStorage | LegacyStorage | undefined
   if (!Array.isArray(raw)) return []
   if (raw.length === 0) return []
   if (typeof raw[0] === 'string') {
-    return (raw as LegacyStorage).map((pattern) => ({
+    const migrated: CurrentStorage = (raw as LegacyStorage).map((pattern) => ({
       pattern,
       mode: 'application' as OriginMode,
     }))
+    await writeRaw(migrated)
+    return migrated
   }
   return (raw as CurrentStorage).filter(isCurrentEntry)
 }
@@ -47,7 +53,7 @@ export const getEnabledPatterns = async (): Promise<string[]> => {
 export const setEnabledOrigins = async (
   entries: StoredEnabledOrigin[],
 ): Promise<void> => {
-  await browser.storage.local.set({ [STORAGE_KEY]: entries })
+  await writeRaw(entries)
 }
 
 export const addEnabledOrigin = async (
@@ -59,17 +65,17 @@ export const addEnabledOrigin = async (
   if (existing) {
     if (existing.mode === mode) return
     existing.mode = mode
-    await setEnabledOrigins(current)
+    await writeRaw(current)
     return
   }
-  await setEnabledOrigins([...current, { pattern, mode }])
+  await writeRaw([...current, { pattern, mode }])
 }
 
 export const removeEnabledOrigin = async (pattern: string): Promise<void> => {
   const current = await readRaw()
   const next = current.filter((e) => e.pattern !== pattern)
   if (next.length === current.length) return
-  await setEnabledOrigins(next)
+  await writeRaw(next)
 }
 
 export const updateEnabledOriginMode = async (
@@ -81,7 +87,7 @@ export const updateEnabledOriginMode = async (
   if (!entry) return false
   if (entry.mode === mode) return true
   entry.mode = mode
-  await setEnabledOrigins(current)
+  await writeRaw(current)
   return true
 }
 

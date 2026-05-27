@@ -28,8 +28,8 @@ const adapters: FieldClass[] = [
   File,
 ]
 
-const discoverAdapter = (Ctor: FieldClass, node: Node): void => {
-  const elements = getElements(node, Ctor.XPATH)
+const discoverAdapter = (Ctor: FieldClass, root: ParentNode): void => {
+  const elements = getElements(root as Node, Ctor.XPATH)
   for (const el of elements) {
     if (isRegistered(el) || !isVisible(el)) continue
     const instance = new Ctor(el)
@@ -37,12 +37,13 @@ const discoverAdapter = (Ctor: FieldClass, node: Node): void => {
   }
 }
 
-export const RegisterInputs = async (node: Node = document): Promise<void> => {
+export const RegisterInputs = (node: Node = document): void => {
   const applicationContainer = getElement(
     document,
     `.//div[contains(concat(' ', normalize-space(@class), ' '), ' application--container ')]`,
   )
   if (!applicationContainer) return
   Section.autoDiscover(node)
-  for (const Ctor of adapters) discoverAdapter(Ctor, node)
+  const root = node instanceof Element || node instanceof DocumentFragment ? node : document
+  for (const Ctor of adapters) discoverAdapter(Ctor, root)
 }

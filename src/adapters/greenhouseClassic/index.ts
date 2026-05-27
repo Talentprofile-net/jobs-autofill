@@ -5,11 +5,12 @@ import { Dropdown } from './dropdown'
 import { DropdownSearchable } from './dropdownSearchable'
 import { DropdownMulti } from './dropdownMulti'
 import { Checkboxes } from './checkboxes'
+import { SingleCheckbox } from './singleCheckbox'
 import { MonthYear } from './monthYear'
 import { AddressSearchable } from './addressSearchable'
 import { File } from './file'
 import { Sections } from './sections'
-import { BaseField, isRegistered, isVisible } from '@/field/baseField'
+import { BaseField, isRegistered, isVisible } from '~/field/baseField'
 import { getElements } from '~/core/getElements'
 
 type FieldClass = {
@@ -25,6 +26,7 @@ const adapters: FieldClass[] = [
   DropdownSearchable,
   DropdownMulti,
   Checkboxes,
+  SingleCheckbox,
   MonthYear,
   AddressSearchable,
   File,
@@ -39,7 +41,7 @@ const discoverAdapter = (Ctor: FieldClass, node: Node): void => {
   }
 }
 
-export const RegisterInputs = async (node: Node = document): Promise<void> => {
+export const RegisterInputs = (node: Node = document): void => {
   Sections.autoDiscover(node)
   for (const Ctor of adapters) discoverAdapter(Ctor, node)
 }

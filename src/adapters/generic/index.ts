@@ -83,7 +83,7 @@ const registerContentEditables = (root: ParentNode): void => {
   }
 }
 
-export const RegisterInputs = async (node: Node = document): Promise<void> => {
+export const RegisterInputs = (node: Node = document): void => {
   const root = ensureRoot(node)
   registerComboboxes(root)
   registerDateGroups(root)

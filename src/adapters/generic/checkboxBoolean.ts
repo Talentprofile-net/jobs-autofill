@@ -1,4 +1,5 @@
 import fieldFillerQueue from '~/core/asyncQueue'
+import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
 import type { ProfileValue } from '~/field/types'
 
@@ -21,12 +22,10 @@ export class GenericCheckboxBoolean extends GenericBaseField {
     if (value.kind !== 'boolean') return false
     const input = this.inputElement
     if (input.checked === value.value) return true
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       input.click()
-      await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS))
-      success = input.checked === value.value
+      await sleep(VERIFY_SETTLE_MS)
+      return input.checked === value.value
     })
-    return success
   }
 }

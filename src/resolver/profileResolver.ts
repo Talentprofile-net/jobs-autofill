@@ -5,10 +5,26 @@ import type {
   ProfileLink,
 } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
-import { lookupCountry } from './countryMap'
 import { parseLocation, type ParsedLocation } from './parseLocation'
 import { parseDate, type ParsedDate } from './parseDate'
 import { parseSection, type ParsedSection } from './sectionParser'
+
+const TEXT_FIELD_TYPES = new Set(['TextInput', 'ContentEditable'])
+
+export type ResolveResult = {
+  value: ProfileValue
+  profileField: string | null
+}
+
+const unsupported = (): ResolveResult => ({
+  value: { kind: 'unsupported' },
+  profileField: null,
+})
+
+const withField = (
+  value: ProfileValue,
+  profileField: string | null,
+): ResolveResult => ({ value, profileField })
 
 const splitName = (full: string | null): { first: string; last: string } => {
   if (!full) return { first: '', last: '' }
@@ -62,7 +78,7 @@ const fullNameConfidence = (full: string | null): 'exact' | 'guess' => {
 
 const dateToValue = (parsed: ParsedDate | null, fieldType: string): ProfileValue => {
   if (!parsed) return { kind: 'unsupported' }
-  if (fieldType === 'TextInput') {
+  if (TEXT_FIELD_TYPES.has(fieldType)) {
     if (parsed.month && parsed.day) {
       return str(`${parsed.year}-${parsed.month}-${parsed.day}`)
     }
@@ -131,26 +147,23 @@ const re = {
   relocate: /\brelocat(e|ion)\b/i,
   availability: /\b(availab(le|ility)|open\s*to\s*work)\b/i,
   availabilityExclusions: /\b(date|start|when|day|month|year|time)\b/i,
-  summary: /\b(summary|bio|about|cover\s*letter|introduce|tell\s*us|self[\s-]*description|description)\b/i,
+  summaryProfile: /\b(summary|bio|about\s*you|about\s*me|about\s*yourself|cover\s*letter|tell\s*us\s*about|self[\s-]*description)\b/i,
   hourlyRate: /\bhourly\s*rate\b/i,
   monthlyRate: /\bmonthly\s*rate\b/i,
   currency: /\b(currency|preferred\s*currency)\b/i,
   skills: /\b(skills?|technologies|tech\s*stack|expertise)\b/i,
   languages: /\b(languages?|spoken\s*languages?)\b/i,
-
   school: /\b(school|university|college|institution)\b/i,
   degree: /\b(degree|qualification)\b/i,
   fieldOfStudy: /\b(field\s*of\s*study|major|discipline|concentration)\b/i,
   gpa: /\bgpa\b/i,
-
   company: /\b(company|employer|organization|organisation)\b/i,
   workTitle: labelShaped('title|work\\s*title|position|role|job\\s*title|position\\s*title|role\\s*title'),
   employmentType: /\bemployment\s*type\b/i,
   workDescription: /\b(responsibilit(y|ies)|achievement|description)\b/i,
-
   startDate: /\bstart(\s*date)?\b/i,
   endDate: /\b(end|completion|graduation)(\s*date)?\b/i,
-  currentlyHere: /\b(current|currently|present)\b/i,
+  currentlyHere: /\b(currently\s+(work|working|employed|enrolled|attend(ing)?|stud(y|ying)))\b|\b(current\s+(employer|position|role|school|university|college))\b|\b(present\s+(role|position|employer|school|university|college))\b/i,
 }
 
 const isPhoneField = (n: string): boolean =>
@@ -171,7 +184,7 @@ const countryToValue = (
 ): ProfileValue => {
   if (!parsed?.country) return { kind: 'unsupported' }
   const { englishName, variants, alpha2, alpha3 } = parsed.country
-  if (fieldType === 'TextInput') return str(englishName)
+  if (TEXT_FIELD_TYPES.has(fieldType)) return str(englishName)
   const fallbacks = variants.filter((v) => v !== englishName)
   if (!fallbacks.includes(alpha2)) fallbacks.push(alpha2)
   if (!fallbacks.includes(alpha3)) fallbacks.push(alpha3)
@@ -191,7 +204,7 @@ const cityToValue = (
 ): ProfileValue => {
   const city = cityFromParsed(parsed)
   if (!city) return { kind: 'unsupported' }
-  if (fieldType === 'TextInput') return str(city)
+  if (TEXT_FIELD_TYPES.has(fieldType)) return str(city)
   return choice(city, [])
 }
 
@@ -200,7 +213,7 @@ const regionToValue = (
   fieldType: string,
 ): ProfileValue => {
   if (!parsed?.region) return { kind: 'unsupported' }
-  if (fieldType === 'TextInput') return str(parsed.region)
+  if (TEXT_FIELD_TYPES.has(fieldType)) return str(parsed.region)
   return choice(parsed.region, [])
 }
 
@@ -210,7 +223,7 @@ const rawLocationToValue = (
 ): ProfileValue => {
   const raw = profile.location ?? ''
   if (!raw) return { kind: 'unsupported' }
-  if (fieldType === 'TextInput') return str(raw)
+  if (TEXT_FIELD_TYPES.has(fieldType)) return str(raw)
   const parsed = parseLocation(raw)
   if (!parsed?.country) return { kind: 'unsupported' }
   return countryToValue(parsed, fieldType)
@@ -222,14 +235,9 @@ const resolveCountryGeneric = (
 ): ProfileValue => {
   const raw = profile.location ?? ''
   if (!raw) return { kind: 'unsupported' }
-  const direct = lookupCountry(raw)
-  if (direct) {
-    return countryToValue(
-      { raw, country: direct, city: null, region: null, remainder: null },
-      fieldType,
-    )
-  }
-  return countryToValue(parseLocation(raw), fieldType)
+  const parsed = parseLocation(raw)
+  if (parsed?.country) return countryToValue(parsed, fieldType)
+  return { kind: 'unsupported' }
 }
 
 const resolveCityGeneric = (
@@ -246,130 +254,152 @@ const resolveEntryLocationField = (
   fieldName: string,
   fieldType: string,
   entry: ProfileEducationEntry | ProfileExperienceEntry,
-): ProfileValue | null => {
+  entryKind: 'education' | 'experience',
+): ResolveResult | null => {
   const raw = entry.location ?? ''
   if (!raw) return null
   const parsed = parseLocation(raw)
 
   if (isCountryField(fieldName)) {
-    return countryToValue(parsed, fieldType)
+    return withField(countryToValue(parsed, fieldType), `${entryKind}.location`)
   }
   if (re.city.test(fieldName)) {
-    return cityToValue(parsed, fieldType)
+    return withField(cityToValue(parsed, fieldType), `${entryKind}.location`)
   }
   if (re.region.test(fieldName)) {
-    return regionToValue(parsed, fieldType)
+    return withField(regionToValue(parsed, fieldType), `${entryKind}.location`)
   }
   if (isLocationField(fieldName)) {
-    if (fieldType === 'TextInput') return str(raw)
-    if (parsed?.country) {
-      return choice(parsed.country.englishName, parsed.country.variants.slice(1))
+    if (TEXT_FIELD_TYPES.has(fieldType)) {
+      return withField(str(raw), `${entryKind}.location`)
     }
-    return { kind: 'unsupported' }
+    if (parsed?.country) {
+      return withField(
+        choice(parsed.country.englishName, parsed.country.variants.slice(1)),
+        `${entryKind}.location`,
+      )
+    }
+    return withField({ kind: 'unsupported' }, null)
   }
   return null
+}
+
+const skillsOrLanguagesValue = (
+  names: string[],
+  fieldType: string,
+): ProfileValue => {
+  if (names.length === 0) return { kind: 'unsupported' }
+  if (TEXT_FIELD_TYPES.has(fieldType)) {
+    return str(names.join(', '))
+  }
+  if (fieldType === 'SimpleDropdown') return choice(names[0], names.slice(1))
+  return multiChoice(names, [])
 }
 
 const resolveGeneric = (
   fieldName: string,
   fieldType: string,
   profile: Profile,
-): ProfileValue | null => {
+): ResolveResult | null => {
   if (re.firstName.test(fieldName)) {
     const first = splitName(profile.profileName).first
-    return str(first, namePartConfidence(profile.profileName, first))
+    return withField(str(first, namePartConfidence(profile.profileName, first)), 'profileName')
   }
   if (re.middleName.test(fieldName)) {
-    return str(middleName(profile.profileName), 'guess')
+    return withField(str(middleName(profile.profileName), 'guess'), 'profileName')
   }
   if (re.lastName.test(fieldName)) {
     const last = splitName(profile.profileName).last
-    return str(last, namePartConfidence(profile.profileName, last))
+    return withField(str(last, namePartConfidence(profile.profileName, last)), 'profileName')
   }
   if (re.fullName.test(fieldName)) {
-    return str(profile.profileName ?? '', fullNameConfidence(profile.profileName))
+    return withField(
+      str(profile.profileName ?? '', fullNameConfidence(profile.profileName)),
+      'profileName',
+    )
   }
   if (re.preferredName.test(fieldName)) {
-    return str(splitName(profile.profileName).first, 'guess')
+    return withField(str(splitName(profile.profileName).first, 'guess'), 'profileName')
   }
   if (re.email.test(fieldName)) {
-    return str(profile.user?.email ?? '')
+    return withField(str(profile.user?.email ?? ''), 'user.email')
   }
   if (isPhoneField(fieldName)) {
-    return str(profile.user?.phoneNumber ?? '')
+    return withField(str(profile.user?.phoneNumber ?? ''), 'user.phoneNumber')
   }
   if (re.linkedin.test(fieldName)) {
-    return str(findLink(profile.links, 'linkedin'))
+    return withField(str(findLink(profile.links, 'linkedin')), 'links.linkedin')
   }
   if (re.github.test(fieldName)) {
-    return str(findLink(profile.links, 'github'))
+    return withField(str(findLink(profile.links, 'github')), 'links.github')
   }
   if (re.website.test(fieldName)) {
-    return str(findLink(profile.links, 'other'))
+    return withField(str(findLink(profile.links, 'other')), 'links.other')
   }
   if (re.jobTitleStrict.test(fieldName)) {
-    return str(profile.jobTitle ?? '')
+    return withField(str(profile.jobTitle ?? ''), 'jobTitle')
   }
   if (re.yearsExperience.test(fieldName)) {
-    return str(profile.totalExperience ?? '')
+    return withField(str(profile.totalExperience ?? ''), 'totalExperience')
   }
   if (re.hourlyRate.test(fieldName)) {
-    return str(profile.hourlyRate ?? '')
+    return withField(str(profile.hourlyRate ?? ''), 'hourlyRate')
   }
   if (re.monthlyRate.test(fieldName)) {
-    return str(profile.monthlyRate ?? '')
+    return withField(str(profile.monthlyRate ?? ''), 'monthlyRate')
   }
   if (re.currency.test(fieldName)) {
     const value = profile.rateCurrency ?? ''
-    if (!value) return { kind: 'unsupported' }
-    if (fieldType === 'TextInput') return str(value)
-    return choice(value, [])
+    if (!value) return withField({ kind: 'unsupported' }, null)
+    if (TEXT_FIELD_TYPES.has(fieldType)) return withField(str(value), 'rateCurrency')
+    return withField(choice(value, []), 'rateCurrency')
   }
   if (isNationalityField(fieldName)) {
-    return { kind: 'unsupported' }
+    return withField({ kind: 'unsupported' }, null)
   }
   if (isCountryField(fieldName)) {
-    return resolveCountryGeneric(profile, fieldType)
+    return withField(resolveCountryGeneric(profile, fieldType), 'location')
   }
   if (re.city.test(fieldName)) {
-    return resolveCityGeneric(profile, fieldType)
+    return withField(resolveCityGeneric(profile, fieldType), 'location')
   }
   if (re.region.test(fieldName)) {
-    return resolveRegionGeneric(profile, fieldType)
+    return withField(resolveRegionGeneric(profile, fieldType), 'location')
   }
   if (isLocationField(fieldName)) {
-    return rawLocationToValue(profile, fieldType)
+    return withField(rawLocationToValue(profile, fieldType), 'location')
   }
   if (re.relocate.test(fieldName)) {
-    return profile.isInterestedInRelocation === null
-      ? { kind: 'unsupported' }
-      : yesNoValue(profile.isInterestedInRelocation, fieldType)
+    if (profile.isInterestedInRelocation === null) {
+      return withField({ kind: 'unsupported' }, null)
+    }
+    return withField(
+      yesNoValue(profile.isInterestedInRelocation, fieldType),
+      'isInterestedInRelocation',
+    )
   }
   if (re.availability.test(fieldName) && !re.availabilityExclusions.test(fieldName)) {
-    return profile.isAvailableForHire === null
-      ? { kind: 'unsupported' }
-      : yesNoValue(profile.isAvailableForHire, fieldType)
+    if (profile.isAvailableForHire === null) {
+      return withField({ kind: 'unsupported' }, null)
+    }
+    return withField(yesNoValue(profile.isAvailableForHire, fieldType), 'isAvailableForHire')
   }
-  if (re.summary.test(fieldName)) {
-    return str(profile.description ?? '')
+  if (re.summaryProfile.test(fieldName)) {
+    return withField(str(profile.description ?? ''), 'description')
   }
   if (re.skills.test(fieldName)) {
     const skills = profile.skills ?? []
-    if (skills.length === 0) return { kind: 'unsupported' }
+    if (skills.length === 0) return withField({ kind: 'unsupported' }, null)
     const sorted = [...skills].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0))
     const names = sorted.map((s) => s.skill).filter(Boolean)
-    if (names.length === 0) return { kind: 'unsupported' }
-    if (fieldType === 'SimpleDropdown') return choice(names[0], names.slice(1))
-    return multiChoice(names, [])
+    return withField(skillsOrLanguagesValue(names, fieldType), 'skills')
   }
   if (re.languages.test(fieldName)) {
     const languages = profile.languages ?? []
-    if (languages.length === 0) return { kind: 'unsupported' }
+    if (languages.length === 0) return withField({ kind: 'unsupported' }, null)
     const sorted = [...languages].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0))
     const names = sorted.map((l) => l.language).filter(Boolean)
-    if (names.length === 0) return { kind: 'unsupported' }
-    if (fieldType === 'SimpleDropdown') return choice(names[0], names.slice(1))
-    return multiChoice(names, [])
+    return withField(skillsOrLanguagesValue(names, fieldType), 'languages')
   }
   return null
 }
@@ -378,37 +408,47 @@ const resolveEducation = (
   fieldName: string,
   fieldType: string,
   entry: ProfileEducationEntry,
-): ProfileValue | null => {
+): ResolveResult | null => {
   if (re.school.test(fieldName)) {
-    return entry.school ? str(entry.school) : { kind: 'unsupported' }
+    return entry.school
+      ? withField(str(entry.school), 'education.school')
+      : withField({ kind: 'unsupported' }, null)
   }
   if (re.degree.test(fieldName)) {
-    if (!entry.degree) return { kind: 'unsupported' }
-    return fieldType === 'TextInput' ? str(entry.degree) : choice(entry.degree, [])
+    if (!entry.degree) return withField({ kind: 'unsupported' }, null)
+    return withField(
+      TEXT_FIELD_TYPES.has(fieldType) ? str(entry.degree) : choice(entry.degree, []),
+      'education.degree',
+    )
   }
   if (re.fieldOfStudy.test(fieldName)) {
-    if (!entry.fieldOfStudy) return { kind: 'unsupported' }
-    return fieldType === 'TextInput'
-      ? str(entry.fieldOfStudy)
-      : choice(entry.fieldOfStudy, [])
+    if (!entry.fieldOfStudy) return withField({ kind: 'unsupported' }, null)
+    return withField(
+      TEXT_FIELD_TYPES.has(fieldType)
+        ? str(entry.fieldOfStudy)
+        : choice(entry.fieldOfStudy, []),
+      'education.fieldOfStudy',
+    )
   }
   if (re.gpa.test(fieldName)) {
-    return entry.gpa ? str(entry.gpa) : { kind: 'unsupported' }
+    return entry.gpa
+      ? withField(str(entry.gpa), 'education.gpa')
+      : withField({ kind: 'unsupported' }, null)
   }
   if (re.currentlyHere.test(fieldName)) {
-    return yesNoValue(isCurrentEntry(entry), fieldType)
+    return withField(yesNoValue(isCurrentEntry(entry), fieldType), 'education.isCurrent')
   }
   if (re.startDate.test(fieldName)) {
-    return dateToValue(parseDate(entry.startDate), fieldType)
+    return withField(dateToValue(parseDate(entry.startDate), fieldType), 'education.startDate')
   }
   if (re.endDate.test(fieldName)) {
-    if (isCurrentEntry(entry)) return { kind: 'unsupported' }
-    return dateToValue(parseDate(entry.endDate), fieldType)
+    if (isCurrentEntry(entry)) return withField({ kind: 'unsupported' }, null)
+    return withField(dateToValue(parseDate(entry.endDate), fieldType), 'education.endDate')
   }
-  const entryLocation = resolveEntryLocationField(fieldName, fieldType, entry)
+  const entryLocation = resolveEntryLocationField(fieldName, fieldType, entry, 'education')
   if (entryLocation) return entryLocation
-  if (re.summary.test(fieldName) && entry.description) {
-    return str(entry.description)
+  if (re.workDescription.test(fieldName) && entry.description) {
+    return withField(str(entry.description), 'education.description')
   }
   return null
 }
@@ -417,35 +457,49 @@ const resolveExperience = (
   fieldName: string,
   fieldType: string,
   entry: ProfileExperienceEntry,
-): ProfileValue | null => {
+): ResolveResult | null => {
   if (re.company.test(fieldName)) {
-    return entry.company ? str(entry.company) : { kind: 'unsupported' }
+    return entry.company
+      ? withField(str(entry.company), 'experience.company')
+      : withField({ kind: 'unsupported' }, null)
   }
   if (re.workTitle.test(fieldName) || re.jobTitleStrict.test(fieldName)) {
-    return entry.title ? str(entry.title) : { kind: 'unsupported' }
+    return entry.title
+      ? withField(str(entry.title), 'experience.title')
+      : withField({ kind: 'unsupported' }, null)
   }
   if (re.employmentType.test(fieldName)) {
-    if (!entry.employmentType) return { kind: 'unsupported' }
-    return fieldType === 'TextInput'
-      ? str(entry.employmentType)
-      : choice(entry.employmentType, [])
+    if (!entry.employmentType) return withField({ kind: 'unsupported' }, null)
+    return withField(
+      TEXT_FIELD_TYPES.has(fieldType)
+        ? str(entry.employmentType)
+        : choice(entry.employmentType, []),
+      'experience.employmentType',
+    )
   }
   if (re.currentlyHere.test(fieldName)) {
-    return yesNoValue(isCurrentEntry(entry), fieldType)
+    return withField(yesNoValue(isCurrentEntry(entry), fieldType), 'experience.isCurrent')
   }
   if (re.startDate.test(fieldName)) {
-    return dateToValue(parseDate(entry.startDate), fieldType)
+    return withField(dateToValue(parseDate(entry.startDate), fieldType), 'experience.startDate')
   }
   if (re.endDate.test(fieldName)) {
-    if (isCurrentEntry(entry)) return { kind: 'unsupported' }
-    return dateToValue(parseDate(entry.endDate), fieldType)
+    if (isCurrentEntry(entry)) return withField({ kind: 'unsupported' }, null)
+    return withField(dateToValue(parseDate(entry.endDate), fieldType), 'experience.endDate')
   }
-  const entryLocation = resolveEntryLocationField(fieldName, fieldType, entry)
+  const entryLocation = resolveEntryLocationField(fieldName, fieldType, entry, 'experience')
   if (entryLocation) return entryLocation
   if (re.workDescription.test(fieldName) && entry.description) {
-    return str(entry.description)
+    return withField(str(entry.description), 'experience.description')
   }
   return null
+}
+
+const finalizeResult = (result: ResolveResult): ResolveResult => {
+  if (result.value.kind === 'string' && !result.value.value) {
+    return { value: { kind: 'unsupported' }, profileField: null }
+  }
+  return result
 }
 
 export const resolveField = (
@@ -453,41 +507,33 @@ export const resolveField = (
   fieldType: string,
   section: string,
   profile: Profile,
-): ProfileValue => {
+): ResolveResult => {
   const trimmed = (fieldName ?? '').trim()
-  if (!trimmed) return { kind: 'unsupported' }
+  if (!trimmed) return unsupported()
 
   const parsedSection = parseSection(section)
 
   if (parsedSection.type === 'education') {
     const entry = getEducationEntry(profile, parsedSection)
-    if (!entry) return { kind: 'unsupported' }
+    if (!entry) return unsupported()
     const eduResult = resolveEducation(trimmed, fieldType, entry)
-    if (!eduResult) return { kind: 'unsupported' }
-    if (eduResult.kind === 'string' && !eduResult.value) {
-      return { kind: 'unsupported' }
-    }
-    return eduResult
+    if (!eduResult) return unsupported()
+    return finalizeResult(eduResult)
   }
 
   if (parsedSection.type === 'employment') {
     const entry = getExperienceEntry(profile, parsedSection)
-    if (!entry) return { kind: 'unsupported' }
+    if (!entry) return unsupported()
     const expResult = resolveExperience(trimmed, fieldType, entry)
-    if (!expResult) return { kind: 'unsupported' }
-    if (expResult.kind === 'string' && !expResult.value) {
-      return { kind: 'unsupported' }
-    }
-    return expResult
+    if (!expResult) return unsupported()
+    return finalizeResult(expResult)
   }
 
   const generic = resolveGeneric(trimmed, fieldType, profile)
-  if (generic) {
-    if (generic.kind === 'string' && !generic.value) {
-      return { kind: 'unsupported' }
-    }
-    return generic
-  }
+  if (generic) return finalizeResult(generic)
 
-  return { kind: 'unsupported' }
+  return unsupported()
 }
+
+export const profileValueIsResolved = (v: ProfileValue): boolean =>
+  v.kind !== 'unsupported' && v.kind !== 'timeout'

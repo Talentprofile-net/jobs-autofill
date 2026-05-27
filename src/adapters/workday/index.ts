@@ -42,7 +42,7 @@ const discoverAdapter = (Ctor: FieldClass, node: Node): void => {
   }
 }
 
-export const RegisterInputs = async (node: Node = document): Promise<void> => {
+export const RegisterInputs = (node: Node = document): void => {
   const onSearch = getElement(document, ".//div[@data-automation-id='jobSearch']")
   if (onSearch) return
   for (const Ctor of adapters) discoverAdapter(Ctor, node)

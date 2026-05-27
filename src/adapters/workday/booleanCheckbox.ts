@@ -13,7 +13,12 @@ export class BooleanCheckbox extends WorkdayBaseInput {
   }
 
   currentValue(): boolean {
-    return this.checkboxElement?.checked ?? false
+    const cb = this.checkboxElement
+    if (!cb) return false
+    const aria = cb.getAttribute('aria-checked')
+    if (aria === 'true') return true
+    if (aria === 'false') return false
+    return cb.checked
   }
 
   private currentStateXpath(expected: boolean): string {
@@ -28,10 +33,9 @@ export class BooleanCheckbox extends WorkdayBaseInput {
     if (value.kind !== 'boolean') return false
     const checkbox = this.checkboxElement
     if (!checkbox) return false
-    if (this.currentValue() === value.value) return false
+    if (this.currentValue() === value.value) return true
 
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       const initial = this.currentValue()
       checkbox.click()
       await waitForElement(this.element, this.currentStateXpath(!initial), {
@@ -39,8 +43,7 @@ export class BooleanCheckbox extends WorkdayBaseInput {
         attributeFilter: ['aria-checked'],
         timeout: 1500,
       })
-      success = this.currentValue() === value.value
+      return this.currentValue() === value.value
     })
-    return success
   }
 }

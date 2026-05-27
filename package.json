@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@floating-ui/dom": "^1.7.6",
+    "@sindresorhus/slugify": "^3.0.0",
     "@use-gesture/vanilla": "^10.3.1",
     "i18n-iso-countries": "^7.14.0",
     "svelte": "^5.55.9"

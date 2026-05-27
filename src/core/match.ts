@@ -16,22 +16,21 @@ const stripRemoveMarker = (s: string): string => {
   return s.replace(/\u00d7/g, '').trim()
 }
 
+const tokenize = (s: string): string[] =>
+  s.split(/\s+/).filter((t) => t.length > 0)
+
 /**
  * Relaxed option matching for use as a *fallback* only.
  *
  * Tries, in order:
  *   1. exact normalized equality
- *   2. either side starts with the other (after normalize)
- *   3. either side contains the other as a whole token (after normalize)
- *   4. equality after stripping parentheticals and text after first comma
+ *   2. equality after stripping parentheticals and text after first comma
+ *      (handles "Thailand (TH)" vs "Thailand", "Yes, I am willing" vs "Yes")
  *
- * Designed for ATS dropdowns where labels often append extra context:
- *   "United States" vs "United States of America"
- *   "Thailand" vs "Thailand (TH)"
- *   "Yes" vs "Yes, I am willing to relocate"
+ * Substring/token-containment matching has been removed to avoid false
+ * positives like "York" matching "New York" or "United States" matching
+ * "United States Permanent Resident".
  *
- * False-positive risk: aggressive matching could match "Singapore" against
- * "Singapore, Republic of" but also against "Singapore Permanent Resident".
  * Use only when exact matching has failed.
  */
 export const optionMatchesRelaxed = (optionText: string, candidate: string): boolean => {
@@ -40,16 +39,12 @@ export const optionMatchesRelaxed = (optionText: string, candidate: string): boo
   if (!a || !b) return false
   if (a === b) return true
 
-  if (a.startsWith(b + ' ') || b.startsWith(a + ' ')) return true
-  if (a.startsWith(b + ',') || b.startsWith(a + ',')) return true
-
-  const aTokens = ` ${a} `
-  const bTokens = ` ${b} `
-  if (aTokens.includes(bTokens) || bTokens.includes(aTokens)) return true
-
   const aStripped = normalizeOption(stripParenthetical(beforeFirstComma(a)))
   const bStripped = normalizeOption(stripParenthetical(beforeFirstComma(b)))
   if (aStripped && bStripped && aStripped === bStripped) return true
+
+  if (aStripped && b && aStripped === b) return true
+  if (bStripped && a && bStripped === a) return true
 
   return false
 }
@@ -75,30 +70,46 @@ export const xpathLiteral = (value: string): string => {
   return `concat(${parts.join(`, "'", `)})`
 }
 
-const COMMON_PLACEHOLDERS = new Set([
+const EXACT_PLACEHOLDERS = new Set([
   '',
-  'select one',
-  'select an option',
-  'select...',
-  'select',
-  'please select',
-  'please select one',
-  'please select an option',
-  'choose one',
-  'choose an option',
-  'choose...',
-  'choose',
-  'pick one',
-  'pick an option',
+  'n/a',
+  'na',
+  'not specified',
+  'not selected',
+  'no selection',
+  'none',
+  'nothing selected',
   '--',
   '---',
   '—',
+  '–',
   '-',
-  'n/a',
-  'not specified',
 ])
+
+const PLACEHOLDER_PREFIXES = [
+  'select ',
+  'please select',
+  'choose ',
+  'please choose',
+  'pick ',
+  'please pick',
+  '-- select',
+  '-- choose',
+  '— select',
+  '— choose',
+]
+
+const ONLY_DASHES_OR_DOTS = /^[\s\-_—–.]+$/
 
 export const isPlaceholderText = (value: string): boolean => {
   const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase()
-  return COMMON_PLACEHOLDERS.has(normalized)
+  if (EXACT_PLACEHOLDERS.has(normalized)) return true
+  if (ONLY_DASHES_OR_DOTS.test(normalized)) return true
+  for (const prefix of PLACEHOLDER_PREFIXES) {
+    if (normalized.startsWith(prefix)) return true
+  }
+  if (normalized === 'select' || normalized === 'choose' || normalized === 'pick') {
+    return true
+  }
+  return false
 }

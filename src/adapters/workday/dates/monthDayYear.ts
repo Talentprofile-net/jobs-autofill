@@ -3,6 +3,7 @@ import { getElement } from '~/core/getElements'
 import { padToWidth } from '~/core/padToWidth'
 import { isValidDay, isValidMonth, isValidYear } from '~/core/dateValidation'
 import { widthFor } from '~/core/dateUtils'
+import { sleep } from '~/core/async'
 import { WorkdayBaseInput } from '../WorkdayBaseInput'
 import { xpaths } from '../xpaths'
 import { fillDatePart } from './utils'
@@ -36,12 +37,7 @@ export class MonthDayYear extends WorkdayBaseInput {
 
   async fill(value: ProfileValue): Promise<boolean> {
     if (value.kind !== 'date' || !value.month || !value.day) return false
-    if (
-      !isValidMonth(value.month) ||
-      !isValidDay(value.day) ||
-      !isValidYear(value.year)
-    )
-      return false
+    if (!isValidMonth(value.month) || !isValidDay(value.day) || !isValidYear(value.year)) return false
     const m = this.monthInputElement
     const d = this.dayInputElement
     const y = this.yearInputElement
@@ -49,17 +45,15 @@ export class MonthDayYear extends WorkdayBaseInput {
     const targetMonth = padToWidth(value.month, widthFor(m, 2))
     const targetDay = padToWidth(value.day, widthFor(d, 2))
     const targetYear = padToWidth(value.year, widthFor(y, 4))
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
-      await fillDatePart(m, value.month!)
-      await fillDatePart(d, value.day!)
-      await fillDatePart(y, value.year)
-      await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS))
+    return fieldFillerQueue.enqueue(async () => {
+      fillDatePart(m, value.month!)
+      fillDatePart(d, value.day!)
+      fillDatePart(y, value.year)
+      await sleep(VERIFY_SETTLE_MS)
       const monthOk = m.value === targetMonth || m.value === value.month
       const dayOk = d.value === targetDay || d.value === value.day
       const yearOk = y.value === targetYear || y.value === value.year
-      success = monthOk && dayOk && yearOk
+      return monthOk && dayOk && yearOk
     })
-    return success
   }
 }

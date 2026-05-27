@@ -1,6 +1,7 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement } from '~/core/getElements'
 import { fillReactTextInput } from '~/core/reactProps'
+import { verifyTextValue } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import type { ProfileValue } from '~/field/types'
 import { xpaths } from './xpaths'
@@ -21,9 +22,10 @@ export class TextArea extends WorkdayBaseInput {
     if (value.kind !== 'string') return false
     const input = this.inputElement
     if (!input) return false
-    await fieldFillerQueue.enqueue(async () => {
+    if (input.value === value.value) return true
+    return fieldFillerQueue.enqueue(async () => {
       fillReactTextInput(input, value.value, { eventName: 'onBlur' })
+      return verifyTextValue(input, value.value)
     })
-    return true
   }
 }

@@ -1,6 +1,10 @@
 import { getElement, getElements } from '~/core/getElements'
 
-const SECTION_XPATH = `.//div[@class = "education--form" or @class = "employment--form"]`
+const SECTION_XPATH = [
+  `.//div`,
+  `[contains(@class, 'education--form')`,
+  ` or contains(@class, 'employment--form')]`,
+].join('')
 
 const sectionTypeOf = (el: HTMLElement): string => {
   const cls = el.getAttribute('class') ?? ''

@@ -1,14 +1,15 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { findOption } from '~/core/match'
+import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
-import { resolveLabel } from './labelResolver'
+import { resolveOptionLabel } from './labelResolver'
 import { groupLabel } from './groupLabel'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 100
 
 const radioLabel = (radio: HTMLInputElement): string => {
-  const direct = resolveLabel(radio)
+  const direct = resolveOptionLabel(radio)
   if (direct) return direct
   const value = radio.value
   return value && value !== 'on' ? value : ''
@@ -42,19 +43,16 @@ export class GenericRadioGroup extends GenericBaseField {
       .filter((o) => o.text)
     if (options.length === 0) return false
 
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
         const match = findOption(options, (o) => o.text, candidate)
         if (!match) continue
+        if (match.input.checked) return true
         match.input.click()
-        await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS))
-        if (match.input.checked) {
-          success = true
-          return
-        }
+        await sleep(VERIFY_SETTLE_MS)
+        if (match.input.checked) return true
       }
+      return false
     })
-    return success
   }
 }

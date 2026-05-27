@@ -1,6 +1,7 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement } from '~/core/getElements'
 import { setNativeInputValue } from '~/core/reactProps'
+import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
@@ -23,16 +24,14 @@ export class TextInput extends GreenhouseBaseInput {
     if (value.kind !== 'string') return false
     const input = this.inputElement
     if (!input) return false
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       input.focus()
       setNativeInputValue(input, value.value)
       input.dispatchEvent(new InputEvent('input', { bubbles: true }))
       input.dispatchEvent(new Event('change', { bubbles: true }))
       input.dispatchEvent(new Event('blur', { bubbles: true }))
-      await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS))
-      success = input.value === value.value
+      await sleep(VERIFY_SETTLE_MS)
+      return input.value === value.value
     })
-    return success
   }
 }

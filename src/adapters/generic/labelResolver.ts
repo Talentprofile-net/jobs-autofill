@@ -1,3 +1,5 @@
+import { resolveLabelledByText } from '~/core/labelledBy'
+
 const trimText = (s: string | null | undefined): string => (s ?? '').trim()
 
 const labelByFor = (input: HTMLElement): string => {
@@ -15,17 +17,8 @@ const wrappingLabel = (input: HTMLElement): string => {
   return trimText(clone.innerText)
 }
 
-const labelByAriaLabelledby = (input: HTMLElement): string => {
-  const ids = input.getAttribute('aria-labelledby')
-  if (!ids) return ''
-  const parts: string[] = []
-  for (const id of ids.split(/\s+/)) {
-    const el = document.getElementById(id)
-    const text = trimText(el?.innerText)
-    if (text) parts.push(text)
-  }
-  return parts.join(' ')
-}
+const labelByAriaLabelledby = (input: HTMLElement): string =>
+  resolveLabelledByText(input.getAttribute('aria-labelledby'))
 
 const ariaLabel = (input: HTMLElement): string => trimText(input.getAttribute('aria-label'))
 
@@ -62,7 +55,7 @@ const placeholderOrName = (input: HTMLElement): string => {
   return ''
 }
 
-export const resolveLabel = (input: HTMLElement): string => {
+export const resolveFieldLabel = (input: HTMLElement): string => {
   return (
     labelByFor(input) ||
     wrappingLabel(input) ||
@@ -73,3 +66,38 @@ export const resolveLabel = (input: HTMLElement): string => {
     placeholderOrName(input)
   )
 }
+
+export const resolveGroupLabel = (group: HTMLElement): string => {
+  const fieldset = group.closest('fieldset') as HTMLElement | null
+  if (fieldset) {
+    const legend = fieldset.querySelector(':scope > legend') as HTMLElement | null
+    const text = trimText(legend?.innerText)
+    if (text) return text
+  }
+  const roleGroup = group.closest('[role="group"]') as HTMLElement | null
+  if (roleGroup) {
+    const aria = trimText(roleGroup.getAttribute('aria-label'))
+    if (aria) return aria
+    const labelled = resolveLabelledByText(
+      roleGroup.getAttribute('aria-labelledby'),
+    )
+    if (labelled) return labelled
+  }
+  return (
+    labelByAriaLabelledby(group) ||
+    ariaLabel(group) ||
+    precedingSiblingText(group)
+  )
+}
+
+export const resolveOptionLabel = (option: HTMLElement): string => {
+  return (
+    labelByFor(option) ||
+    wrappingLabel(option) ||
+    labelByAriaLabelledby(option) ||
+    ariaLabel(option) ||
+    placeholderOrName(option)
+  )
+}
+
+export const resolveLabel = resolveFieldLabel

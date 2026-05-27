@@ -4,498 +4,572 @@
     BackgroundResponse,
     DetectedAts,
     EnabledOriginEntry,
+    FillBatchError,
     FillBatchResult,
     FillPortOutgoing,
     FillProgress,
     PopupToBackground,
     ProfileSummary,
     TabOriginInfo,
-  } from '~/bridge/types'
-  import type { OriginMode } from '~/field/types'
-  import { browser } from 'wxt/browser'
-  import Logo from '~/ui/Logo.svelte'
-  import { MAX_PROFILE_SCORE } from '~/resolver/profileScore'
+  } from "~/bridge/types";
+  import type { OriginMode } from "~/field/types";
+  import { browser } from "wxt/browser";
+  import Logo from "~/ui/Logo.svelte";
+  import { MAX_PROFILE_SCORE } from "~/resolver/profileScore";
   import {
     PROFILE_SCORE_COMPLETE_AT,
     PROFILE_SCORE_EMPTY_BELOW,
-  } from '~/config'
-  import { onDestroy } from 'svelte'
+  } from "~/config";
+  import { onDestroy, onMount } from "svelte";
 
-  const REGISTER_RETRY_DELAY_MS = 500
-  const WAITING_TIMEOUT_MS = 5 * 60 * 1000
+  const REGISTER_RETRY_DELAY_MS = 500;
+  const WAITING_TIMEOUT_MS = 5 * 60 * 1000;
 
-  let status = $state<AuthStatus>({ authenticated: false })
-  let summary = $state<ProfileSummary | null>(null)
-  let detectedAts = $state<DetectedAts>('generic')
-  let tabOriginInfo = $state<TabOriginInfo | null>(null)
-  let enabledList = $state<EnabledOriginEntry[]>([])
-  let settingsOpen = $state(false)
-  let manageOpen = $state(false)
-  let confirmRevoke = $state<EnabledOriginEntry | null>(null)
-  let busy = $state(false)
-  let errorMsg = $state<string | null>(null)
-  let lastFillResult = $state<FillBatchResult | null>(null)
-  let waitingForConnect = $state(false)
-  let waitingTimer: ReturnType<typeof setTimeout> | null = null
-  let progress = $state<FillProgress | null>(null)
-  let activeTabId: number | null = $state(null)
-  let activePort: Browser.runtime.Port | null = null
+  const KNOWN_ATS_HOST_PATTERNS = [
+    /\.myworkdayjobs\.com$/i,
+    /^boards\.greenhouse\.io$/i,
+    /^job-boards\.greenhouse\.io$/i,
+  ];
+
+  const hostnameFromUrl = (url: string | undefined): string | null => {
+    if (!url) return null;
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
+  };
+
+  const isKnownAtsHost = (hostname: string | null): boolean => {
+    if (!hostname) return false;
+    return KNOWN_ATS_HOST_PATTERNS.some((re) => re.test(hostname));
+  };
+
+  let status = $state<AuthStatus>({ authenticated: false });
+  let summary = $state<ProfileSummary | null>(null);
+  let detectedAts = $state<DetectedAts>("generic");
+  let tabOriginInfo = $state<TabOriginInfo | null>(null);
+  let enabledList = $state<EnabledOriginEntry[]>([]);
+  let settingsOpen = $state(false);
+  let manageOpen = $state(false);
+  let confirmRevoke = $state<EnabledOriginEntry | null>(null);
+  let busy = $state(false);
+  let errorMsg = $state<string | null>(null);
+  let lastFillResult = $state<FillBatchResult | null>(null);
+  let waitingForConnect = $state(false);
+  let waitingTimer: ReturnType<typeof setTimeout> | null = null;
+  let progress = $state<FillProgress | null>(null);
+  let maxObservedTotal = $state(0);
+  let activeTabId: number | null = $state(null);
+  let activePort: Browser.runtime.Port | null = null;
   let pendingEnableChoice = $state<{ pattern: string; origin: string } | null>(
     null,
-  )
+  );
+
+  const emptyCounts = () => ({
+    failed: 0,
+    filled: 0,
+    skipped: 0,
+    unsupported: 0,
+  });
 
   const send = async (msg: PopupToBackground): Promise<BackgroundResponse> => {
     try {
       const res = (await browser.runtime.sendMessage(
         msg,
-      )) as BackgroundResponse
-      return res ?? { ok: false, error: 'No response from background' }
+      )) as BackgroundResponse;
+      return res ?? { error: "No response from background", ok: false };
     } catch (e) {
-      return { ok: false, error: (e as Error).message }
+      return { error: (e as Error).message, ok: false };
     }
-  }
+  };
 
   const refreshOriginState = async () => {
-    if (typeof activeTabId !== 'number') return
+    if (typeof activeTabId !== "number") return;
     const [tabRes, listRes] = await Promise.all([
-      send({ kind: 'tab.listOrigins', tabId: activeTabId }),
-      send({ kind: 'origin.list' }),
-    ])
-    if (tabRes.ok) tabOriginInfo = tabRes.data as TabOriginInfo | null
-    if (listRes.ok) enabledList = listRes.data as EnabledOriginEntry[]
-  }
+      send({ kind: "tab.listOrigins", tabId: activeTabId }),
+      send({ kind: "origin.list" }),
+    ]);
+    if (tabRes.ok) tabOriginInfo = tabRes.data as TabOriginInfo | null;
+    if (listRes.ok) enabledList = listRes.data as EnabledOriginEntry[];
+  };
 
   const refreshStatus = async () => {
-    const s = await send({ kind: 'auth.status' })
-    if (s.ok) status = s.data as AuthStatus
+    const s = await send({ kind: "auth.status" });
+    if (s.ok) status = s.data as AuthStatus;
     if (status.authenticated) {
-      clearWaitingTimer()
-      waitingForConnect = false
+      clearWaitingTimer();
+      waitingForConnect = false;
       const tabs = await browser.tabs.query({
         active: true,
         currentWindow: true,
-      })
-      const tabId = tabs[0]?.id
-      activeTabId = typeof tabId === 'number' ? tabId : null
+      });
+      const tab = tabs[0];
+      const tabId = tab?.id;
+      activeTabId = typeof tabId === "number" ? tabId : null;
+      const tabHostname = hostnameFromUrl(tab?.url);
+      const expectAts = isKnownAtsHost(tabHostname);
 
-      const summaryPromise = send({ kind: 'profile.summary' })
-      let atsPromise: Promise<BackgroundResponse> | null = null
-      let originsPromise: Promise<void> | null = null
-      if (typeof tabId === 'number') {
-        atsPromise = send({ kind: 'tab.detectAts', tabId })
-        originsPromise = refreshOriginState()
+      const summaryPromise = send({ kind: "profile.summary" });
+      let atsPromise: Promise<BackgroundResponse> | null = null;
+      let originsPromise: Promise<void> | null = null;
+      if (typeof tabId === "number") {
+        atsPromise = send({ kind: "tab.detectAts", tabId });
+        originsPromise = refreshOriginState();
       }
 
-      const summaryRes = await summaryPromise
-      if (summaryRes.ok) summary = summaryRes.data as ProfileSummary
-      else if (summaryRes.error === 'network-error') {
-        errorMsg = 'Could not reach TalentProfile. Check your connection.'
+      const summaryRes = await summaryPromise;
+      if (summaryRes.ok) summary = summaryRes.data as ProfileSummary;
+      else if (summaryRes.error === "network-error") {
+        errorMsg = "Could not reach TalentProfile. Check your connection.";
       }
 
       if (atsPromise) {
-        const a = await atsPromise
-        let resolvedAts: DetectedAts = 'generic'
+        const a = await atsPromise;
+        let resolvedAts: DetectedAts = "generic";
         if (a.ok && a.data !== null && a.data !== undefined) {
-          resolvedAts = a.data as DetectedAts
+          resolvedAts = a.data as DetectedAts;
         }
-        if (resolvedAts === 'generic') {
-          await new Promise((r) => setTimeout(r, REGISTER_RETRY_DELAY_MS))
+        if (resolvedAts === "generic" && expectAts) {
+          await new Promise((r) => setTimeout(r, REGISTER_RETRY_DELAY_MS));
           const retry = await send({
-            kind: 'tab.detectAts',
+            kind: "tab.detectAts",
             tabId: activeTabId!,
-          })
+          });
           if (retry.ok && retry.data !== null && retry.data !== undefined) {
-            resolvedAts = retry.data as DetectedAts
+            resolvedAts = retry.data as DetectedAts;
           }
         }
-        detectedAts = resolvedAts
+        detectedAts = resolvedAts;
       }
-      if (originsPromise) await originsPromise
+      if (originsPromise) await originsPromise;
     } else {
-      summary = null
-      detectedAts = 'generic'
-      tabOriginInfo = null
-      enabledList = []
-      if (status.reason === 'network-error') {
-        errorMsg = 'Could not reach TalentProfile. Check your connection.'
+      summary = null;
+      detectedAts = "generic";
+      tabOriginInfo = null;
+      enabledList = [];
+      if (status.reason === "network-error") {
+        errorMsg = "Could not reach TalentProfile. Check your connection.";
       }
     }
-  }
+  };
 
   const clearWaitingTimer = () => {
     if (waitingTimer !== null) {
-      clearTimeout(waitingTimer)
-      waitingTimer = null
+      clearTimeout(waitingTimer);
+      waitingTimer = null;
     }
-  }
+  };
 
   const handleAuthChanged = (message: unknown) => {
     if (
       message &&
-      typeof message === 'object' &&
-      'kind' in message &&
-      (message as { kind: string }).kind === 'auth.changed'
+      typeof message === "object" &&
+      "kind" in message &&
+      (message as { kind: string }).kind === "auth.changed"
     ) {
-      void refreshStatus()
+      void refreshStatus();
     }
-  }
+  };
 
-  $effect(() => {
-    refreshStatus()
-  })
+  onMount(() => {
+    void refreshStatus();
+    browser.runtime.onMessage.addListener(handleAuthChanged);
+  });
 
-  browser.runtime.onMessage.addListener(handleAuthChanged)
   onDestroy(() => {
-    browser.runtime.onMessage.removeListener(handleAuthChanged)
-    clearWaitingTimer()
+    browser.runtime.onMessage.removeListener(handleAuthChanged);
+    clearWaitingTimer();
     if (activePort) {
       try {
-        activePort.disconnect()
+        activePort.disconnect();
       } catch {}
-      activePort = null
+      activePort = null;
     }
-  })
+  });
+
+  const formatBatchError = (error: FillBatchError | undefined): string => {
+    if (!error) return "Unknown error";
+    switch (error.kind) {
+      case "not-authenticated":
+        return "Please sign in to TalentProfile.";
+      case "busy":
+        return "A fill is already in progress on this tab.";
+      case "no-frames":
+        return "This page is still loading or has no application content.";
+      case "network":
+        return "Network error. Check your connection.";
+      case "profile-fetch":
+        return "Could not load your profile.";
+      case "aborted":
+        return `Fill aborted: ${error.message}`;
+      default:
+        return error.message;
+    }
+  };
 
   const handleSignIn = async () => {
-    busy = true
-    errorMsg = null
+    busy = true;
+    errorMsg = null;
     try {
-      const res = await send({ kind: 'auth.openConnectPage' })
+      const res = await send({ kind: "auth.openConnectPage" });
       if (res.ok) {
-        waitingForConnect = true
-        clearWaitingTimer()
+        waitingForConnect = true;
+        clearWaitingTimer();
         waitingTimer = setTimeout(() => {
           if (waitingForConnect) {
-            waitingForConnect = false
-            errorMsg = 'Sign-in took too long. Try again.'
-            void send({ kind: 'auth.cancelConnect' })
+            waitingForConnect = false;
+            errorMsg = "Sign-in took too long. Try again.";
+            void send({ kind: "auth.cancelConnect" });
           }
-        }, WAITING_TIMEOUT_MS)
+        }, WAITING_TIMEOUT_MS);
       } else {
-        errorMsg = res.error
+        errorMsg = res.error;
       }
     } finally {
-      busy = false
+      busy = false;
     }
-  }
+  };
 
   const handleCancelWaiting = () => {
-    waitingForConnect = false
-    clearWaitingTimer()
-    void send({ kind: 'auth.cancelConnect' })
-  }
+    waitingForConnect = false;
+    clearWaitingTimer();
+    void send({ kind: "auth.cancelConnect" });
+  };
 
   const handleLogout = async () => {
-    await send({ kind: 'auth.logout' })
-    errorMsg = null
-    lastFillResult = null
-    settingsOpen = false
-    manageOpen = false
-    await refreshStatus()
-  }
+    await send({ kind: "auth.logout" });
+    errorMsg = null;
+    lastFillResult = null;
+    settingsOpen = false;
+    manageOpen = false;
+    await refreshStatus();
+  };
 
   const handleFillAll = async () => {
-    if (busy) return
-    busy = true
-    errorMsg = null
-    lastFillResult = null
-    progress = null
+    if (busy) return;
+    busy = true;
+    errorMsg = null;
+    lastFillResult = null;
+    progress = null;
+    maxObservedTotal = 0;
 
     const tabs = await browser.tabs.query({
       active: true,
       currentWindow: true,
-    })
-    const tabId = tabs[0]?.id
-    if (typeof tabId !== 'number') {
-      busy = false
-      errorMsg = 'No active tab'
-      return
+    });
+    const tabId = tabs[0]?.id;
+    if (typeof tabId !== "number") {
+      busy = false;
+      errorMsg = "No active tab";
+      return;
     }
 
-    const port = browser.runtime.connect({ name: 'fill-progress' })
-    activePort = port
+    const port = browser.runtime.connect({ name: "fill-progress" });
+    activePort = port;
 
-    let partialProgress: FillProgress | null = null
+    let partialProgress: FillProgress | null = null;
 
     port.onMessage.addListener((msg: FillPortOutgoing) => {
-      if (msg.kind === 'fill.frame.started') {
+      if (msg.kind === "fill.frame.started") {
         progress = {
-          counts: { filled: 0, skipped: 0, failed: 0 },
+          counts: emptyCounts(),
+          pass: msg.pass,
           total: msg.total,
-        }
-        partialProgress = progress
-      } else if (msg.kind === 'fill.progress') {
-        progress = { counts: msg.counts, total: msg.total }
-        partialProgress = progress
-      } else if (msg.kind === 'fill.done') {
-        lastFillResult = msg.result
-        progress = null
-        busy = false
+        };
+        maxObservedTotal = Math.max(maxObservedTotal, msg.total);
+        partialProgress = progress;
+      } else if (msg.kind === "fill.progress") {
+        progress = { counts: msg.counts, pass: msg.pass, total: msg.total };
+        maxObservedTotal = Math.max(maxObservedTotal, msg.total);
+        partialProgress = progress;
+      } else if (msg.kind === "fill.done") {
+        lastFillResult = msg.result;
+        progress = null;
+        maxObservedTotal = 0;
+        busy = false;
         try {
-          port.disconnect()
+          port.disconnect();
         } catch {}
-        activePort = null
-      } else if (msg.kind === 'fill.error') {
-        errorMsg = msg.error
+        activePort = null;
+      } else if (msg.kind === "fill.error") {
+        errorMsg = formatBatchError(msg.error);
         if (partialProgress) {
           lastFillResult = {
             counts: partialProgress.counts,
+            error: msg.error,
             framesTimedOut: 0,
+            framesUnresponsive: 0,
+            passes: 0,
             total: partialProgress.total,
-          }
+          };
         }
-        progress = null
-        busy = false
+        progress = null;
+        maxObservedTotal = 0;
+        busy = false;
         try {
-          port.disconnect()
+          port.disconnect();
         } catch {}
-        activePort = null
+        activePort = null;
       }
-    })
+    });
 
     port.onDisconnect.addListener(() => {
       if (busy) {
-        busy = false
+        busy = false;
         if (!lastFillResult && !errorMsg) {
-          errorMsg = 'Connection lost'
+          errorMsg = "Connection lost";
           if (partialProgress) {
             lastFillResult = {
               counts: partialProgress.counts,
+              error: { kind: "aborted", message: "Connection lost" },
               framesTimedOut: 0,
+              framesUnresponsive: 0,
+              passes: 0,
               total: partialProgress.total,
-            }
+            };
           }
         }
-        progress = null
-        activePort = null
+        progress = null;
+        maxObservedTotal = 0;
+        activePort = null;
       }
-    })
+    });
 
-    port.postMessage({ kind: 'fill.start', tabId })
-  }
+    port.postMessage({ kind: "fill.start", tabId });
+  };
 
   const handleRefreshProfile = async () => {
-    busy = true
-    errorMsg = null
+    busy = true;
+    errorMsg = null;
     try {
-      const p = await send({ kind: 'profile.refresh' })
-      if (p.ok) summary = p.data as ProfileSummary
-      else if (p.error === 'network-error') {
-        errorMsg = 'Could not reach TalentProfile. Check your connection.'
+      const p = await send({ kind: "profile.refresh" });
+      if (p.ok) summary = p.data as ProfileSummary;
+      else if (p.error === "network-error") {
+        errorMsg = "Could not reach TalentProfile. Check your connection.";
       } else {
-        errorMsg = p.error
+        errorMsg = p.error;
       }
     } finally {
-      busy = false
+      busy = false;
     }
-  }
+  };
 
   const requestEnableOrigin = (pattern: string, origin: string) => {
-    pendingEnableChoice = { pattern, origin }
-  }
+    pendingEnableChoice = { origin, pattern };
+  };
 
   const cancelEnableChoice = () => {
-    pendingEnableChoice = null
-  }
+    pendingEnableChoice = null;
+  };
 
   const confirmEnableMode = async (mode: OriginMode) => {
-    if (!pendingEnableChoice) return
-    const { pattern } = pendingEnableChoice
-    pendingEnableChoice = null
-    if (busy) return
-    busy = true
-    errorMsg = null
+    if (!pendingEnableChoice) return;
+    const { pattern } = pendingEnableChoice;
+    pendingEnableChoice = null;
+    if (busy) return;
+    busy = true;
+    errorMsg = null;
     try {
-      let granted = false
+      let granted = false;
       try {
-        granted = await browser.permissions.request({ origins: [pattern] })
+        granted = await browser.permissions.request({ origins: [pattern] });
       } catch (e) {
-        errorMsg = (e as Error).message
-        return
+        errorMsg = (e as Error).message;
+        return;
       }
       if (!granted) {
-        errorMsg = 'Permission denied'
-        return
+        errorMsg = "Permission denied";
+        return;
       }
-      const res = await send({ kind: 'origin.enable', pattern, mode })
-      if (!res.ok) errorMsg = res.error ?? 'Could not enable'
-      await refreshOriginState()
+      const res = await send({ kind: "origin.enable", mode, pattern });
+      if (!res.ok) errorMsg = res.error ?? "Could not enable";
+      await refreshOriginState();
     } finally {
-      busy = false
+      busy = false;
     }
-  }
+  };
 
-  const handleSetMode = async (
-    entry: EnabledOriginEntry,
-    mode: OriginMode,
-  ) => {
-    if (busy) return
-    busy = true
-    errorMsg = null
+  const handleSetMode = async (entry: EnabledOriginEntry, mode: OriginMode) => {
+    if (busy) return;
+    busy = true;
+    errorMsg = null;
     try {
       const res = await send({
-        kind: 'origin.setMode',
-        pattern: entry.pattern,
+        kind: "origin.setMode",
         mode,
-      })
-      if (!res.ok) errorMsg = res.error ?? 'Could not update'
-      await refreshOriginState()
+        pattern: entry.pattern,
+      });
+      if (!res.ok) errorMsg = res.error ?? "Could not update";
+      await refreshOriginState();
     } finally {
-      busy = false
+      busy = false;
     }
-  }
+  };
 
   const handleDisableOrigin = async (entry: EnabledOriginEntry) => {
-    confirmRevoke = entry
-  }
+    confirmRevoke = entry;
+  };
 
   const confirmDisable = async () => {
-    if (!confirmRevoke) return
-    const entry = confirmRevoke
-    confirmRevoke = null
-    busy = true
-    errorMsg = null
+    if (!confirmRevoke) return;
+    const entry = confirmRevoke;
+    confirmRevoke = null;
+    busy = true;
+    errorMsg = null;
     try {
       const res = await send({
-        kind: 'origin.disable',
+        kind: "origin.disable",
         pattern: entry.pattern,
-      })
-      if (!res.ok) errorMsg = res.error ?? 'Could not disable'
-      await refreshOriginState()
+      });
+      if (!res.ok) errorMsg = res.error ?? "Could not disable";
+      await refreshOriginState();
     } finally {
-      busy = false
+      busy = false;
     }
-  }
+  };
 
   const cancelDisable = () => {
-    confirmRevoke = null
-  }
+    confirmRevoke = null;
+  };
 
   const openLink = (url: string) => {
-    void browser.tabs.create({ url })
-    window.close()
-  }
+    void browser.tabs.create({ url });
+    window.close();
+  };
 
   const openShortcuts = () => {
-    const isFirefox = navigator.userAgent.toLowerCase().includes('firefox')
+    const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
     if (isFirefox) {
-      void browser.tabs.create({ url: 'about:addons' })
+      void browser.tabs.create({ url: "about:addons" });
     } else {
-      void browser.tabs.create({ url: 'chrome://extensions/shortcuts' })
+      void browser.tabs.create({ url: "chrome://extensions/shortcuts" });
     }
-    window.close()
-  }
+    window.close();
+  };
 
   const toggleSettings = () => {
-    settingsOpen = !settingsOpen
-    if (!settingsOpen) manageOpen = false
-  }
+    settingsOpen = !settingsOpen;
+    if (!settingsOpen) manageOpen = false;
+  };
 
   const atsLabel = $derived.by(() => {
-    if (detectedAts === 'workday') return 'Workday'
-    if (detectedAts === 'greenhouseClassic') return 'Greenhouse (Classic)'
-    if (detectedAts === 'greenhouseReact') return 'Greenhouse (React)'
-    return null
-  })
+    if (detectedAts === "workday") return "Workday";
+    if (detectedAts === "greenhouseClassic") return "Greenhouse (Classic)";
+    if (detectedAts === "greenhouseReact") return "Greenhouse (React)";
+    return null;
+  });
 
-  const iframeOrigins = $derived(tabOriginInfo?.iframeOrigins ?? [])
-  const enabledIframes = $derived(iframeOrigins.filter((f) => f.enabled))
-  const hasEnabledIframe = $derived(enabledIframes.length > 0)
+  const iframeOrigins = $derived(tabOriginInfo?.iframeOrigins ?? []);
+  const enabledIframes = $derived(iframeOrigins.filter((f) => f.enabled));
+  const hasEnabledIframe = $derived(enabledIframes.length > 0);
 
-  const topMode = $derived<OriginMode | null>(tabOriginInfo?.topMode ?? null)
+  const topMode = $derived<OriginMode | null>(tabOriginInfo?.topMode ?? null);
   const topIsApplication = $derived(
-    detectedAts !== 'generic' || topMode === 'application',
-  )
+    detectedAts !== "generic" || topMode === "application",
+  );
   const topIsNotesOnly = $derived(
-    detectedAts === 'generic' && topMode === 'notesOnly',
-  )
-  const topIsAuto = $derived(detectedAts === 'generic' && topMode === 'auto')
-  const canFillPage = $derived(topIsApplication || hasEnabledIframe)
+    detectedAts === "generic" && topMode === "notesOnly",
+  );
+  const topIsAuto = $derived(detectedAts === "generic" && topMode === "auto");
+  const canFillPage = $derived(topIsApplication || hasEnabledIframe);
 
   const siteLabel = $derived.by(() => {
-    if (atsLabel) return `${atsLabel} detected`
+    if (atsLabel) return `${atsLabel} detected`;
     if (topIsApplication) {
-      return `Autofill enabled on ${tabOriginInfo?.topOrigin ?? 'this site'}`
+      return `Autofill enabled on ${tabOriginInfo?.topOrigin ?? "this site"}`;
     }
     if (topIsNotesOnly) {
-      return `Picker enabled on ${tabOriginInfo?.topOrigin ?? 'this site'}`
+      return `Picker enabled on ${tabOriginInfo?.topOrigin ?? "this site"}`;
     }
     if (topIsAuto) {
-      return `Auto mode on ${tabOriginInfo?.topOrigin ?? 'this site'}`
+      return `Auto mode on ${tabOriginInfo?.topOrigin ?? "this site"}`;
     }
     if (hasEnabledIframe) {
       if (enabledIframes.length === 1) {
-        return `Enabled on embedded form (${enabledIframes[0].origin})`
+        return `Enabled on embedded form (${enabledIframes[0].origin})`;
       }
-      return `Enabled on ${enabledIframes.length} embedded forms`
+      return `Enabled on ${enabledIframes.length} embedded forms`;
     }
-    return null
-  })
+    return null;
+  });
 
   const profileCompleteness = $derived.by(() => {
-    if (!summary) return null
-    const pct = Math.round((summary.profileScore / MAX_PROFILE_SCORE) * 100)
+    if (!summary) return null;
+    const pct = Math.round((summary.profileScore / MAX_PROFILE_SCORE) * 100);
     if (summary.profileScore < PROFILE_SCORE_EMPTY_BELOW)
-      return { level: 'empty', pct }
+      return { level: "empty", pct };
     if (summary.profileScore < PROFILE_SCORE_COMPLETE_AT)
-      return { level: 'partial', pct }
-    return { level: 'complete', pct }
-  })
+      return { level: "partial", pct };
+    return { level: "complete", pct };
+  });
 
   const missingItems = $derived.by(() => {
-    if (!summary?.scoreItems) return []
-    const items: string[] = []
-    if (!summary.scoreItems.profileName) items.push('Name')
-    if (!summary.scoreItems.location) items.push('Location')
-    if (!summary.scoreItems.totalExperience) items.push('Years of experience')
-    if (summary.scoreItems.description === 'missing') items.push('Summary')
-    if (!summary.scoreItems.skills) items.push('Skills (6+)')
-    if (!summary.scoreItems.experience) items.push('Work experience')
-    if (!summary.scoreItems.education) items.push('Education')
-    if (!summary.scoreItems.languages) items.push('Languages')
-    return items
-  })
+    if (!summary?.scoreItems) return [];
+    const items: string[] = [];
+    if (!summary.scoreItems.profileName) items.push("Name");
+    if (!summary.scoreItems.location) items.push("Location");
+    if (!summary.scoreItems.totalExperience) items.push("Years of experience");
+    if (summary.scoreItems.description === "missing") items.push("Summary");
+    if (!summary.scoreItems.skills) items.push("Skills (6+)");
+    if (!summary.scoreItems.experience) items.push("Work experience");
+    if (!summary.scoreItems.education) items.push("Education");
+    if (!summary.scoreItems.languages) items.push("Languages");
+    return items;
+  });
 
   const fillDisabled = $derived(
-    busy || !canFillPage || profileCompleteness?.level === 'empty',
-  )
-
-  const progressPct = $derived.by(() => {
-    if (!progress || progress.total === 0) return 0
-    const done =
-      progress.counts.filled + progress.counts.skipped + progress.counts.failed
-    return Math.min(100, Math.round((done / progress.total) * 100))
-  })
+    busy || !canFillPage || profileCompleteness?.level === "empty",
+  );
 
   const progressDone = $derived.by(() => {
-    if (!progress) return 0
+    if (!progress) return 0;
     return (
-      progress.counts.filled + progress.counts.skipped + progress.counts.failed
-    )
-  })
+      progress.counts.filled +
+      progress.counts.skipped +
+      progress.counts.failed +
+      progress.counts.unsupported
+    );
+  });
+
+  const totalGrew = $derived(
+    progress !== null && progress.total > 0 && progress.total > maxObservedTotal,
+  );
+
+  const showPassMessage = $derived(progress !== null && progress.pass > 1);
+
+  const progressPct = $derived.by(() => {
+    if (!progress || maxObservedTotal === 0) return 0;
+    const denom = Math.max(progress.total, maxObservedTotal);
+    if (denom === 0) return 0;
+    return Math.min(100, Math.round((progressDone / denom) * 100));
+  });
 
   const fillButtonLabel = $derived.by(() => {
     if (busy && progress && progress.total > 0) {
-      return `Filling ${progressDone}/${progress.total}…`
+      if (showPassMessage) {
+        return `Pass ${progress.pass}: ${progressDone}/${progress.total}…`;
+      }
+      return `Filling ${progressDone}/${progress.total}…`;
     }
-    if (busy) return 'Filling…'
-    return 'Fill visible fields'
-  })
+    if (busy) return "Filling…";
+    return "Fill visible fields";
+  });
 
-  const isMinimalMode = $derived(status.authenticated && !canFillPage)
+  const isMinimalMode = $derived(status.authenticated && !canFillPage);
   const showEnablePrompt = $derived(
     !atsLabel && tabOriginInfo !== null && tabOriginInfo.topEnabled === false,
-  )
+  );
   const showModeControls = $derived(
-    detectedAts === 'generic' && tabOriginInfo?.topEnabled === true,
-  )
+    detectedAts === "generic" && tabOriginInfo?.topEnabled === true,
+  );
 
   const modeLabel = (mode: OriginMode | null): string => {
-    if (mode === 'application') return 'Autofill + Picker'
-    if (mode === 'notesOnly') return 'Picker only'
-    if (mode === 'auto') return 'Auto (detect)'
-    return 'Unknown'
-  }
+    if (mode === "application") return "Autofill + Picker";
+    if (mode === "notesOnly") return "Picker only";
+    if (mode === "auto") return "Auto (detect)";
+    return "Unknown";
+  };
 </script>
 
 <div class="wrap">
@@ -558,11 +632,13 @@
         <p class="meta">
           Sign in on talentprofile.net to connect this extension.
         </p>
-        {#if status.reason === 'refresh-failed'}
+        {#if status.reason === "refresh-failed"}
           <p class="hint">Your session ended. Please sign in again.</p>
         {/if}
-        {#if status.reason === 'network-error'}
-          <p class="hint">Could not verify your session. Check your connection.</p>
+        {#if status.reason === "network-error"}
+          <p class="hint">
+            Could not verify your session. Check your connection.
+          </p>
         {/if}
         {#if errorMsg}<p class="err">{errorMsg}</p>{/if}
         <button
@@ -571,14 +647,14 @@
           onclick={handleSignIn}
           disabled={busy}
         >
-          {busy ? 'Opening…' : 'Sign in'}
+          {busy ? "Opening…" : "Sign in"}
         </button>
         <p class="aside">
           No account?
           <button
             type="button"
             class="link inline"
-            onclick={() => openLink('https://app.talentprofile.net/sign-up')}
+            onclick={() => openLink("https://app.talentprofile.net/sign-up")}
           >
             Sign up
           </button>
@@ -598,7 +674,7 @@
                 onclick={() =>
                   tabOriginInfo &&
                   handleDisableOrigin({
-                    mode: 'notesOnly',
+                    mode: "notesOnly",
                     origin: tabOriginInfo.topOrigin,
                     pattern: tabOriginInfo.topPattern,
                   })}>Disable</button
@@ -614,11 +690,11 @@
                   tabOriginInfo &&
                   handleSetMode(
                     {
-                      mode: 'notesOnly',
+                      mode: "notesOnly",
                       origin: tabOriginInfo.topOrigin,
                       pattern: tabOriginInfo.topPattern,
                     },
-                    'notesOnly',
+                    "notesOnly",
                   )}>Picker only</button
               >
               <button
@@ -629,11 +705,11 @@
                   tabOriginInfo &&
                   handleSetMode(
                     {
-                      mode: 'notesOnly',
+                      mode: "notesOnly",
                       origin: tabOriginInfo.topOrigin,
                       pattern: tabOriginInfo.topPattern,
                     },
-                    'application',
+                    "application",
                   )}>Autofill</button
               >
             </div>
@@ -672,7 +748,7 @@
                     class="link inline"
                     onclick={() =>
                       handleDisableOrigin({
-                        mode: f.mode ?? 'notesOnly',
+                        mode: f.mode ?? "notesOnly",
                         origin: f.origin,
                         pattern: f.pattern,
                       })}>Disable</button
@@ -696,8 +772,8 @@
     {:else}
       <section class="profile">
         {#if summary}
-          <p class="name">{summary.profileName ?? '(no name)'}</p>
-          <p class="meta">{summary.email ?? ''}</p>
+          <p class="name">{summary.profileName ?? "(no name)"}</p>
+          <p class="meta">{summary.email ?? ""}</p>
           {#if summary.jobTitle}
             <p class="meta">{summary.jobTitle}</p>
           {/if}
@@ -706,9 +782,9 @@
             <div class="completeness completeness-{profileCompleteness.level}">
               <div class="completeness-header">
                 <span class="completeness-label">
-                  {#if profileCompleteness.level === 'empty'}
+                  {#if profileCompleteness.level === "empty"}
                     Profile incomplete
-                  {:else if profileCompleteness.level === 'partial'}
+                  {:else if profileCompleteness.level === "partial"}
                     Profile partially complete
                   {:else}
                     Profile complete
@@ -722,12 +798,12 @@
                   style="width: {profileCompleteness.pct}%"
                 ></div>
               </div>
-              {#if profileCompleteness.level !== 'complete' && missingItems.length > 0}
-                <p class="missing">Missing: {missingItems.join(', ')}</p>
+              {#if profileCompleteness.level !== "complete" && missingItems.length > 0}
+                <p class="missing">Missing: {missingItems.join(", ")}</p>
                 <button
                   type="button"
                   class="link inline"
-                  onclick={() => openLink('https://app.talentprofile.net/')}
+                  onclick={() => openLink("https://app.talentprofile.net/")}
                 >
                   Complete profile →
                 </button>
@@ -747,46 +823,46 @@
               <button
                 type="button"
                 class="mode-pill"
-                class:mode-pill-active={topMode === 'application'}
+                class:mode-pill-active={topMode === "application"}
                 disabled={busy}
                 onclick={() =>
                   handleSetMode(
                     {
-                      mode: topMode ?? 'application',
+                      mode: topMode ?? "application",
                       origin: tabOriginInfo!.topOrigin,
                       pattern: tabOriginInfo!.topPattern,
                     },
-                    'application',
+                    "application",
                   )}>Autofill</button
               >
               <button
                 type="button"
                 class="mode-pill"
-                class:mode-pill-active={topMode === 'notesOnly'}
+                class:mode-pill-active={topMode === "notesOnly"}
                 disabled={busy}
                 onclick={() =>
                   handleSetMode(
                     {
-                      mode: topMode ?? 'application',
+                      mode: topMode ?? "application",
                       origin: tabOriginInfo!.topOrigin,
                       pattern: tabOriginInfo!.topPattern,
                     },
-                    'notesOnly',
+                    "notesOnly",
                   )}>Picker only</button
               >
               <button
                 type="button"
                 class="mode-pill"
-                class:mode-pill-active={topMode === 'auto'}
+                class:mode-pill-active={topMode === "auto"}
                 disabled={busy}
                 onclick={() =>
                   handleSetMode(
                     {
-                      mode: topMode ?? 'application',
+                      mode: topMode ?? "application",
                       origin: tabOriginInfo!.topOrigin,
                       pattern: tabOriginInfo!.topPattern,
                     },
-                    'auto',
+                    "auto",
                   )}>Auto</button
               >
             </div>
@@ -828,7 +904,11 @@
           <div class="fill-progress">
             <div class="fill-progress-header">
               <span class="fill-progress-label">
-                Filling {progressDone} of {progress.total}
+                {#if showPassMessage}
+                  Pass {progress.pass}: filling {progressDone} of {progress.total}
+                {:else}
+                  Filling {progressDone} of {progress.total}
+                {/if}
               </span>
               <span class="fill-progress-pct">{progressPct}%</span>
             </div>
@@ -838,10 +918,15 @@
                 style="width: {progressPct}%"
               ></div>
             </div>
+            {#if totalGrew && progress.pass > 1}
+              <p class="fill-progress-note">
+                Discovered more fields after first pass.
+              </p>
+            {/if}
           </div>
         {/if}
 
-        {#if profileCompleteness?.level === 'empty'}
+        {#if profileCompleteness?.level === "empty"}
           <p class="warn">
             Your profile is too empty to fill forms. Complete your profile
             first.
@@ -852,9 +937,26 @@
           <div class="result">
             <p class="info">
               Filled <strong>{lastFillResult.counts.filled}</strong>, skipped
-              <strong>{lastFillResult.counts.skipped}</strong>, failed
-              <strong>{lastFillResult.counts.failed}</strong>
+              <strong>{lastFillResult.counts.skipped}</strong>, not in profile
+              <strong>{lastFillResult.counts.unsupported}</strong
+              >{#if lastFillResult.counts.failed > 0}, failed <strong
+                  >{lastFillResult.counts.failed}</strong
+                >{/if}
             </p>
+            {#if lastFillResult.framesUnresponsive > 0}
+              <p class="info warn-inline">
+                {lastFillResult.framesUnresponsive} frame{lastFillResult.framesUnresponsive ===
+                1
+                  ? ""
+                  : "s"} didn&apos;t respond.
+              </p>
+            {/if}
+            {#if lastFillResult.passes > 1}
+              <p class="info passes">
+                Discovered new fields after fill — {lastFillResult.passes} passes
+                total.
+              </p>
+            {/if}
           </div>
         {/if}
 
@@ -886,7 +988,9 @@
                 <div class="manage-row">
                   <div class="manage-origin-block">
                     <span class="manage-origin">{entry.origin}</span>
-                    <span class="manage-mode-badge">{modeLabel(entry.mode)}</span>
+                    <span class="manage-mode-badge"
+                      >{modeLabel(entry.mode)}</span
+                    >
                   </div>
                   <button
                     type="button"
@@ -901,18 +1005,14 @@
         {/if}
       </div>
 
-      <button
-        type="button"
-        class="settings-row"
-        onclick={openShortcuts}
-      >
+      <button type="button" class="settings-row" onclick={openShortcuts}>
         <span>Keyboard shortcuts</span>
       </button>
 
       <button
         type="button"
         class="settings-row"
-        onclick={() => openLink('https://app.talentprofile.net/')}
+        onclick={() => openLink("https://app.talentprofile.net/")}
         disabled={busy}
       >
         <span>Open dashboard</span>
@@ -960,7 +1060,7 @@
           <button
             type="button"
             class="mode-choice"
-            onclick={() => confirmEnableMode('application')}
+            onclick={() => confirmEnableMode("application")}
           >
             <span class="mode-choice-title">Autofill + Picker</span>
             <span class="mode-choice-desc"
@@ -970,7 +1070,7 @@
           <button
             type="button"
             class="mode-choice"
-            onclick={() => confirmEnableMode('notesOnly')}
+            onclick={() => confirmEnableMode("notesOnly")}
           >
             <span class="mode-choice-title">Picker only</span>
             <span class="mode-choice-desc"
@@ -981,7 +1081,7 @@
           <button
             type="button"
             class="mode-choice"
-            onclick={() => confirmEnableMode('auto')}
+            onclick={() => confirmEnableMode("auto")}
           >
             <span class="mode-choice-title">Auto (detect)</span>
             <span class="mode-choice-desc"
@@ -1014,7 +1114,9 @@
         aria-label="Confirm disable"
         tabindex={-1}
       >
-        <p class="modal-title">Disable TalentProfile on {confirmRevoke.origin}?</p>
+        <p class="modal-title">
+          Disable TalentProfile on {confirmRevoke.origin}?
+        </p>
         <p class="modal-body">
           The extension will stop running on this site. You can re-enable it
           later.
@@ -1035,20 +1137,20 @@
     <button
       type="button"
       class="footer-link"
-      onclick={() => openLink('https://talentprofile.net/privacy')}
+      onclick={() => openLink("https://talentprofile.net/privacy")}
       >Privacy</button
     >
     <span class="dot">·</span>
     <button
       type="button"
       class="footer-link"
-      onclick={() => openLink('https://talentprofile.net/terms')}>Terms</button
+      onclick={() => openLink("https://talentprofile.net/terms")}>Terms</button
     >
     <span class="dot">·</span>
     <button
       type="button"
       class="footer-link"
-      onclick={() => openLink('https://talentprofile.net/contact')}
+      onclick={() => openLink("https://talentprofile.net/contact")}
       >Contact</button
     >
   </footer>
@@ -1062,7 +1164,7 @@
     font:
       14px/1.4 -apple-system,
       BlinkMacSystemFont,
-      'Segoe UI',
+      "Segoe UI",
       Roboto,
       Helvetica,
       Arial,
@@ -1109,7 +1211,7 @@
     background: #f1f5f9;
     color: #0f172a;
   }
-  .settings-btn[aria-expanded='true'] {
+  .settings-btn[aria-expanded="true"] {
     background: #e2e8f0;
     color: #0f172a;
   }
@@ -1465,6 +1567,9 @@
     border: 1px solid #e2e8f0;
     border-radius: 6px;
     padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
   .info {
     font-size: 12px;
@@ -1474,6 +1579,13 @@
   .info strong {
     color: #0f172a;
     font-weight: 600;
+  }
+  .info.passes {
+    font-size: 11px;
+    color: #64748b;
+  }
+  .warn-inline {
+    color: #b45309;
   }
   .fill-progress {
     display: flex;
@@ -1510,6 +1622,11 @@
     background: #175cfa;
     border-radius: 3px;
     transition: width 180ms ease-out;
+  }
+  .fill-progress-note {
+    font-size: 11px;
+    color: #64748b;
+    margin: 0;
   }
   .settings-panel {
     position: absolute;
@@ -1566,7 +1683,7 @@
     transition: transform 160ms ease;
     color: #94a3b8;
   }
-  .chevron[data-open='true'] {
+  .chevron[data-open="true"] {
     transform: rotate(90deg);
   }
   .manage-list {
@@ -1717,11 +1834,11 @@
     padding: 4px 6px;
     cursor: pointer;
   }
-  .footer-link:hover {
-    color: #175cfa;
-  }
   .dot {
     color: #cbd5e1;
     font-size: 11px;
+  }
+  .footer-link:hover {
+    color: #175cfa;
   }
 </style>

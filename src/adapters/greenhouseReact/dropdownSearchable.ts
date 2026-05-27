@@ -1,14 +1,15 @@
-import { sleep } from '~/core/async'
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements, waitForElement } from '~/core/getElements'
 import { scrollBack } from '~/core/scroll'
 import { getReactProps } from '~/core/reactProps'
+import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
-import { findOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
+import { findOption } from '~/core/match'
 
-const VERIFY_SETTLE_MS = 150
+const SELECTION_SETTLE_MS = 150
+const DROPDOWN_WAIT_MS = 600
 
 export class DropdownSearchable extends GreenhouseReactBaseInput {
   static XPATH = xpaths.DROPDOWN_SEARCHABLE
@@ -42,14 +43,23 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
   private openDropdown(): void {
     const trigger = this.menuOpenTriggerDiv
     if (!trigger) return
-    getReactProps(trigger)?.onMouseUp?.({ defaultPrevented: false })
+    const reactProps = getReactProps(trigger)
+    if (reactProps?.onMouseUp) {
+      reactProps.onMouseUp({
+        defaultPrevented: false,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      })
+    } else {
+      trigger.click()
+    }
   }
 
   private async waitForDropdown(): Promise<HTMLElement | null> {
     return waitForElement(
       this.element,
       `.//div[starts-with(@class, "select__menu")]`,
-      { timeout: 300 },
+      { timeout: DROPDOWN_WAIT_MS },
     )
   }
 
@@ -63,7 +73,17 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
     const input = this.searchInput
     if (!input) return
     input.value = value
-    getReactProps(input)?.onChange?.({ currentTarget: input })
+    const reactProps = getReactProps(input)
+    if (reactProps?.onChange) {
+      reactProps.onChange({
+        currentTarget: input,
+        target: input,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      })
+    } else {
+      input.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    }
   }
 
   private async findInVisible(candidate: string): Promise<HTMLElement | null> {
@@ -81,46 +101,57 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
 
   private blurInput(): void {
     const input = this.searchInput
-    if (input) getReactProps(input)?.onBlur?.()
-  }
-
-  private isCandidateSelected(candidate: string): boolean {
-    const current = this.currentValue()
-    if (!current) return false
-    if (optionMatches(current, candidate)) return true
-    return optionMatchesRelaxed(current, candidate)
+    if (!input) return
+    const reactProps = getReactProps(input)
+    if (reactProps?.onBlur) {
+      reactProps.onBlur({
+        target: input,
+        currentTarget: input,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      })
+    } else {
+      input.blur()
+    }
   }
 
   async fill(value: ProfileValue): Promise<boolean> {
     if (value.kind !== 'choice') return false
     const candidates = [value.preferred, ...value.fallbacks]
 
-    let filled = false
-    await fieldFillerQueue.enqueue(async () => {
-      await scrollBack(
+    return fieldFillerQueue.enqueue(async () => {
+      return await scrollBack(
         async () => {
-          this.openDropdown()
-
           for (const candidate of candidates) {
-            let match = await this.findInVisible(candidate)
-            if (!match) match = await this.findViaSearch(candidate)
-            if (match) {
-              match.click()
-              await sleep(VERIFY_SETTLE_MS)
-              this.blurInput()
-              if (this.isCandidateSelected(candidate)) {
-                filled = true
-                return
-              }
+            if (await verifySelection(() => this.currentValue(), candidate, 0)) {
+              return true
             }
           }
 
-          this.typeIntoSearch('')
-          this.blurInput()
+          let filled = false
+          try {
+            this.openDropdown()
+            for (const candidate of candidates) {
+              let match = await this.findInVisible(candidate)
+              if (!match) match = await this.findViaSearch(candidate)
+              if (!match) continue
+              match.click()
+              await sleep(SELECTION_SETTLE_MS)
+              if (
+                await verifySelection(() => this.currentValue(), candidate, 0)
+              ) {
+                filled = true
+                return true
+              }
+            }
+            return false
+          } finally {
+            if (!filled) this.typeIntoSearch('')
+            this.blurInput()
+          }
         },
         { element: this.element },
       )
     })
-    return filled
   }
 }

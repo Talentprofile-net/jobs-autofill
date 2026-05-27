@@ -1,9 +1,12 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements } from '~/core/getElements'
-import { selectMatches } from '~/core/multiChoiceSelection'
+import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
+import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+
+const VERIFY_SETTLE_MS = 80
 
 type Choice = { input: HTMLInputElement; label: HTMLElement; text: string }
 
@@ -31,30 +34,36 @@ export class Checkboxes extends GreenhouseBaseInput {
     return out
   }
 
-  currentValue(): string {
+  currentValue(): string[] {
     return this.choices
       .filter((c) => c.input.checked)
       .map((c) => c.text)
-      .join(', ')
   }
 
   async fill(value: ProfileValue): Promise<boolean> {
     if (value.kind !== 'choice' && value.kind !== 'multiChoice') return false
     const choices = this.choices
+    if (choices.length === 0) return false
 
-    let filled = false
-    await fieldFillerQueue.enqueue(async () => {
-      const matched = selectMatches(choices, (c) => c.text, value)
-      if (matched.length === 0) return
-      let anyChanged = false
-      for (const m of matched) {
-        if (!m.input.checked) {
-          m.label.click()
-          anyChanged = true
-        }
+    return fieldFillerQueue.enqueue(async () => {
+      const selected = choices.filter((c) => c.input.checked)
+      const plan = planSelection(choices, selected, (c) => c.text, value)
+
+      for (const choice of plan.toDeselect) {
+        if (choice.input.checked) choice.label.click()
       }
-      filled = anyChanged
+      for (const choice of plan.toSelect) {
+        if (!choice.input.checked) choice.label.click()
+      }
+
+      await sleep(VERIFY_SETTLE_MS)
+
+      return verifySelectedSet(
+        choices,
+        (c) => c.text,
+        (c) => c.input.checked,
+        value,
+      )
     })
-    return filled
   }
 }

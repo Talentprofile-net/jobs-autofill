@@ -19,6 +19,21 @@ const fillPart = (input: HTMLInputElement, value: string): void => {
   input.dispatchEvent(new Event('blur', { bubbles: true }))
 }
 
+const partMatches = (
+  fieldValue: string,
+  expected: string,
+  padded: string,
+): boolean => {
+  if (fieldValue === padded) return true
+  if (fieldValue === expected) return true
+  const fieldNum = parseInt(fieldValue, 10)
+  const expectedNum = parseInt(expected, 10)
+  if (Number.isFinite(fieldNum) && Number.isFinite(expectedNum)) {
+    return fieldNum === expectedNum
+  }
+  return false
+}
+
 export class GenericDateGroup extends GenericBaseField {
   override fieldType = 'MonthDayYear'
 
@@ -61,11 +76,13 @@ export class GenericDateGroup extends GenericBaseField {
   }
 
   currentValue(): string[] {
-    return [
-      this.parts.month?.value ?? '',
-      this.parts.day?.value ?? '',
-      this.parts.year?.value ?? '',
-    ]
+    const parts: string[] = []
+    parts.push(this.parts.month?.value ?? '')
+    if (this.hasDay) {
+      parts.push(this.parts.day?.value ?? '')
+    }
+    parts.push(this.parts.year?.value ?? '')
+    return parts
   }
 
   async fill(value: ProfileValue): Promise<boolean> {
@@ -80,8 +97,7 @@ export class GenericDateGroup extends GenericBaseField {
     const yearEl = this.parts.year
     if (!monthEl || !yearEl) return false
 
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       const targetMonth = padToWidth(value.month!, widthFor(monthEl, 2))
       const targetYear = padToWidth(value.year, widthFor(yearEl, 4))
 
@@ -94,18 +110,18 @@ export class GenericDateGroup extends GenericBaseField {
 
       await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS))
 
-      const monthOk =
-        monthEl.value === targetMonth || monthEl.value === value.month
-      const yearOk =
-        yearEl.value === targetYear || yearEl.value === value.year
+      const monthOk = partMatches(monthEl.value, value.month!, targetMonth)
+      const yearOk = partMatches(yearEl.value, value.year, targetYear)
       const dayOk =
         !this.hasDay ||
         !value.day ||
         !this.parts.day ||
-        this.parts.day.value === padToWidth(value.day, widthFor(this.parts.day, 2)) ||
-        this.parts.day.value === value.day
-      success = monthOk && yearOk && dayOk
+        partMatches(
+          this.parts.day.value,
+          value.day,
+          padToWidth(value.day, widthFor(this.parts.day, 2)),
+        )
+      return monthOk && yearOk && dayOk
     })
-    return success
   }
 }

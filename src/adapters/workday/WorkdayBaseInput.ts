@@ -18,6 +18,9 @@ const EDUCATION_LABEL_PATTERNS: RegExp[] = [
 
 const FIELD_LABEL_XPATH = `.//label | .//legend`
 const SECTION_DEBOUNCE_MS = 100
+const MIN_FIELDS_FOR_SECTION = 3
+const FORM_FIELD_XPATH =
+  ".//*[starts-with(@data-automation-id, 'formField-')]"
 
 const classifyFresh = (container: HTMLElement): SectionKind => {
   const labelEls = getElements(container, FIELD_LABEL_XPATH)
@@ -34,10 +37,10 @@ const classifyFresh = (container: HTMLElement): SectionKind => {
   if (employmentHits === 0 && educationHits === 0) return 'other'
   if (employmentHits > educationHits) return 'employment'
   if (educationHits > employmentHits) return 'education'
-  return 'employment'
+  return 'other'
 }
 
-let classificationCache = new WeakMap<HTMLElement, SectionKind>()
+const classificationCache = new WeakMap<HTMLElement, SectionKind>()
 
 const classifyContainer = (container: HTMLElement): SectionKind => {
   const cached = classificationCache.get(container)
@@ -47,21 +50,31 @@ const classifyContainer = (container: HTMLElement): SectionKind => {
   return kind
 }
 
-const findClosestSectionContainer = (start: HTMLElement): HTMLElement | null => {
-  let node: HTMLElement | null = start.parentElement
-  while (node) {
-    const tag = node.tagName.toLowerCase()
-    if (tag === 'fieldset') return node
-    if (node.getAttribute('role') === 'group') return node
-    node = node.parentElement
-  }
-  return null
+const countFormFields = (container: HTMLElement): number =>
+  getElements(container, FORM_FIELD_XPATH).length
+
+const isSectionCandidate = (node: HTMLElement): boolean => {
+  const tag = node.tagName.toLowerCase()
+  if (tag !== 'fieldset' && node.getAttribute('role') !== 'group') return false
+  return true
 }
 
-let indexCache: {
-  byKind: Map<SectionKind, HTMLElement[]>
-} | null = null
+const findSectionContainer = (start: HTMLElement): HTMLElement | null => {
+  let node: HTMLElement | null = start.parentElement
+  let firstCandidate: HTMLElement | null = null
+  while (node) {
+    if (isSectionCandidate(node)) {
+      if (firstCandidate === null) firstCandidate = node
+      if (countFormFields(node) >= MIN_FIELDS_FOR_SECTION) {
+        return node
+      }
+    }
+    node = node.parentElement
+  }
+  return firstCandidate
+}
 
+let indexCache: { byKind: Map<SectionKind, HTMLElement[]> } | null = null
 let sectionObserver: MutationObserver | null = null
 let invalidationTimer: number | null = null
 
@@ -104,24 +117,26 @@ const ensureSectionObserver = (): void => {
     }
     if (touched) scheduleIndexInvalidation()
   })
-  sectionObserver.observe(root, {
-    childList: true,
-    subtree: true,
-  })
+  sectionObserver.observe(root, { childList: true, subtree: true })
 }
 
-export const invalidateWorkdaySectionCache = (): void => {
+export const teardownWorkdaySections = (): void => {
+  if (sectionObserver) {
+    sectionObserver.disconnect()
+    sectionObserver = null
+  }
+  if (invalidationTimer !== null) {
+    window.clearTimeout(invalidationTimer)
+    invalidationTimer = null
+  }
   indexCache = null
-  classificationCache = new WeakMap()
 }
 
-const buildIndexCache = (): {
-  byKind: Map<SectionKind, HTMLElement[]>
-} => {
+const buildIndexCache = (): { byKind: Map<SectionKind, HTMLElement[]> } => {
   const allContainers = getElements(
     document,
     './/fieldset | .//div[@role="group"]',
-  )
+  ).filter((el) => countFormFields(el) >= MIN_FIELDS_FOR_SECTION)
   const byKind = new Map<SectionKind, HTMLElement[]>()
   byKind.set('employment', [])
   byKind.set('education', [])
@@ -152,13 +167,14 @@ const indexAmongPeers = (
 
 export abstract class WorkdayBaseInput extends BaseField {
   private get sectionContainer(): HTMLElement | null {
-    return findClosestSectionContainer(this.element)
+    return findSectionContainer(this.element)
   }
 
   override get section(): string {
     ensureSectionObserver()
     const container = this.sectionContainer
     if (!container) return ''
+    if (countFormFields(container) < MIN_FIELDS_FOR_SECTION) return ''
     const kind = classifyContainer(container)
     if (kind === 'other') return ''
     const index = indexAmongPeers(container, kind)

@@ -141,9 +141,10 @@ const buildHeaders = async (init: RequestInit2): Promise<HeadersInit> => {
 
 const parseErrorBody = async (res: Response): Promise<string> => {
   const contentType = res.headers.get('content-type') ?? ''
+  const cloned = res.clone()
   try {
     if (contentType.includes('application/json')) {
-      const body = await res.json()
+      const body = await cloned.json()
       if (body && typeof body === 'object') {
         const obj = body as Record<string, unknown>
         if (typeof obj.error === 'string') return obj.error
@@ -151,7 +152,7 @@ const parseErrorBody = async (res: Response): Promise<string> => {
       }
       return JSON.stringify(body)
     }
-    const text = await res.text()
+    const text = await cloned.text()
     return text || res.statusText
   } catch {
     return res.statusText
@@ -212,6 +213,8 @@ export const apiFetch = async <T>(
       }
     } else if (outcome.kind === 'network') {
       throw new NetworkError('Could not reach auth server')
+    } else {
+      throw new AuthError('No valid session')
     }
   }
 

@@ -40,6 +40,16 @@ const POPOVER_OFFSET = 6;
 const MIN_POPOVER_MAX_HEIGHT = 320;
 const MOBILE_CLOSE_ANIMATION_MS = 240;
 
+const HANDLED_KEYS = new Set([
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Enter",
+  "/",
+]);
+
 const STYLE_TEXT = `
 :host {
   all: initial;
@@ -600,7 +610,9 @@ export const openPicker = (ctx: PickerContext): void => {
   };
   const handleHostKeydown = (e: KeyboardEvent) => {
     if (e.key === "Escape") closePicker();
-    e.stopPropagation();
+    if (HANDLED_KEYS.has(e.key)) {
+      e.stopPropagation();
+    }
   };
   document.addEventListener("mousedown", handleOutsideClick, true);
   host.addEventListener("keydown", handleHostKeydown);

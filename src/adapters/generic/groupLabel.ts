@@ -1,4 +1,5 @@
 import { resolveLabel } from './labelResolver'
+import { resolveLabelledByText } from '~/core/labelledBy'
 
 export const groupLabel = (anchor: HTMLElement): string => {
   const fieldset = anchor.closest('fieldset') as HTMLElement | null
@@ -11,12 +12,10 @@ export const groupLabel = (anchor: HTMLElement): string => {
   if (roleGroup) {
     const ariaLabel = roleGroup.getAttribute('aria-label')?.trim()
     if (ariaLabel) return ariaLabel
-    const labelledBy = roleGroup.getAttribute('aria-labelledby')
-    if (labelledBy) {
-      const el = document.getElementById(labelledBy)
-      const text = el?.innerText?.trim()
-      if (text) return text
-    }
+    const labelledByText = resolveLabelledByText(
+      roleGroup.getAttribute('aria-labelledby'),
+    )
+    if (labelledByText) return labelledByText
   }
   return ''
 }

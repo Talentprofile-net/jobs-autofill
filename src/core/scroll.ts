@@ -35,10 +35,10 @@ const collectScrollableAncestors = (
   return out
 }
 
-export const scrollBack = async (
-  callback: Callback<void>,
+export const scrollBack = async <T>(
+  callback: Callback<T>,
   options: ScrollBackOptions = {},
-): Promise<void> => {
+): Promise<T> => {
   const { scrollX, scrollY } = window
   const ancestors = collectScrollableAncestors(options.element ?? null)
   const ancestorSnapshots = ancestors.map((el) => ({
@@ -47,13 +47,12 @@ export const scrollBack = async (
     left: el.scrollLeft,
   }))
   try {
-    const res = callback()
-    if (res instanceof Promise) {
-      await res
-    }
+    const result = callback()
+    const value = result instanceof Promise ? await result : result
     if (options.delay && options.delay > 0) {
       await sleep(options.delay)
     }
+    return value
   } finally {
     for (const snap of ancestorSnapshots) {
       if (document.documentElement.contains(snap.el)) {

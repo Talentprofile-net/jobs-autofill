@@ -1,10 +1,11 @@
 import type { AtsName, FillOutcome, ProfileValue } from './types'
-import type { ResolvedOriginMode } from '~/bridge/types'
+import type { ResolvedOriginMode, FieldResolveResult } from '~/bridge/types'
 import { BRIDGE_MAGIC, FIELD_MARKER_ATTR } from '~/config'
 import { BaseField, isVisible } from './baseField'
 import {
   getOriginMode,
   onBridgeMessage,
+  resolveLearnedAnswersBatchViaBridge,
   resolveValuesForFields,
 } from '~/bridge/mainBridge'
 import { detectAts as detectAtsHost } from '~/core/ats'
@@ -13,12 +14,14 @@ import { RegisterInputs as registerWorkday } from '~/adapters/workday'
 import { RegisterInputs as registerGreenhouseClassic } from '~/adapters/greenhouseClassic'
 import { RegisterInputs as registerGreenhouseReact } from '~/adapters/greenhouseReact'
 import { RegisterInputs as registerGeneric } from '~/adapters/generic'
+import { teardownWorkdaySections } from '~/adapters/workday/WorkdayBaseInput'
 import type { FillCounts, MainWorldRequest } from '~/bridge/types'
 import {
   destroyAllFormWidgets,
   refreshFormWidgets,
   setFormWidgetMode,
 } from '~/ui/formWidgetManager'
+import { openPicker } from '~/ui/picker/pickerController'
 
 export const detectAts = (): AtsName => detectAtsHost()
 
@@ -30,10 +33,8 @@ export const registerField = (field: BaseField): void => {
 
 export const unregisterField = (uuid: string): void => {
   fieldRegistry.delete(uuid)
+  remountState.delete(uuid)
 }
-
-export const getFieldByUuid = (uuid: string): BaseField | undefined =>
-  fieldRegistry.get(uuid)
 
 export const allFields = (): BaseField[] => Array.from(fieldRegistry.values())
 
@@ -42,11 +43,11 @@ let currentMode: ResolvedOriginMode = 'notesOnly'
 export const getCurrentMode = (): ResolvedOriginMode => currentMode
 
 const FORM_CONTAINER_XPATHS: Record<Exclude<AtsName, 'generic'>, string> = {
-  workday:
-    ".//div[@data-automation-id='applicationPage' or @data-automation-id='jobApplyPage' or @role='main']",
   greenhouseClassic: ".//form[@id='application_form'] | .//div[@id='application']",
   greenhouseReact:
     ".//div[contains(concat(' ', normalize-space(@class), ' '), ' application--container ')]",
+  workday:
+    ".//div[@data-automation-id='applicationPage' or @data-automation-id='jobApplyPage' or @role='main']",
 }
 
 const GENERIC_FORM_CONTAINER_XPATH = ".//form | .//div[@role='form']"
@@ -64,19 +65,17 @@ export const detectFormContainer = (): HTMLElement => {
   return document.documentElement
 }
 
-export const discoverAll = async (
-  node: Node = detectFormContainer(),
-): Promise<void> => {
+export const discoverAll = (node: Node = detectFormContainer()): void => {
   const ats = detectAts()
 
   if (ats === 'workday') {
-    await registerWorkday(node)
+    registerWorkday(node)
   } else if (ats === 'greenhouseClassic') {
-    await registerGreenhouseClassic(node)
+    registerGreenhouseClassic(node)
   } else if (ats === 'greenhouseReact') {
-    await registerGreenhouseReact(node)
+    registerGreenhouseReact(node)
   } else {
-    await registerGeneric(node)
+    registerGeneric(node)
   }
 }
 
@@ -85,67 +84,164 @@ const sweepStaleFields = (): void => {
     if (!document.documentElement.contains(field.element)) {
       field.destroy()
       fieldRegistry.delete(uuid)
+      remountState.delete(uuid)
+    }
+  }
+}
+
+type RemountState = {
+  lastAttemptAt: number
+  consecutiveFailures: number
+}
+
+const remountState = new Map<string, RemountState>()
+
+const REMOUNT_BASE_BACKOFF_MS = 1000
+const REMOUNT_MAX_BACKOFF_MS = 30_000
+const REMOUNT_SUCCESS_VERIFY_MS = 250
+
+const computeBackoff = (failures: number): number => {
+  if (failures <= 0) return 0
+  const exp = Math.min(failures, 6)
+  const backoff = REMOUNT_BASE_BACKOFF_MS * Math.pow(2, exp - 1)
+  return Math.min(backoff, REMOUNT_MAX_BACKOFF_MS)
+}
+
+const remountOrphanedWidgets = (): void => {
+  const now = Date.now()
+  for (const field of fieldRegistry.values()) {
+    if (!document.documentElement.contains(field.element)) continue
+    if (field.hasLiveWidget()) {
+      const state = remountState.get(field.uuid)
+      if (state && state.consecutiveFailures > 0) {
+        if (now - state.lastAttemptAt > REMOUNT_SUCCESS_VERIFY_MS) {
+          remountState.delete(field.uuid)
+        }
+      }
+      continue
+    }
+    const state = remountState.get(field.uuid) ?? {
+      consecutiveFailures: 0,
+      lastAttemptAt: 0,
+    }
+    const backoff = computeBackoff(state.consecutiveFailures)
+    if (now - state.lastAttemptAt < backoff) continue
+    field.remountWidget()
+    state.lastAttemptAt = now
+    state.consecutiveFailures += 1
+    remountState.set(field.uuid, state)
+  }
+}
+
+const resetRemountBackoff = (): void => {
+  remountState.clear()
+}
+
+const stripOrphanedMarkers = (): void => {
+  const marked = document.querySelectorAll<HTMLElement>(
+    `[${FIELD_MARKER_ATTR}]`,
+  )
+  for (const el of marked) {
+    const uuid = el.getAttribute(FIELD_MARKER_ATTR)
+    if (!uuid) continue
+    const field = fieldRegistry.get(uuid)
+    if (!field) {
+      el.removeAttribute(FIELD_MARKER_ATTR)
+      continue
+    }
+    if (field.element !== el) {
+      el.removeAttribute(FIELD_MARKER_ATTR)
     }
   }
 }
 
 const postToContent = (payload: MainWorldRequest): void => {
   window.postMessage(
-    { magic: BRIDGE_MAGIC, from: 'main', payload },
+    { from: 'main', magic: BRIDGE_MAGIC, payload },
     window.location.origin,
   )
 }
 
-const emitFillResult = (batchId: string, counts: FillCounts): void => {
+const emitFillResult = (
+  batchId: string,
+  counts: FillCounts,
+  passes: number,
+): void => {
   postToContent({
-    id: crypto.randomUUID(),
-    kind: 'tab.fillAllResult',
     batchId,
     counts,
+    id: crypto.randomUUID(),
+    kind: 'tab.fillAllResult',
+    passes,
   })
 }
 
-const emitFillStarted = (batchId: string, total: number): void => {
+const emitFillStarted = (batchId: string, total: number, pass: number): void => {
   postToContent({
+    batchId,
     id: crypto.randomUUID(),
     kind: 'tab.fillStarted',
-    batchId,
+    pass,
     total,
   })
 }
 
-const PROGRESS_BATCH_MS = 80
+const emitTotalIncreased = (
+  batchId: string,
+  addedTotal: number,
+  pass: number,
+): void => {
+  postToContent({
+    addedTotal,
+    batchId,
+    id: crypto.randomUUID(),
+    kind: 'tab.fillTotalIncreased',
+    pass,
+  })
+}
 
-const createProgressEmitter = (batchId: string) => {
-  let pending: { filled: number; skipped: number; failed: number } = {
+const PROGRESS_BATCH_MS = 80
+const REDISCOVERY_SETTLE_MS = 350
+const MAX_FILL_PASSES = 3
+
+const createProgressEmitter = (batchId: string, getPass: () => number) => {
+  let pending = {
+    failed: 0,
     filled: 0,
     skipped: 0,
-    failed: 0,
+    unsupported: 0,
   }
   let timer: number | null = null
-  const flush = () => {
-    if (pending.filled === 0 && pending.skipped === 0 && pending.failed === 0) {
+  const flushInner = () => {
+    if (
+      pending.filled === 0 &&
+      pending.skipped === 0 &&
+      pending.failed === 0 &&
+      pending.unsupported === 0
+    ) {
       timer = null
       return
     }
     const delta = pending
-    pending = { filled: 0, skipped: 0, failed: 0 }
+    pending = { failed: 0, filled: 0, skipped: 0, unsupported: 0 }
     timer = null
     postToContent({
-      id: crypto.randomUUID(),
-      kind: 'tab.fillProgress',
       batchId,
       delta,
+      id: crypto.randomUUID(),
+      kind: 'tab.fillProgress',
+      pass: getPass(),
       totalDelta: 0,
     })
   }
   return {
-    add(delta: { filled: number; skipped: number; failed: number }) {
+    add(delta: { filled: number; skipped: number; failed: number; unsupported: number }) {
       pending.filled += delta.filled
       pending.skipped += delta.skipped
       pending.failed += delta.failed
+      pending.unsupported += delta.unsupported
       if (timer === null) {
-        timer = window.setTimeout(flush, PROGRESS_BATCH_MS)
+        timer = window.setTimeout(flushInner, PROGRESS_BATCH_MS)
       }
     },
     flush() {
@@ -153,32 +249,15 @@ const createProgressEmitter = (batchId: string) => {
         window.clearTimeout(timer)
         timer = null
       }
-      flush()
+      flushInner()
     },
   }
 }
 
-const activeBatchIds = new Set<string>()
+let currentBatchId: string | null = null
 
-const fillAll = async (
-  batchId: string,
-  container?: HTMLElement,
-  emitToBackground = true,
-): Promise<FillCounts> => {
-  if (currentMode === 'notesOnly') {
-    const empty: FillCounts = { filled: 0, skipped: 0, failed: 0 }
-    if (emitToBackground) {
-      emitFillStarted(batchId, 0)
-      emitFillResult(batchId, empty)
-    }
-    return empty
-  }
-
-  const root = container ?? detectFormContainer()
-  await discoverAll(root)
-  sweepStaleFields()
-
-  const liveFields = Array.from(fieldRegistry.values()).filter((field) => {
+const collectFillableFields = (container?: HTMLElement): BaseField[] =>
+  Array.from(fieldRegistry.values()).filter((field) => {
     if (!document.documentElement.contains(field.element)) return false
     if (!field.isFillable()) return false
     if (!isVisible(field.element)) return false
@@ -186,95 +265,248 @@ const fillAll = async (
     return true
   })
 
-  if (emitToBackground) emitFillStarted(batchId, liveFields.length)
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => window.setTimeout(r, ms))
 
-  if (liveFields.length === 0) {
-    const empty: FillCounts = { filled: 0, skipped: 0, failed: 0 }
-    if (emitToBackground) emitFillResult(batchId, empty)
-    return empty
+type SinglePassOutcome = {
+  passedUuids: Set<string>
+  counts: FillCounts
+}
+
+const runSinglePass = async (
+  fields: BaseField[],
+  emitter: ReturnType<typeof createProgressEmitter> | null,
+): Promise<SinglePassOutcome> => {
+  const counts: FillCounts = {
+    failed: 0,
+    filled: 0,
+    skipped: 0,
+    unsupported: 0,
   }
+  const passedUuids = new Set<string>()
 
-  const requests = liveFields.map((field) => ({
-    requestId: field.uuid,
+  if (fields.length === 0) return { counts, passedUuids }
+
+  const requests = fields.map((field) => ({
     fieldName: field.fieldName,
     fieldType: field.fieldType,
+    requestId: field.uuid,
     section: field.section,
   }))
 
-  const resolved = await resolveValuesForFields(requests)
+  const profileResolved = await resolveValuesForFields(requests)
 
-  let filled = 0
-  let skipped = 0
-  let failed = 0
-  const emitter = emitToBackground ? createProgressEmitter(batchId) : null
+  const unresolvedRequests = requests.filter((r) => {
+    const v = profileResolved.get(r.requestId)
+    return !v || v.value.kind === 'unsupported'
+  })
+
+  const learnedResolved = new Map<
+    string,
+    { value: ProfileValue; matchedAnswerId: string | null }
+  >()
+  if (unresolvedRequests.length > 0) {
+    const learnedResults = await resolveLearnedAnswersBatchViaBridge(
+      unresolvedRequests,
+    )
+    for (const r of learnedResults) {
+      learnedResolved.set(r.requestId, {
+        matchedAnswerId: r.matchedAnswerId,
+        value: r.value,
+      })
+    }
+  }
+
+  for (const field of fields) {
+    if (!document.documentElement.contains(field.element)) {
+      counts.skipped++
+      emitter?.add({ failed: 0, filled: 0, skipped: 1, unsupported: 0 })
+      passedUuids.add(field.uuid)
+      field.recordResolverOutcome('skipped')
+      continue
+    }
+    if (!isVisible(field.element)) {
+      counts.skipped++
+      emitter?.add({ failed: 0, filled: 0, skipped: 1, unsupported: 0 })
+      passedUuids.add(field.uuid)
+      field.recordResolverOutcome('skipped')
+      continue
+    }
+
+    const profileResult: FieldResolveResult = profileResolved.get(field.uuid) ?? {
+      profileField: null,
+      requestId: field.uuid,
+      value: { kind: 'unsupported' },
+    }
+    const learned = learnedResolved.get(field.uuid)
+
+    let value: ProfileValue = profileResult.value
+    let profileField: string | null = profileResult.profileField
+    let matchedAnswerId: string | null = null
+    if (
+      value.kind === 'unsupported' &&
+      learned &&
+      learned.value.kind !== 'unsupported' &&
+      learned.value.kind !== 'timeout'
+    ) {
+      value = learned.value
+      matchedAnswerId = learned.matchedAnswerId
+      profileField = null
+    }
+
+    try {
+      const outcome: FillOutcome = await field.fillFromResolved(value, false)
+      if (outcome.status === 'filled') {
+        counts.filled++
+        emitter?.add({ failed: 0, filled: 1, skipped: 0, unsupported: 0 })
+        if (matchedAnswerId) {
+          field.recordLearnedAnswerFill(matchedAnswerId)
+        }
+        field.recordResolverOutcome('filled', profileField)
+      } else if (outcome.status === 'skipped') {
+        counts.skipped++
+        emitter?.add({ failed: 0, filled: 0, skipped: 1, unsupported: 0 })
+        field.recordResolverOutcome('skipped', profileField)
+      } else if (outcome.status === 'unsupported') {
+        counts.unsupported++
+        emitter?.add({ failed: 0, filled: 0, skipped: 0, unsupported: 1 })
+        field.markUnsupportedForCapture()
+        field.recordResolverOutcome('unsupported')
+      } else {
+        counts.failed++
+        emitter?.add({ failed: 1, filled: 0, skipped: 0, unsupported: 0 })
+        field.recordResolverOutcome('failed', profileField)
+      }
+    } catch (e) {
+      counts.failed++
+      emitter?.add({ failed: 1, filled: 0, skipped: 0, unsupported: 0 })
+      field.recordResolverOutcome('failed', profileField)
+      console.warn('[TP] fill failed', field.uuid, e)
+    }
+    passedUuids.add(field.uuid)
+  }
+
+  return { counts, passedUuids }
+}
+
+const fillAll = async (
+  batchId: string,
+  container?: HTMLElement,
+  emitToBackground = true,
+): Promise<FillCounts> => {
+  if (currentMode === 'notesOnly') {
+    const empty: FillCounts = {
+      failed: 0,
+      filled: 0,
+      skipped: 0,
+      unsupported: 0,
+    }
+    if (emitToBackground) {
+      emitFillStarted(batchId, 0, 1)
+      emitFillResult(batchId, empty, 0)
+    }
+    return empty
+  }
+
+  const root = container ?? detectFormContainer()
+  discoverAll(root)
+  sweepStaleFields()
+
+  const initialFields = collectFillableFields(container)
+
+  let currentPass = 1
+  if (emitToBackground) emitFillStarted(batchId, initialFields.length, currentPass)
+
+  if (initialFields.length === 0) {
+    const empty: FillCounts = {
+      failed: 0,
+      filled: 0,
+      skipped: 0,
+      unsupported: 0,
+    }
+    if (emitToBackground) emitFillResult(batchId, empty, 0)
+    return empty
+  }
+
+  const emitter = emitToBackground
+    ? createProgressEmitter(batchId, () => currentPass)
+    : null
+
+  const totalCounts: FillCounts = {
+    failed: 0,
+    filled: 0,
+    skipped: 0,
+    unsupported: 0,
+  }
+  const everPassed = new Set<string>()
+
+  let passes = 0
+  let currentBatch = initialFields
 
   try {
-    for (const field of liveFields) {
-      if (!document.documentElement.contains(field.element)) {
-        skipped++
-        emitter?.add({ filled: 0, skipped: 1, failed: 0 })
-        continue
-      }
-      if (!isVisible(field.element)) {
-        skipped++
-        emitter?.add({ filled: 0, skipped: 1, failed: 0 })
-        continue
-      }
-      const value: ProfileValue =
-        resolved.get(field.uuid) ?? { kind: 'unsupported' }
-      try {
-        const outcome: FillOutcome = await field.fillFromResolved(value, false)
-        if (outcome.status === 'filled') {
-          filled++
-          emitter?.add({ filled: 1, skipped: 0, failed: 0 })
-        } else if (outcome.status === 'skipped') {
-          skipped++
-          emitter?.add({ filled: 0, skipped: 1, failed: 0 })
-        } else {
-          failed++
-          emitter?.add({ filled: 0, skipped: 0, failed: 1 })
-        }
-      } catch (e) {
-        failed++
-        emitter?.add({ filled: 0, skipped: 0, failed: 1 })
-        console.warn('[TP] fill failed', field.uuid, e)
-      }
+    while (passes < MAX_FILL_PASSES && currentBatch.length > 0) {
+      passes++
+      currentPass = passes
+      const outcome = await runSinglePass(currentBatch, emitter)
+      totalCounts.filled += outcome.counts.filled
+      totalCounts.skipped += outcome.counts.skipped
+      totalCounts.failed += outcome.counts.failed
+      totalCounts.unsupported += outcome.counts.unsupported
+      for (const uuid of outcome.passedUuids) everPassed.add(uuid)
+
+      if (passes >= MAX_FILL_PASSES) break
+
+      await sleep(REDISCOVERY_SETTLE_MS)
+      discoverAll(root)
+      sweepStaleFields()
+
+      const nextFields = collectFillableFields(container).filter(
+        (f) => !everPassed.has(f.uuid),
+      )
+      if (nextFields.length === 0) break
+
+      currentBatch = nextFields
+      currentPass = passes + 1
+      if (emitToBackground) emitTotalIncreased(batchId, nextFields.length, currentPass)
     }
   } finally {
     emitter?.flush()
   }
 
-  const counts: FillCounts = { filled, skipped, failed }
-  console.info('[TP] fill summary', batchId, counts)
-  if (emitToBackground) emitFillResult(batchId, counts)
-  return counts
+  console.info('[TP] fill summary', batchId, totalCounts, 'passes', passes)
+  if (emitToBackground) emitFillResult(batchId, totalCounts, passes)
+  return totalCounts
 }
 
 export const fillFormContainer = async (
   container: HTMLElement,
 ): Promise<FillCounts> => {
   const batchId = crypto.randomUUID()
-  if (activeBatchIds.size > 0) {
-    return { filled: 0, skipped: 0, failed: 0 }
+  if (currentBatchId !== null) {
+    return { failed: 0, filled: 0, skipped: 0, unsupported: 0 }
   }
-  activeBatchIds.add(batchId)
+  currentBatchId = batchId
   try {
     return await fillAll(batchId, container, false)
   } finally {
-    activeBatchIds.delete(batchId)
+    if (currentBatchId === batchId) currentBatchId = null
   }
 }
 
 const handleFillAllRequest = (batchId: string): void => {
-  if (activeBatchIds.has(batchId)) return
-  if (activeBatchIds.size > 0) {
+  if (currentBatchId === batchId) return
+  if (currentBatchId !== null) {
     console.warn('[TP] fill already in progress; ignoring new batch', batchId)
-    emitFillResult(batchId, { filled: 0, skipped: 0, failed: 0 })
+    emitFillResult(
+      batchId,
+      { failed: 0, filled: 0, skipped: 0, unsupported: 0 },
+      0,
+    )
     return
   }
-  activeBatchIds.add(batchId)
+  currentBatchId = batchId
   void fillAll(batchId, undefined, true).finally(() => {
-    activeBatchIds.delete(batchId)
+    if (currentBatchId === batchId) currentBatchId = null
   })
 }
 
@@ -284,7 +516,7 @@ const handleHotkeyFillAll = (): void => {
   handleFillAllRequest(batchId)
 }
 
-const handleHotkeyOpenPicker = async (): Promise<void> => {
+const handleHotkeyOpenPicker = (): void => {
   const active = document.activeElement as HTMLElement | null
   if (!active) return
   const fieldHost = active.closest<HTMLElement>(`[${FIELD_MARKER_ATTR}]`)
@@ -293,15 +525,14 @@ const handleHotkeyOpenPicker = async (): Promise<void> => {
   if (!uuid) return
   const field = fieldRegistry.get(uuid)
   if (!field) return
-  const { openPicker } = await import('~/ui/picker/pickerController')
   openPicker({
     anchor: active,
     field: field.element,
-    fieldUuid: field.uuid,
     fieldName: field.fieldName,
     fieldType: field.fieldType,
-    section: field.section,
+    fieldUuid: field.uuid,
     pickerMode: field.pickerMode,
+    section: field.section,
   })
 }
 
@@ -309,12 +540,14 @@ const DISCOVER_DEBOUNCE_MS = 250
 const DISCOVER_MAX_WAIT_MS = 2000
 const SWEEP_DEBOUNCE_MS = 1000
 const ROOT_RETARGET_DEBOUNCE_MS = 500
+const FOCUS_RECOVERY_RETRY_MS = 400
 
 export const startObserver = (): (() => void) => {
   let discoverTimer: number | null = null
   let discoverMaxTimer: number | null = null
   let sweepTimer: number | null = null
   let retargetTimer: number | null = null
+  let focusRecoveryTimer: number | null = null
   let observer: MutationObserver | null = null
   let rootObserver: MutationObserver | null = null
   let currentTarget: HTMLElement = document.documentElement
@@ -322,6 +555,9 @@ export const startObserver = (): (() => void) => {
   void (async () => {
     currentMode = await getOriginMode()
     setFormWidgetMode(currentMode)
+    if (currentMode === 'application') {
+      refreshFormWidgets()
+    }
   })()
 
   const ensureTargetAlive = (): boolean => {
@@ -355,9 +591,10 @@ export const startObserver = (): (() => void) => {
 
   const runDiscoverCycle = (): void => {
     ensureTargetAlive()
-    void discoverAll(currentTarget).then(() => {
-      refreshFormWidgets()
-    })
+    stripOrphanedMarkers()
+    discoverAll(currentTarget)
+    remountOrphanedWidgets()
+    refreshFormWidgets()
   }
 
   const scheduleDiscover = () => {
@@ -397,9 +634,6 @@ export const startObserver = (): (() => void) => {
       scheduleSweep()
     })
     observer.observe(target, {
-      childList: true,
-      subtree: true,
-      attributes: true,
       attributeFilter: [
         FIELD_MARKER_ATTR,
         'hidden',
@@ -407,8 +641,10 @@ export const startObserver = (): (() => void) => {
         'aria-disabled',
         'disabled',
         'readonly',
-        'class',
       ],
+      attributes: true,
+      childList: true,
+      subtree: true,
     })
     currentTarget = target
   }
@@ -424,15 +660,38 @@ export const startObserver = (): (() => void) => {
     })
   }
 
+  const runFocusRecovery = () => {
+    sweepStaleFields()
+    stripOrphanedMarkers()
+    resetRemountBackoff()
+    discoverAll(currentTarget)
+    remountOrphanedWidgets()
+    refreshFormWidgets()
+  }
+
+  const onWindowFocus = () => {
+    runFocusRecovery()
+    if (focusRecoveryTimer !== null) window.clearTimeout(focusRecoveryTimer)
+    focusRecoveryTimer = window.setTimeout(() => {
+      focusRecoveryTimer = null
+      runFocusRecovery()
+    }, FOCUS_RECOVERY_RETRY_MS)
+  }
+
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      runFocusRecovery()
+    }
+  }
+
   startObserving(detectFormContainer())
   startRootObserver()
 
-  window.setTimeout(() => {
-    void discoverAll(currentTarget).then(() => {
-      refreshFormWidgets()
-    })
-    retargetIfFormContainerAppeared()
-  }, 500)
+  runDiscoverCycle()
+  retargetIfFormContainerAppeared()
+
+  window.addEventListener('focus', onWindowFocus)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 
   const unsubscribe = onBridgeMessage((msg) => {
     if (msg.kind === 'tab.fillAll') {
@@ -448,7 +707,7 @@ export const startObserver = (): (() => void) => {
       }
     }
     if (msg.kind === 'cmd.openPicker') {
-      void handleHotkeyOpenPicker()
+      handleHotkeyOpenPicker()
     }
     if (msg.kind === 'cmd.fillAllHotkey') {
       handleHotkeyFillAll()
@@ -460,13 +719,18 @@ export const startObserver = (): (() => void) => {
     observer = null
     rootObserver?.disconnect()
     rootObserver = null
+    window.removeEventListener('focus', onWindowFocus)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
     unsubscribe()
     if (discoverTimer !== null) window.clearTimeout(discoverTimer)
     if (discoverMaxTimer !== null) window.clearTimeout(discoverMaxTimer)
     if (sweepTimer !== null) window.clearTimeout(sweepTimer)
     if (retargetTimer !== null) window.clearTimeout(retargetTimer)
+    if (focusRecoveryTimer !== null) window.clearTimeout(focusRecoveryTimer)
+    teardownWorkdaySections()
     destroyAllFormWidgets()
     for (const field of fieldRegistry.values()) field.destroy()
     fieldRegistry.clear()
+    remountState.clear()
   }
 }

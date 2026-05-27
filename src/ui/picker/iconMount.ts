@@ -7,6 +7,7 @@ import {
   findIconDonor,
   readDonorAppearance,
 } from '~/ui/donorStyle'
+import { scoreSendButton } from '~/ui/sendButtonScoring'
 
 type MountOptions = {
   field: HTMLElement
@@ -16,8 +17,6 @@ type MountOptions = {
   section: string
   pickerMode: PickerMode
 }
-
-type MountStrategy = 'in-action-row' | 'absolute-in-parent'
 
 const TARGET_GAP_PX = 6
 
@@ -57,14 +56,6 @@ const STYLE_ABSOLUTE = `
   right: 4px;
   transform: translateY(-50%);
   z-index: 2147483646;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-:host([data-tp-visible="true"]) {
-  opacity: 1;
-}
-:host > div {
   pointer-events: auto;
 }
 button {
@@ -124,35 +115,7 @@ const findHostAnchor = (field: HTMLElement): HTMLElement | null => {
 
 const MAX_COMPOSER_DEPTH = 8
 const MAX_ROW_WALK_DEPTH = 10
-
-const SEND_ARIA_PATTERNS = [
-  /\bsend\b/i,
-  /\bsubmit\b/i,
-  /\bvoice\b/i,
-  /\brecord\b/i,
-  /\bстарт\b/i,
-  /\bотправить\b/i,
-]
-
-const buttonLooksLikeSend = (btn: HTMLElement): number => {
-  let score = 0
-  if (btn.getAttribute('type') === 'submit') score += 10
-  const aria = btn.getAttribute('aria-label') ?? ''
-  if (aria) {
-    for (const re of SEND_ARIA_PATTERNS) {
-      if (re.test(aria)) {
-        score += 8
-        break
-      }
-    }
-  }
-  const dataTestId = btn.getAttribute('data-testid') ?? ''
-  if (/send|submit/i.test(dataTestId)) score += 6
-  const id = btn.id ?? ''
-  if (/send|submit/i.test(id)) score += 4
-  if (btn.querySelector('svg') && !btn.textContent?.trim()) score += 1
-  return score
-}
+const MIN_SEND_SCORE = 4
 
 type Candidate = {
   el: HTMLElement
@@ -176,7 +139,7 @@ const collectCandidateButtons = (
     if (btn.getAttribute('aria-hidden') === 'true') continue
     const rect = btn.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) continue
-    out.push({ el: btn, rect, sendScore: buttonLooksLikeSend(btn) })
+    out.push({ el: btn, rect, sendScore: scoreSendButton(btn) })
   }
   return out
 }
@@ -199,16 +162,20 @@ const findSendButton = (
 ): HTMLElement | null => {
   const candidates = collectCandidateButtons(composer, anchor)
   if (candidates.length === 0) return null
-  const scored = candidates.filter((c) => c.sendScore > 0)
-  if (scored.length > 0) {
-    scored.sort((a, b) => {
-      if (b.sendScore !== a.sendScore) return b.sendScore - a.sendScore
-      return b.rect.right - a.rect.right
-    })
-    return scored[0].el
-  }
-  candidates.sort((a, b) => b.rect.right - a.rect.right)
-  return candidates[0].el
+
+  const anchorRect = anchor.getBoundingClientRect()
+  const scored = candidates.filter((c) => c.sendScore >= MIN_SEND_SCORE)
+  if (scored.length === 0) return null
+
+  scored.sort((a, b) => {
+    if (b.sendScore !== a.sendScore) return b.sendScore - a.sendScore
+    return b.rect.right - a.rect.right
+  })
+
+  const top = scored[0]
+  if (top.rect.right < anchorRect.left) return null
+
+  return top.el
 }
 
 const isHorizontalFlexLike = (el: HTMLElement): boolean => {
@@ -317,9 +284,20 @@ const applyInlineSpacing = (host: HTMLElement, row: HTMLElement): void => {
   host.style.marginRight = `${extra}px`
 }
 
+const mountAbsoluteInParent = (
+  host: HTMLElement,
+  anchor: HTMLElement,
+  shadow: ShadowRoot,
+): void => {
+  applyStyles(shadow, STYLE_ABSOLUTE)
+  const parent = anchor.parentElement ?? anchor
+  ensurePositioned(parent)
+  parent.appendChild(host)
+}
+
 export const mountPickerIcon = (
   opts: MountOptions,
-): { destroy: () => void } | null => {
+): { destroy: () => void; host: HTMLElement } | null => {
   const anchor = findHostAnchor(opts.field)
   if (!anchor) return null
 
@@ -330,15 +308,13 @@ export const mountPickerIcon = (
   const mountTarget = document.createElement('div')
   shadow.appendChild(mountTarget)
 
-  const composer = findComposerRoot(anchor)
+  const forceAbsolute = opts.pickerMode === 'notesOnly'
+  const composer = forceAbsolute ? null : findComposerRoot(anchor)
   const sendButton = composer ? findSendButton(composer, anchor) : null
   const insertion =
     composer && sendButton ? findActionRowInsertion(sendButton, composer) : null
 
-  let strategy: MountStrategy
-
-  if (insertion) {
-    strategy = 'in-action-row'
+  if (!forceAbsolute && insertion) {
     applyStyles(shadow, STYLE_INLINE)
     insertion.row.insertBefore(host, insertion.before)
     applyInlineSpacing(host, insertion.row)
@@ -347,8 +323,7 @@ export const mountPickerIcon = (
       const appearance = readDonorAppearance(donor, composer)
       applyAppearanceVars(host, appearance, 'tp-icon')
     }
-  } else if (sendButton && sendButton.parentElement) {
-    strategy = 'in-action-row'
+  } else if (!forceAbsolute && sendButton && sendButton.parentElement) {
     applyStyles(shadow, STYLE_INLINE)
     sendButton.parentElement.insertBefore(host, sendButton)
     applyInlineSpacing(host, sendButton.parentElement)
@@ -358,31 +333,7 @@ export const mountPickerIcon = (
       applyAppearanceVars(host, appearance, 'tp-icon')
     }
   } else {
-    strategy = 'absolute-in-parent'
-    applyStyles(shadow, STYLE_ABSOLUTE)
-    const parent = anchor.parentElement ?? opts.field
-    ensurePositioned(parent)
-    parent.appendChild(host)
-  }
-
-  let teardownFocusListeners: (() => void) | null = null
-
-  if (strategy === 'absolute-in-parent') {
-    const setVisible = (visible: boolean) => {
-      host.setAttribute('data-tp-visible', visible ? 'true' : 'false')
-    }
-    const onFocusIn = () => setVisible(true)
-    const onFocusOut = (e: FocusEvent) => {
-      const next = e.relatedTarget as Node | null
-      if (next && (opts.field.contains(next) || host.contains(next))) return
-      setVisible(false)
-    }
-    opts.field.addEventListener('focusin', onFocusIn)
-    opts.field.addEventListener('focusout', onFocusOut)
-    teardownFocusListeners = () => {
-      opts.field.removeEventListener('focusin', onFocusIn)
-      opts.field.removeEventListener('focusout', onFocusOut)
-    }
+    mountAbsoluteInParent(host, anchor, shadow)
   }
 
   const handleOpen = () => {
@@ -407,9 +358,9 @@ export const mountPickerIcon = (
 
   return {
     destroy: () => {
-      teardownFocusListeners?.()
       unmount(component)
       host.remove()
     },
+    host,
   }
 }

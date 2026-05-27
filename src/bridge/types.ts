@@ -1,5 +1,5 @@
 import type { AtsName, OriginMode, ProfileValue } from '~/field/types'
-import type { Profile, ProfileNote } from '~/api/types'
+import type { Profile, ProfileNote, TalentAnswer } from '~/api/types'
 
 export type AuthMethod = 'local' | 'google' | 'github' | 'magic' | 'auth0' | 'email'
 
@@ -20,33 +20,86 @@ export type FieldResolveRequest = {
   section: string
 }
 
+export type FieldResolveResult = {
+  requestId: string
+  value: ProfileValue
+  profileField: string | null
+}
+
+export type LearnedAnswerFieldRequest = {
+  requestId: string
+  fieldName: string
+  fieldType: string
+  section: string
+}
+
+export type LearnedAnswerBridgeResult = {
+  requestId: string
+  value: ProfileValue
+  matchedAnswerId: string | null
+}
+
 export type FillCounts = {
   filled: number
   skipped: number
   failed: number
+  unsupported: number
+}
+
+export type FillBatchErrorKind =
+  | 'not-authenticated'
+  | 'network'
+  | 'profile-fetch'
+  | 'no-frames'
+  | 'busy'
+  | 'aborted'
+  | 'unknown'
+
+export type FillBatchError = {
+  kind: FillBatchErrorKind
+  message: string
 }
 
 export type FillBatchResult = {
   counts: FillCounts
   framesTimedOut: number
+  framesUnresponsive: number
   total: number
+  passes: number
+  error?: FillBatchError
 }
 
 export type FillProgress = {
   counts: FillCounts
   total: number
+  pass: number
 }
 
 export type FillPortIncoming =
   | { kind: 'fill.start'; tabId: number }
 
 export type FillPortOutgoing =
-  | { kind: 'fill.frame.started'; total: number }
-  | { kind: 'fill.progress'; counts: FillCounts; total: number }
+  | { kind: 'fill.frame.started'; total: number; pass: number }
+  | { kind: 'fill.progress'; counts: FillCounts; total: number; pass: number }
   | { kind: 'fill.done'; result: FillBatchResult }
-  | { kind: 'fill.error'; error: string }
+  | { kind: 'fill.error'; error: FillBatchError }
 
 export type ResolvedOriginMode = 'application' | 'notesOnly'
+
+export type ResolverOutcomeKind = 'filled' | 'skipped' | 'unsupported' | 'failed'
+
+export type AnswerCaptureRecord = {
+  fieldName: string
+  fieldType: string
+  section: string
+  answerKind: string
+  answerValue: ProfileValue
+  answerText: string | null
+  profileField: string | null
+  resolverOutcome: ResolverOutcomeKind
+  source: 'manual' | 'correction' | 'resolver_filled' | 'resolver_skipped'
+  sourceAnswerId: string | null
+}
 
 export type MainWorldRequest =
   | {
@@ -61,16 +114,24 @@ export type MainWorldRequest =
       kind: 'resolveFieldValues'
       fields: (FieldResolveRequest & { requestId: string })[]
     }
+  | {
+      id: string
+      kind: 'resolveLearnedAnswers'
+      fields: LearnedAnswerFieldRequest[]
+    }
+  | { id: string; kind: 'learnedAnswer.delete'; answerId: string }
   | { id: string; kind: 'mainWorld.ready' }
-  | { id: string; kind: 'tab.fillAllResult'; batchId: string; counts: FillCounts }
-  | { id: string; kind: 'tab.fillStarted'; batchId: string; total: number }
+  | { id: string; kind: 'tab.fillAllResult'; batchId: string; counts: FillCounts; passes: number }
+  | { id: string; kind: 'tab.fillStarted'; batchId: string; total: number; pass: number }
   | {
       id: string
       kind: 'tab.fillProgress'
       batchId: string
-      delta: { filled: number; skipped: number; failed: number }
+      delta: { filled: number; skipped: number; failed: number; unsupported: number }
       totalDelta: number
+      pass: number
     }
+  | { id: string; kind: 'tab.fillTotalIncreased'; batchId: string; addedTotal: number; pass: number }
   | { id: string; kind: 'auth.requestSignIn' }
   | { id: string; kind: 'auth.getStatus' }
   | { id: string; kind: 'auth.getSummary' }
@@ -81,13 +142,38 @@ export type MainWorldRequest =
   | { id: string; kind: 'note.delete'; noteId: string }
   | { id: string; kind: 'note.touch'; noteId: string }
   | { id: string; kind: 'mode.get' }
+  | {
+      id: string
+      kind: 'answers.flush'
+      records: AnswerCaptureRecord[]
+      pageUrl: string
+      ats: AtsName
+    }
 
 export type ContentScriptRequest =
-  | { id: string; kind: 'fieldValueResult'; value: ProfileValue; error?: string }
+  | {
+      id: string
+      kind: 'fieldValueResult'
+      value: ProfileValue
+      profileField: string | null
+      error?: string
+    }
   | {
       id: string
       kind: 'fieldValuesResult'
-      values: { requestId: string; value: ProfileValue }[]
+      values: FieldResolveResult[]
+      error?: string
+    }
+  | {
+      id: string
+      kind: 'learnedAnswersResult'
+      results: LearnedAnswerBridgeResult[]
+      error?: string
+    }
+  | {
+      id: string
+      kind: 'learnedAnswer.deleteResult'
+      answerId: string | null
       error?: string
     }
   | { id: string; kind: 'mainWorld.ping' }
@@ -102,8 +188,10 @@ export type ContentScriptRequest =
   | { id: string; kind: 'note.touchResult'; ok: boolean; error?: string }
   | { id: string; kind: 'mode.result'; mode: ResolvedOriginMode }
   | { id: string; kind: 'mode.changed'; mode: ResolvedOriginMode }
+  | { id: string; kind: 'mode.resolveAuto' }
   | { id: string; kind: 'cmd.openPicker' }
   | { id: string; kind: 'cmd.fillAllHotkey' }
+  | { id: string; kind: 'answers.flushResult'; ok: boolean; error?: string }
 
 export type DetectedAts = AtsName | null
 
@@ -128,6 +216,15 @@ export type ProfileScoreItems = {
   education: boolean
 }
 
+export type LearnedAnswerSummary = {
+  id: string
+  questionText: string
+  answerText: string | null
+  fieldType: string
+  lastUsedAt: string | null
+  updatedAt: string
+}
+
 export type PopupToBackground =
   | { kind: 'auth.logout' }
   | { kind: 'auth.status' }
@@ -142,6 +239,8 @@ export type PopupToBackground =
   | { kind: 'origin.disable'; pattern: string }
   | { kind: 'origin.setMode'; pattern: string; mode: OriginMode }
   | { kind: 'origin.list' }
+  | { kind: 'learnedAnswers.list' }
+  | { kind: 'learnedAnswers.delete'; answerId: string }
 
 export type ContentToBackground =
   | { kind: 'resolve'; fieldName: string; fieldType: string; section: string }
@@ -149,6 +248,11 @@ export type ContentToBackground =
       kind: 'resolveMany'
       fields: (FieldResolveRequest & { requestId: string })[]
     }
+  | {
+      kind: 'learnedAnswers.resolve'
+      fields: LearnedAnswerFieldRequest[]
+    }
+  | { kind: 'learnedAnswers.delete'; answerId: string }
   | { kind: 'auth.status' }
   | { kind: 'auth.openConnectPage' }
   | { kind: 'auth.openDashboard' }
@@ -159,14 +263,23 @@ export type ContentToBackground =
   | { kind: 'note.update'; noteId: string; content: string }
   | { kind: 'note.delete'; noteId: string }
   | { kind: 'mode.get' }
+  | { kind: 'mode.frameResolved'; mode: ResolvedOriginMode }
   | { kind: 'frame.register'; ats: AtsName; url: string }
-  | { kind: 'frame.fillResult'; batchId: string; counts: FillCounts }
-  | { kind: 'frame.fillStarted'; batchId: string; total: number }
+  | { kind: 'frame.fillResult'; batchId: string; counts: FillCounts; passes: number }
+  | { kind: 'frame.fillStarted'; batchId: string; total: number; pass: number }
   | {
       kind: 'frame.fillProgress'
       batchId: string
-      delta: { filled: number; skipped: number; failed: number }
+      delta: { filled: number; skipped: number; failed: number; unsupported: number }
       totalDelta: number
+      pass: number
+    }
+  | { kind: 'frame.fillTotalIncreased'; batchId: string; addedTotal: number; pass: number }
+  | {
+      kind: 'answers.flush'
+      records: AnswerCaptureRecord[]
+      pageUrl: string
+      ats: AtsName
     }
 
 export type ExternalToBackground =
@@ -202,3 +315,5 @@ export type EnabledOriginEntry = {
   origin: string
   mode: OriginMode
 }
+
+export type { TalentAnswer }

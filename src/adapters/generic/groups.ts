@@ -17,7 +17,22 @@ const groupingContainer = (input: HTMLElement): HTMLElement => {
   if (fieldset) return fieldset
   const role = input.closest('[role="group"]') as HTMLElement | null
   if (role) return role
+  const form = input.closest('form') as HTMLElement | null
+  if (form) return form
   return input.parentElement ?? document.body
+}
+
+const containerKeySuffixCache = new WeakMap<HTMLElement, string>()
+
+const containerKeySuffix = (container: HTMLElement): string => {
+  const cached = containerKeySuffixCache.get(container)
+  if (cached !== undefined) return cached
+  const siblingIndex = Array.from(container.parentNode?.children ?? []).indexOf(
+    container,
+  )
+  const suffix = `${container.tagName}::${container.id || ''}::${siblingIndex}`
+  containerKeySuffixCache.set(container, suffix)
+  return suffix
 }
 
 export const discoverRadioGroups = (root: ParentNode): RadioGroup[] => {
@@ -30,17 +45,26 @@ export const discoverRadioGroups = (root: ParentNode): RadioGroup[] => {
     return true
   })
 
-  const grouped = new Map<string, HTMLInputElement[]>()
+  const grouped = new Map<
+    string,
+    { container: HTMLElement; name: string; inputs: HTMLInputElement[] }
+  >()
+
   for (const radio of radios) {
     const name = radio.name
     if (!name) continue
-    const list = grouped.get(name) ?? []
-    list.push(radio)
-    grouped.set(name, list)
+    const container = groupingContainer(radio)
+    const key = `${name}::${containerKeySuffix(container)}`
+    const existing = grouped.get(key)
+    if (existing) {
+      existing.inputs.push(radio)
+    } else {
+      grouped.set(key, { container, name, inputs: [radio] })
+    }
   }
 
   const groups: RadioGroup[] = []
-  for (const [name, inputs] of grouped) {
+  for (const { name, inputs } of grouped.values()) {
     if (inputs.length < 2) continue
     groups.push({
       anchor: inputs[0],
@@ -99,23 +123,28 @@ export const discoverCheckboxGroups = (
       if (namedInputs.length === 1) {
         singles.push(namedInputs[0])
       } else {
+        const containerToken =
+          container.id ||
+          container.getAttribute('aria-labelledby') ||
+          containerKeySuffix(container)
         groups.push({
           anchor: namedInputs[0],
           inputs: namedInputs,
-          groupKey: name,
+          groupKey: `${name}@${containerToken}`,
         })
       }
     }
 
     if (noName.length > 0) {
       if (isExplicitGroup && byName.size === 0) {
+        const containerToken =
+          container.id ||
+          container.getAttribute('aria-labelledby') ||
+          containerKeySuffix(container)
         groups.push({
           anchor: noName[0],
           inputs: noName,
-          groupKey:
-            container.id ||
-            container.getAttribute('aria-labelledby') ||
-            `cb-${groups.length}`,
+          groupKey: `cb@${containerToken}`,
         })
       } else {
         for (const cb of noName) singles.push(cb)

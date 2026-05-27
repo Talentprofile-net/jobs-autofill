@@ -3,6 +3,7 @@ import { getElement } from '~/core/getElements'
 import { padToWidth } from '~/core/padToWidth'
 import { isValidYear } from '~/core/dateValidation'
 import { widthFor } from '~/core/dateUtils'
+import { sleep } from '~/core/async'
 import { WorkdayBaseInput } from '../WorkdayBaseInput'
 import { xpaths } from '../xpaths'
 import { fillDatePart } from './utils'
@@ -28,12 +29,10 @@ export class Year extends WorkdayBaseInput {
     const y = this.yearInputElement
     if (!y) return false
     const targetYear = padToWidth(value.year, widthFor(y, 4))
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
-      await fillDatePart(y, value.year)
-      await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS))
-      success = y.value === targetYear || y.value === value.year
+    return fieldFillerQueue.enqueue(async () => {
+      fillDatePart(y, value.year)
+      await sleep(VERIFY_SETTLE_MS)
+      return y.value === targetYear || y.value === value.year
     })
-    return success
   }
 }

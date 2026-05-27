@@ -22,11 +22,9 @@ export class NumberInput extends GreenhouseReactBaseInput {
     if (value.kind !== 'string') return false
     const input = this.inputElement
     if (!input) return false
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       fillReactTextInput(input, value.value, { eventName: 'onChange' })
-      success = await verifyTextValue(input, value.value)
+      return verifyTextValue(input, value.value)
     })
-    return success
   }
 }

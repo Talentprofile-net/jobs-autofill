@@ -35,7 +35,16 @@
   let { ctx, onClose, mobile }: Props = $props()
 
   const NOTE_MAX_LENGTH = 4000
-  const STORAGE_KEY = `tp.picker.path.${location.hostname}`
+
+  const pathKeySegment = (): string => {
+    const path = location.pathname
+    const cleaned = path.replace(/\/+$/, '').replace(/^\//, '')
+    if (!cleaned) return 'root'
+    const segments = cleaned.split('/').slice(0, 3)
+    return segments.join('/') || 'root'
+  }
+
+  const STORAGE_KEY = `tp.picker.path.${location.hostname}.${pathKeySegment()}`
   const SWIPE_REVEAL_PX = 96
   const TRUNCATION_TOAST_MS = 3200
 

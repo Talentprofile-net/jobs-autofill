@@ -50,7 +50,13 @@ export class Sections {
       }
       const sectionChanged = mutations.some((m) => {
         if (m.type === 'childList') return true
-        if (m.type === 'attributes') return true
+        if (m.type === 'attributes') {
+          const current =
+            m.attributeName === null
+              ? null
+              : (m.target as HTMLElement).getAttribute(m.attributeName)
+          return current !== m.oldValue
+        }
         return false
       })
       if (sectionChanged) {
@@ -61,6 +67,7 @@ export class Sections {
       childList: true,
       attributes: true,
       attributeFilter: ['id', 'class'],
+      attributeOldValue: true,
       subtree: true,
     })
     registeredWrappers.set(this.element, observer)

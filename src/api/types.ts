@@ -67,6 +67,7 @@ export type Profile = {
   education: ProfileEducationEntry[] | null
   experience: ProfileExperienceEntry[] | null
   talentNotes: ProfileNote[] | null
+  talentAnswers: TalentAnswer[] | null
   user: {
     email: string | null
     phoneNumber: string | null
@@ -81,4 +82,26 @@ export type AuthResponse = {
 export type ApiErrorPayload = {
   status: number
   message: string
+}
+
+export type TalentAnswer = {
+  id: string
+  talentProfileId: string
+  talentJobApplicationId: string | null
+  sourceAnswerId: string | null
+  questionText: string
+  normalizedQuestion: string
+  fieldType: string
+  section: string | null
+  answerKind: string
+  answerValue: unknown
+  answerText: string | null
+  pageUrl: string | null
+  ats: string | null
+  source: string | null
+  profileField: string | null
+  resolverOutcome: 'filled' | 'skipped' | 'unsupported' | 'failed' | null
+  lastUsedAt: string | null
+  createdAt: string
+  updatedAt: string
 }

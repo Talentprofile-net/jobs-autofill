@@ -15,6 +15,7 @@ export type OriginMode = 'application' | 'notesOnly' | 'auto'
 
 export type FillSkipReason =
   | 'has-value'
+  | 'already-correct'
   | 'guess'
   | 'unsupported'
   | 'timeout'
@@ -24,4 +25,5 @@ export type FillSkipReason =
 export type FillOutcome =
   | { status: 'filled' }
   | { status: 'skipped'; reason: FillSkipReason }
+  | { status: 'unsupported' }
   | { status: 'failed'; error: string }

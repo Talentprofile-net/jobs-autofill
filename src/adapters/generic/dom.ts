@@ -19,6 +19,7 @@ export const isCandidateControl = (el: HTMLElement): boolean => {
   if (el.hasAttribute('readonly')) return false
   if (el.getAttribute('aria-hidden') === 'true') return false
   if (el.getAttribute('aria-disabled') === 'true') return false
+  if (el.getAttribute('aria-readonly') === 'true') return false
 
   const tag = el.tagName.toLowerCase()
   if (tag === 'input') {

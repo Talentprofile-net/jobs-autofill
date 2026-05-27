@@ -1,45 +1,36 @@
 import { withTimeout, TaskTimeoutError } from './withTimeout'
 
-type Task = () => Promise<unknown>
-type Entry = {
-  task: Task
-  resolve: () => void
+const PER_TASK_TIMEOUT_MS = 15000
+
+type Entry<T> = {
+  task: () => Promise<T>
+  resolve: (value: T) => void
   reject: (err: unknown) => void
 }
 
-const PER_TASK_TIMEOUT_MS = 15000
-
 class AsyncQueue {
-  private static instance: AsyncQueue
-  private queue: Entry[] = []
+  private queue: Entry<unknown>[] = []
   private running = false
 
-  private constructor() {}
-
-  public static getInstance(): AsyncQueue {
-    if (!AsyncQueue.instance) {
-      AsyncQueue.instance = new AsyncQueue()
-    }
-    return AsyncQueue.instance
-  }
-
-  public enqueue(task: Task): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      this.queue.push({ task, resolve, reject })
+  enqueue<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push({
+        task: task as () => Promise<unknown>,
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      })
       this.runNext()
     })
   }
 
   private async runNext(): Promise<void> {
-    if (this.running || this.queue.length === 0) {
-      return
-    }
+    if (this.running || this.queue.length === 0) return
     this.running = true
     const next = this.queue.shift()
     if (next) {
       try {
-        await withTimeout(next.task, PER_TASK_TIMEOUT_MS)
-        next.resolve()
+        const value = await withTimeout(next.task, PER_TASK_TIMEOUT_MS)
+        next.resolve(value)
       } catch (error) {
         if (error instanceof TaskTimeoutError) {
           console.warn('[TP] field fill task exceeded timeout', error.timeoutMs)
@@ -54,5 +45,5 @@ class AsyncQueue {
   }
 }
 
-const fieldFillerQueue = AsyncQueue.getInstance()
+const fieldFillerQueue = new AsyncQueue()
 export default fieldFillerQueue

@@ -1,33 +1,6 @@
+import { scoreSendButton } from './sendButtonScoring'
+
 const MAX_DONOR_DIM_PX = 60
-
-const SEND_ARIA_PATTERNS = [
-  /\bsend\b/i,
-  /\bsubmit\b/i,
-  /\bvoice\b/i,
-  /\brecord\b/i,
-  /\bстарт\b/i,
-  /\bотправить\b/i,
-]
-
-const buttonLooksLikeSend = (btn: HTMLElement): number => {
-  let score = 0
-  if (btn.getAttribute('type') === 'submit') score += 10
-  const aria = btn.getAttribute('aria-label') ?? ''
-  if (aria) {
-    for (const re of SEND_ARIA_PATTERNS) {
-      if (re.test(aria)) {
-        score += 8
-        break
-      }
-    }
-  }
-  const dataTestId = btn.getAttribute('data-testid') ?? ''
-  if (/send|submit/i.test(dataTestId)) score += 6
-  const id = btn.id ?? ''
-  if (/send|submit/i.test(id)) score += 4
-  if (btn.querySelector('svg') && !btn.textContent?.trim()) score += 1
-  return score
-}
 
 export type DonorAppearance = {
   background: string | null
@@ -60,7 +33,7 @@ export const findIconDonor = (
     if (rect.width > MAX_DONOR_DIM_PX || rect.height > MAX_DONOR_DIM_PX) continue
     const hasSvg = !!btn.querySelector('svg')
     const text = (btn.textContent ?? '').trim()
-    const sendScore = buttonLooksLikeSend(btn)
+    const sendScore = scoreSendButton(btn)
     let score = 0
     if (hasSvg) score += 5
     if (Math.abs(rect.width - rect.height) < 8) score += 3

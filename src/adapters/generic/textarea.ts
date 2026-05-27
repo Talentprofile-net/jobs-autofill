@@ -1,5 +1,6 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { setNativeInputValue } from '~/core/reactProps'
+import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
 import type { ProfileValue } from '~/field/types'
 
@@ -21,16 +22,14 @@ export class GenericTextarea extends GenericBaseField {
   async fill(value: ProfileValue): Promise<boolean> {
     if (value.kind !== 'string') return false
     const input = this.inputElement
-    let success = false
-    await fieldFillerQueue.enqueue(async () => {
+    return fieldFillerQueue.enqueue(async () => {
       input.focus()
       setNativeInputValue(input, value.value)
       input.dispatchEvent(new InputEvent('input', { bubbles: true }))
       input.dispatchEvent(new Event('change', { bubbles: true }))
       input.dispatchEvent(new Event('blur', { bubbles: true }))
-      await new Promise((r) => setTimeout(r, VERIFY_SETTLE_MS))
-      success = input.value === value.value
+      await sleep(VERIFY_SETTLE_MS)
+      return input.value === value.value
     })
-    return success
   }
 }

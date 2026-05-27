@@ -12,6 +12,7 @@ const MONTH_TOKENS = ['mm', 'm', 'month']
 const DAY_TOKENS = ['dd', 'd', 'day']
 const YEAR_TOKENS = ['yyyy', 'yy', 'y', 'year']
 const MAX_SHARED_ANCESTOR_DEPTH = 4
+const PROXIMITY_THRESHOLD_PX = 200
 
 const tokenize = (value: string): string[] =>
   value
@@ -47,7 +48,7 @@ const tableRowContainer = (input: HTMLElement): HTMLElement | null => {
   let depth = 0
   while (node && depth < 6) {
     const tag = node.tagName.toLowerCase()
-    if (tag === 'tr' || tag === 'tbody' || tag === 'table') return node
+    if (tag === 'tr') return node
     node = node.parentElement
     depth++
   }
@@ -59,8 +60,6 @@ const explicitContainer = (input: HTMLElement): HTMLElement | null => {
   if (fieldset) return fieldset
   const roleGroup = input.closest('[role="group"]') as HTMLElement | null
   if (roleGroup) return roleGroup
-  const table = tableRowContainer(input)
-  if (table) return table
   return null
 }
 
@@ -86,8 +85,77 @@ const smallestContainerWithSiblings = (
   return null
 }
 
+type Candidate = {
+  input: HTMLInputElement
+  kind: DatePart
+  rect: DOMRect
+}
+
+const rectsClose = (a: DOMRect, b: DOMRect): boolean => {
+  const dx = Math.min(
+    Math.abs(a.right - b.left),
+    Math.abs(b.right - a.left),
+    Math.abs(a.left - b.left),
+  )
+  const dy = Math.abs(a.top - b.top)
+  return dx <= PROXIMITY_THRESHOLD_PX && dy <= PROXIMITY_THRESHOLD_PX
+}
+
+const buildGroupsFromCandidates = (
+  candidates: Candidate[],
+  container: HTMLElement,
+): DateGroup[] => {
+  const sorted = [...candidates].sort((a, b) => {
+    if (a.rect.top !== b.rect.top) return a.rect.top - b.rect.top
+    return a.rect.left - b.rect.left
+  })
+
+  const used = new Set<HTMLInputElement>()
+  const groups: DateGroup[] = []
+
+  for (const seed of sorted) {
+    if (used.has(seed.input)) continue
+    const cluster: Record<DatePart, Candidate | null> = {
+      month: null,
+      day: null,
+      year: null,
+    }
+    cluster[seed.kind] = seed
+    used.add(seed.input)
+
+    for (const other of sorted) {
+      if (used.has(other.input)) continue
+      if (cluster[other.kind]) continue
+      const anchorRect = cluster[seed.kind]!.rect
+      if (!rectsClose(anchorRect, other.rect)) continue
+      cluster[other.kind] = other
+      used.add(other.input)
+    }
+
+    if (!cluster.month || !cluster.year) {
+      used.delete(seed.input)
+      if (cluster.day) used.delete(cluster.day.input)
+      if (cluster.month) used.delete(cluster.month.input)
+      if (cluster.year) used.delete(cluster.year.input)
+      continue
+    }
+
+    groups.push({
+      anchor: seed.input,
+      parts: {
+        month: cluster.month?.input ?? null,
+        day: cluster.day?.input ?? null,
+        year: cluster.year?.input ?? null,
+      },
+      container,
+    })
+  }
+
+  return groups
+}
+
 export const discoverDateGroups = (root: ParentNode): DateGroup[] => {
-  const candidates = Array.from(
+  const candidateInputs = Array.from(
     root.querySelectorAll<HTMLInputElement>(
       'input[type="text"], input[type="number"], input:not([type])',
     ),
@@ -98,50 +166,48 @@ export const discoverDateGroups = (root: ParentNode): DateGroup[] => {
     return partKindOf(el) !== null
   })
 
-  type Bucket = {
-    container: HTMLElement
-    parts: Partial<Record<DatePart, HTMLInputElement>>
-    order: HTMLInputElement[]
-  }
-  const buckets = new Map<HTMLElement, Bucket>()
+  const byContainer = new Map<HTMLElement, Candidate[]>()
 
-  for (const input of candidates) {
+  for (const input of candidateInputs) {
     const kind = partKindOf(input)
     if (!kind) continue
 
     let container = explicitContainer(input)
     if (!container) {
-      container = smallestContainerWithSiblings(input, candidates)
+      container = tableRowContainer(input)
+    }
+    if (!container) {
+      container = smallestContainerWithSiblings(input, candidateInputs)
     }
     if (!container) continue
 
-    const bucket = buckets.get(container) ?? {
-      container,
-      parts: {},
-      order: [],
-    }
-    if (!bucket.parts[kind]) {
-      bucket.parts[kind] = input
-      bucket.order.push(input)
-    }
-    buckets.set(container, bucket)
+    const list = byContainer.get(container) ?? []
+    list.push({ input, kind, rect: input.getBoundingClientRect() })
+    byContainer.set(container, list)
   }
 
-  const groups: DateGroup[] = []
-  for (const bucket of buckets.values()) {
-    const hasMonth = bucket.parts.month !== undefined
-    const hasYear = bucket.parts.year !== undefined
-    if (!hasMonth || !hasYear) continue
-    groups.push({
-      anchor: bucket.order[0],
-      parts: {
-        month: bucket.parts.month ?? null,
-        day: bucket.parts.day ?? null,
-        year: bucket.parts.year ?? null,
-      },
-      container: bucket.container,
-    })
+  const allGroups: DateGroup[] = []
+  for (const [container, candidates] of byContainer) {
+    const monthCount = candidates.filter((c) => c.kind === 'month').length
+    const yearCount = candidates.filter((c) => c.kind === 'year').length
+    const dayCount = candidates.filter((c) => c.kind === 'day').length
+
+    if (monthCount <= 1 && yearCount <= 1 && dayCount <= 1) {
+      const parts: Record<DatePart, HTMLInputElement | null> = {
+        month: candidates.find((c) => c.kind === 'month')?.input ?? null,
+        day: candidates.find((c) => c.kind === 'day')?.input ?? null,
+        year: candidates.find((c) => c.kind === 'year')?.input ?? null,
+      }
+      if (parts.month && parts.year) {
+        const anchor = parts.month ?? candidates[0].input
+        allGroups.push({ anchor, parts, container })
+      }
+      continue
+    }
+
+    const subgroups = buildGroupsFromCandidates(candidates, container)
+    for (const g of subgroups) allGroups.push(g)
   }
 
-  return groups
+  return allGroups
 }
