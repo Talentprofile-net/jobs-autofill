@@ -12,7 +12,9 @@
   import {
     createNote,
     deleteNote,
+    getAuthStatus,
     getProfile,
+    requestSignIn,
     touchNote,
     updateNote,
   } from '~/bridge/mainBridge'
@@ -50,7 +52,9 @@
 
   type Mode = 'browse' | 'compose'
   type ComposeTarget = { kind: 'new' } | { kind: 'edit'; noteId: string }
+  type AuthState = 'checking' | 'unauthenticated' | 'authenticated'
 
+  let authState = $state<AuthState>('checking')
   let profile = $state<Profile | null>(null)
   let tree = $state<MenuGroup | null>(null)
   let path = $state<string[]>([])
@@ -80,27 +84,46 @@
   let swipeCurrentRow: HTMLElement | null = null
   let swipeCurrentItemId: string | null = null
 
-  onMount(() => {
-    void (async () => {
-      try {
-        const p = await getProfile()
-        if (!p) {
-          loadError = 'Profile unavailable'
-          return
-        }
-        profile = p
-        tree = buildMenuTree(p, ctx.pickerMode)
-        const saved = localStorage.getItem(STORAGE_KEY)
-        if (saved) {
-          try {
-            const parsed = JSON.parse(saved) as string[]
-            if (Array.isArray(parsed)) path = parsed
-          } catch {}
-        }
-      } catch (e) {
-        loadError = (e as Error).message
+  const loadProfile = async () => {
+    try {
+      const p = await getProfile()
+      if (!p) {
+        loadError = 'Profile unavailable'
+        return
       }
-    })()
+      profile = p
+      tree = buildMenuTree(p, ctx.pickerMode)
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved) as string[]
+          if (Array.isArray(parsed)) path = parsed
+        } catch {}
+      }
+    } catch (e) {
+      loadError = (e as Error).message
+    }
+  }
+
+  const initialize = async () => {
+    authState = 'checking'
+    loadError = null
+    try {
+      const status = await getAuthStatus()
+      if (!status.authenticated) {
+        authState = 'unauthenticated'
+        return
+      }
+      authState = 'authenticated'
+      await loadProfile()
+    } catch (e) {
+      loadError = (e as Error).message
+      authState = 'authenticated'
+    }
+  }
+
+  onMount(() => {
+    void initialize()
 
     return () => {
       if (truncationTimer) clearTimeout(truncationTimer)
@@ -108,6 +131,15 @@
       listSwipeGesture?.destroy()
     }
   })
+
+  const handleSignInClick = () => {
+    requestSignIn()
+    onClose()
+  }
+
+  const handleRetry = () => {
+    void initialize()
+  }
 
   const persistPath = (newPath: string[]) => {
     try {
@@ -429,6 +461,7 @@
   }
 
   const headerTitle = $derived.by(() => {
+    if (authState === 'unauthenticated') return 'TalentProfile'
     if (mode === 'compose') {
       return composeTarget.kind === 'edit' ? 'Edit note' : 'New note'
     }
@@ -438,11 +471,18 @@
   })
 
   const showBackButton = $derived(
-    mode === 'compose' || path.length > 0 || !!search.trim() || searchVisible,
+    authState === 'authenticated' &&
+      (mode === 'compose' ||
+        path.length > 0 ||
+        !!search.trim() ||
+        searchVisible),
   )
 
   const showAddNoteRow = $derived(
-    mode === 'browse' && !search.trim() && currentGroup?.allowAdd === 'note',
+    authState === 'authenticated' &&
+      mode === 'browse' &&
+      !search.trim() &&
+      currentGroup?.allowAdd === 'note',
   )
 
   const charCountLabel = $derived(`${composeText.length}/${NOTE_MAX_LENGTH}`)
@@ -453,6 +493,13 @@
     const el = rootEl
     if (!el) return
     const onKey = (e: KeyboardEvent) => {
+      if (authState !== 'authenticated') {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          onClose()
+        }
+        return
+      }
       if (mode === 'compose') return
       handleKey(e)
     }
@@ -582,7 +629,7 @@
       <span class="header-logo">{@html ICON_LOGO}</span>
     {/if}
     <span class="title">{headerTitle}</span>
-    {#if mode === 'browse'}
+    {#if authState === 'authenticated' && mode === 'browse'}
       <button
         class="icon-btn"
         type="button"
@@ -594,7 +641,21 @@
     {/if}
   </div>
 
-  {#if mode === 'browse'}
+  {#if authState === 'checking'}
+    <div class="empty">Loading…</div>
+  {:else if authState === 'unauthenticated'}
+    <div class="signin">
+      <p class="signin-text">
+        Sign in to TalentProfile to use snippets and autofill.
+      </p>
+      <button
+        type="button"
+        class="btn btn-primary"
+        onmousedown={(e) => e.preventDefault()}
+        onclick={handleSignInClick}>Sign in</button
+      >
+    </div>
+  {:else if mode === 'browse'}
     <div class="search-row" data-tp-shown={searchVisible ? 'true' : 'false'}>
       <input
         bind:this={searchInput}
@@ -610,7 +671,17 @@
 
     <div class="list" role="listbox" bind:this={listEl}>
       {#if loadError}
-        <div class="empty">{loadError}</div>
+        <div class="empty">
+          {loadError}
+          <div class="retry-row">
+            <button
+              type="button"
+              class="btn btn-secondary"
+              onmousedown={(e) => e.preventDefault()}
+              onclick={handleRetry}>Try again</button
+            >
+          </div>
+        </div>
       {:else if !tree}
         <div class="empty">Loading…</div>
       {:else}
@@ -735,11 +806,7 @@
     </div>
 
     {#if truncationToast}
-      <div
-        class="empty"
-        role="status"
-        style="border-top: 1px solid hsl(240 5.9% 90%); color: hsl(0 72% 35%);"
-      >
+      <div class="empty toast-warn" role="status">
         {truncationToast}
       </div>
     {/if}

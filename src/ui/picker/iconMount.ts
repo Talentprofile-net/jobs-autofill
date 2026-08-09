@@ -23,6 +23,7 @@ const TARGET_GAP_PX = 6
 const STYLE_INLINE = `
 :host {
   all: initial;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -270,6 +271,52 @@ const findActionRowInsertion = (
   return null
 }
 
+type ActionRowCandidate = {
+  el: HTMLElement
+  buttonCount: number
+  bottom: number
+}
+
+const findFallbackActionRow = (
+  composer: HTMLElement,
+  anchor: HTMLElement,
+): HTMLElement | null => {
+  const candidates: ActionRowCandidate[] = []
+
+  const consider = (el: HTMLElement) => {
+    if (!isHorizontalFlexLike(el)) return
+    if (rowAutoDistributes(el)) return
+    const buttons = collectCandidateButtons(el, anchor)
+    if (buttons.length < 1) return
+    const rect = el.getBoundingClientRect()
+    candidates.push({ bottom: rect.bottom, buttonCount: buttons.length, el })
+  }
+
+  consider(composer)
+
+  const walk = (el: HTMLElement, depth: number) => {
+    if (depth > MAX_COMPOSER_DEPTH) return
+    for (const raw of Array.from(el.children)) {
+      const child = raw as HTMLElement
+      if (child === anchor || child.contains(anchor)) {
+        walk(child, depth + 1)
+        continue
+      }
+      consider(child)
+      walk(child, depth + 1)
+    }
+  }
+  walk(composer, 0)
+
+  if (candidates.length === 0) return null
+
+  candidates.sort((a, b) => {
+    if (b.buttonCount !== a.buttonCount) return b.buttonCount - a.buttonCount
+    return b.bottom - a.bottom
+  })
+  return candidates[0].el
+}
+
 const ensurePositioned = (el: HTMLElement): void => {
   const computed = window.getComputedStyle(el)
   if (computed.position === 'static') {
@@ -308,13 +355,14 @@ export const mountPickerIcon = (
   const mountTarget = document.createElement('div')
   shadow.appendChild(mountTarget)
 
-  const forceAbsolute = opts.pickerMode === 'notesOnly'
-  const composer = forceAbsolute ? null : findComposerRoot(anchor)
+  const composer = findComposerRoot(anchor)
   const sendButton = composer ? findSendButton(composer, anchor) : null
   const insertion =
     composer && sendButton ? findActionRowInsertion(sendButton, composer) : null
 
-  if (!forceAbsolute && insertion) {
+  let mounted = false
+
+  if (insertion) {
     applyStyles(shadow, STYLE_INLINE)
     insertion.row.insertBefore(host, insertion.before)
     applyInlineSpacing(host, insertion.row)
@@ -323,7 +371,8 @@ export const mountPickerIcon = (
       const appearance = readDonorAppearance(donor, composer)
       applyAppearanceVars(host, appearance, 'tp-icon')
     }
-  } else if (!forceAbsolute && sendButton && sendButton.parentElement) {
+    mounted = true
+  } else if (sendButton && sendButton.parentElement) {
     applyStyles(shadow, STYLE_INLINE)
     sendButton.parentElement.insertBefore(host, sendButton)
     applyInlineSpacing(host, sendButton.parentElement)
@@ -332,7 +381,26 @@ export const mountPickerIcon = (
       const appearance = readDonorAppearance(donor, composer)
       applyAppearanceVars(host, appearance, 'tp-icon')
     }
-  } else {
+    mounted = true
+  } else if (composer) {
+    const actionRow = findFallbackActionRow(composer, anchor)
+    if (actionRow) {
+      applyStyles(shadow, STYLE_INLINE)
+      const lastChild = actionRow.lastElementChild as HTMLElement | null
+      if (lastChild) {
+        actionRow.insertBefore(host, lastChild)
+      } else {
+        actionRow.appendChild(host)
+      }
+      applyInlineSpacing(host, actionRow)
+      const donor = findIconDonor(composer, null)
+      const appearance = readDonorAppearance(donor, composer)
+      applyAppearanceVars(host, appearance, 'tp-icon')
+      mounted = true
+    }
+  }
+
+  if (!mounted) {
     mountAbsoluteInParent(host, anchor, shadow)
   }
 

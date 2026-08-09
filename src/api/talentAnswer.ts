@@ -7,6 +7,7 @@ const REUSE_WINDOW_MS = 24 * 60 * 60 * 1000
 type ResolverOutcome = 'filled' | 'skipped' | 'unsupported' | 'failed'
 
 export type CaptureAnswerInput = {
+  talentProfileId: string
   questionText: string
   normalizedQuestion: string
   fieldType: string
@@ -19,6 +20,7 @@ export type CaptureAnswerInput = {
   source: 'manual' | 'correction' | 'resolver_filled' | 'resolver_skipped'
   resolverOutcome: ResolverOutcome
   profileField: string | null
+  labelEnumId: string | null
   talentJobApplicationId: string | null
   sourceAnswerId: string | null
 }
@@ -32,11 +34,13 @@ type TalentJobApplicationStub = {
 }
 
 export const findOrCreateApplicationByUrl = async (
+  talentProfileId: string,
   originalJobPostUrl: string,
 ): Promise<TalentJobApplicationStub> => {
   const cutoffIso = new Date(Date.now() - REUSE_WINDOW_MS).toISOString()
   const query = new URLSearchParams({
     where: JSON.stringify({
+      talentProfileId: { equals: talentProfileId },
       originalJobPostUrl: { equals: originalJobPostUrl },
       createdAt: { gte: cutoffIso },
     }),
@@ -56,7 +60,7 @@ export const findOrCreateApplicationByUrl = async (
     {
       method: 'POST',
       body: JSON.stringify({
-        data: { originalJobPostUrl },
+        data: { talentProfileId, originalJobPostUrl },
       }),
     },
   )
@@ -67,6 +71,7 @@ export const findOrCreateApplicationByUrl = async (
 }
 
 const buildAnswerPayload = (input: CaptureAnswerInput) => ({
+  talentProfileId: input.talentProfileId,
   questionText: input.questionText,
   normalizedQuestion: input.normalizedQuestion,
   fieldType: input.fieldType,
@@ -79,6 +84,7 @@ const buildAnswerPayload = (input: CaptureAnswerInput) => ({
   source: input.source,
   resolverOutcome: input.resolverOutcome,
   profileField: input.profileField,
+  labelEnumId: input.labelEnumId,
   talentJobApplicationId: input.talentJobApplicationId,
   sourceAnswerId: input.sourceAnswerId,
   lastUsedAt: new Date().toISOString(),
@@ -113,6 +119,7 @@ export const upsertTalentAnswerForApplication = async (
     body: JSON.stringify({
       where: {
         talentProfileId_talentJobApplicationId_normalizedQuestion: {
+          talentProfileId: input.talentProfileId,
           talentJobApplicationId: input.talentJobApplicationId,
           normalizedQuestion: input.normalizedQuestion,
         },

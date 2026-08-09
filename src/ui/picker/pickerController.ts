@@ -266,6 +266,26 @@ const STYLE_TEXT = `
   font-size: 12px;
   line-height: 1.5;
 }
+.toast-warn {
+  border-top: 1px solid var(--tp-picker-border, hsl(240 5.9% 90%));
+  color: hsl(0 72% 35%);
+}
+.retry-row {
+  margin-top: 8px;
+}
+.signin {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 12px;
+}
+.signin-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tp-picker-fg, hsl(240 10% 3.9%));
+}
 .item-wrap {
   position: relative;
   overflow: hidden;

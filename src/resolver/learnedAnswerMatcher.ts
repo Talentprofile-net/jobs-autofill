@@ -15,9 +15,36 @@ const STOPWORDS = new Set([
   'currently', 'please', 'select', 'enter', 'provide',
 ])
 
+const PLACEHOLDER_PATTERNS: RegExp[] = [
+  /^$/,
+  /^-+$/,
+  /^\.+$/,
+  /^_+$/,
+  /^n\/?a$/i,
+  /^select\b/i,
+  /^please\s+(select|choose|pick|specify)/i,
+  /^choose\b/i,
+  /^pick\s+(one|an?)/i,
+  /^make\s+a\s+selection/i,
+  /^--+\s*select/i,
+  /^select\s+(one|an?\s+option|your)/i,
+  /^none\s+selected$/i,
+  /^choisir\b/i,
+  /^veuillez\s+choisir/i,
+  /^auswählen\b/i,
+  /^bitte\s+(wählen|auswählen)/i,
+  /^seleccion(ar|e)\b/i,
+]
+
+const isPlaceholderText = (s: string): boolean => {
+  const trimmed = s.trim()
+  if (trimmed.length === 0) return true
+  return PLACEHOLDER_PATTERNS.some((p) => p.test(trimmed))
+}
+
 const extractKeywords = (normalized: string): Set<string> => {
   const out = new Set<string>()
-  for (const w of normalized.split(/\s+/)) {
+  for (const w of normalized.split(/[-_\s]+/)) {
     if (w.length > 1 && !STOPWORDS.has(w)) out.add(w)
   }
   return out
@@ -31,7 +58,7 @@ const jaccard = (a: Set<string>, b: Set<string>): { score: number; shared: numbe
   return { score: union === 0 ? 0 : intersection / union, shared: intersection }
 }
 
-export type MatchMethod = 'exact_hash' | 'normalized_text' | 'jaccard'
+export type MatchMethod = 'normalized_text' | 'jaccard'
 
 export type MatchResult = {
   answer: TalentAnswer
@@ -81,11 +108,6 @@ export const findLearnedAnswer = (
   }
 
   return best
-}
-
-const isPlaceholderText = (s: string): boolean => {
-  const n = s.trim().toLowerCase()
-  return n === '' || n === '--' || n === '---'
 }
 
 export const learnedAnswerToProfileValue = (
