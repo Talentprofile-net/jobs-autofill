@@ -1,216 +1,385 @@
-# TalentAnswer + Question Labeling — Canonical Spec
+# Apply Form Training And Execution Contract
 
-**Status:** Canonical. Where this doc and the live Prisma schema disagree,
-the schema wins; flag it and update this doc.
+Status: canonical.
 
----
+The Prisma source schema owns stored truth.
 
-## Goal
+Update this file when the schema or runtime contract changes.
 
-Build the autofill question classifier and the runtime answer store that
-feeds it. The classifier maps an application-form question plus job
-context to an enum; the answer layer holds and predicts what a given
-talent answers for each enum.
+## Purpose
 
-The classifier is distilled from Qwen. The scraper worker calls Qwen as
-the teacher to assign an enum to every observed field label at scrape
-time. The resulting labeled rows are the distillation dataset. The student
-is exported to ONNX and runs in the extension.
+The scrape worker collects application form data.
 
----
+The scrape worker never fills a form.
 
-## Mental model: two stages, two countries
+The scrape worker never submits an application.
 
-1. **Label a question to an enum.** The enum depends only on the job's
-   country. "Do you require visa sponsorship?" on a US job is
-   `need_visa_us`; on a Thai job it is `need_visa_th`. The classifier maps
-   `(question text, fieldType, jobCountry) -> enum`. The applicant is not
-   an input here.
+The collected corpus trains a small question classifier.
 
-2. **Answer the enum.** Whether a person needs that visa is a fact about
-   the person, predicted at fill time from their profile and answer
-   history. The applicant's nationality enters here, live, from
-   `talentProfile`.
+Qwen acts as the teacher.
 
-The corpus therefore stores the **job's** country and never a talent
-country. "US citizen applies to a Thai job" is handled by stage 1
-selecting `need_visa_th` and stage 2 predicting the answer from the
-US-citizen profile. Observations are not exploded across candidate talent
-countries.
+The student model will export to ONNX.
 
----
+The extension will run the student model locally.
 
-## Runtime fill flow
+Premium headless execution will use the same model and data contracts.
 
-```
-question text + fieldType + jobCountry
-        |
-        v
-   classifier  -->  enum (e.g. need_visa_th)
-                     |
-                     v
-   talentAnswer history for that enum  +  talentProfile
-                     |
-                     v
-        answer predictor  -->  predicted answer  -->  fill
+Headless execution must not submit without candidate review.
+
+Bulk autonomous application is not allowed.
+
+## Classifier Contract
+
+The classifier input is:
+
+```text
+questionText + fieldType + jobCountry
 ```
 
-The enum is the key into the user's answer history. No stored answer for
-that enum means the predictor infers one from profile and history.
+The classifier output is one active `questionLabelEnum`.
 
----
+The job country changes the question meaning.
 
-## Storage
+The talent country does not belong in the classifier input.
 
-### `talentAnswer` — runtime answers and predictor history
+Example:
 
-One row per `(user, application, normalizedQuestion)`. Application-less
-rows are valid; `NULL` application is distinct under the unique constraint
-(Postgres), intentionally allowing multiple application-less rows per
-`(user, normalizedQuestion)`.
+```text
+US job -> need_visa_us
+TH job -> need_visa_th
+```
 
-`labelEnumId` is stored directly on the row, set at capture from the
-classifier output and repointed during enum merges. It is how answer
-history is queried by enum. Job context for analysis is reached through
-`talentJobApplication -> jobAd`, not copied onto the row.
+The answer resolver uses the talent profile and answer history after classification.
 
-### `questionLabel` — the labeled training corpus
+Missing enum history makes the answer predictor use the live talent profile.
 
-Each row is one `(input features, teacher enum)` pair. `normalizedQuestion`
-is **not unique**; many observations per question across countries is the
-point.
+The extension must receive explicit job context before it can run a country-aware classifier.
 
-- `questionText`, `normalizedQuestion`, `fieldType`, `answerKind`,
-  `sectionType`, `options`.
-- `jobCountry` — normalized ISO 3166-1 alpha-2 or `_unknown`. Part of the
-  dedup key. (`jobAd.country` is raw and uncontrolled; this is the
-  normalized form, which `jobAd` does not carry.)
-- `jobAdId` — plain scalar pointer to the first source job, for soft
-  context and debugging. Deliberately **not** a Prisma relation, so `jobAd`
-  carries no reverse field and no FK cascade; it may dangle if the job is
-  deleted. Set once at creation, never repointed.
-- `occurrenceCount` — frequency of this `(question, fieldType,
-  jobCountry)` across jobs. Best-effort; a crash-retry may over-count by
-  one.
-- `profileField`, `labelEnumId`.
-- `createdAt` = first observation; `updatedAt` = last observation (bumped
-  on every occurrence increment).
+The extension must not infer job country from question text or page URL.
 
-Dedup key: `@@unique([normalizedQuestion, fieldType, answerKind, jobCountry])`. Dedup
-on the deterministic input, never on `labelEnumId` (the teacher's output,
-noisy and pre-merge).
+Country-free extension inference is not implemented.
 
-### `questionLabelEnum` — the class space
+## Corpus
 
-The set the classifier predicts over and Qwen labels into.
+`questionLabel` owns the training corpus.
 
-- `label` (unique), `description`, `valueShape`, `examples`.
-- `active` — usable.
-- `verified` — passed the moderator dedup/generalize pass. Qwen-created
-  enums start `verified=false`.
+One row owns one deterministic input identity.
 
-Naming: context-dependent families use
-`{family}_{iso3166_alpha2_lowercase}` (`need_visa_us`, `work_permit_de`);
-country-independent enums use the bare name (`cover_letter`,
-`notice_period`, `gender`). Per-country families are not pre-seeded; Qwen
-creates on demand and the moderator pass generalizes.
+The identity is:
 
----
+```text
+normalizedQuestion + fieldType + answerKind + jobCountry
+```
 
-## Normalization, not hashing
+`normalizedQuestion` is not globally unique.
 
-Form-structure hashes and option hashes are forbidden — option text and
-markup vary too much across ATSs and career sites for a hash to be stable,
-and a hash fragments one logical question into many noisy rows.
+`jobCountry` is ISO 3166-1 alpha-2 or `_unknown`.
 
-The reliable mechanism is an enhanced `@sindresorhus/slugify` normalizer
-in `src/shared/normalization.ts`:
+`jobAdId` records the first source job.
 
-- `normalizeQuestion(text)` — slugified question; the dedup and join key.
-- `normalizeAnswerKind(fieldType, options)` — canonical answer semantics:
-  `boolean | choice | multiChoice | text | number | date | file`. Maps
-  boolean-shaped option sets to `boolean` regardless of wording: `Yes/No`,
-  `Agree/Disagree`, `True/False`, `Okay/Not okay`, `Accept/Decline`,
-  `I agree/I do not agree`, a single checkbox, etc. (case- and
-  whitespace-insensitive, after slugify).
-- `isPlaceholderText(text)` — rejects "Select…", "Please choose", "--".
+`jobAdId` is a scalar pointer.
 
-`options` is stored as raw evidence only and is **not** in the dedup key.
-Consequence: a question whose option set differs between a 2-way and a
-3-way variant collapses to one row. `answerKind` carries the meaningful
-boolean distinction.
+It is not a Prisma relation.
 
----
+`occurrenceCount` records repeated observations.
 
-## Enum assignment and curation (fuzzy, no embeddings)
+The backend increments it atomically.
 
-The host CPU cannot run embeddings, and the full enum set is too large to
-send to Qwen per call. Candidate selection is lexical:
+The worker never sends a computed next count.
 
-1. **Assignment.** Tokenize the `normalizedQuestion` (split on `-`/`_`,
-   drop stopwords and tokens under 3 chars). Query `questionLabelEnum`
-   with `OR` of `label`/`description` `contains token` (`mode:
-   insensitive`, `active: true`, `take: 30`). Rank the bounded result
-   in-process by Dice coefficient over character bigrams (pure JS, no DB,
-   no deps). Send the top ~8 to Qwen as "reuse one of these if it fits."
-   This keeps Qwen from coining `permission_to_work` when `work_permit`
-   exists and shares the token `work`.
+`options` stores raw evidence.
 
-   Limitation: a synonym with no shared token (`notice_period` vs "when
-   can you start?") is not retrieved; the moderator pass is the backstop.
+`options` does not join or deduplicate corpus rows.
 
-2. **Creation.** If Qwen proposes outside the candidates, it returns the
-   full shape `{ label, description, valueShape, examples }`. `label` is
-   validated as lowercase snake_case (country suffix only for
-   context-dependent families; no spaces or punctuation except `_`). The
-   enum is created `active=true, verified=false`.
+`labelEnumId` stores the teacher class.
 
-3. **Moderation.** After each job, count
-   `questionLabelEnum where active and not verified`. At the threshold
-   (10): for each unverified enum fuzzy-retrieve its lexical neighbors
-   (verified plus other unverified), send the unverified set plus
-   neighbors to the moderator LLM, and request `{loser, winner}` merge
-   pairs for duplicates/generalizations.
+Enum merge repoints every live reference before deleting the loser.
 
-4. **Merge**, per pair, in order:
-   - `UPDATE questionLabel SET labelEnumId = winner WHERE labelEnumId = loser`
-   - `UPDATE talentAnswer SET labelEnumId = winner WHERE labelEnumId = loser`
-   - delete the loser.
-   Repoint before delete — both FKs are `SetNull`, so deleting first would
-   null the labels. Unverified enums named in no pair are set
-   `verified=true`.
+## Enum Space
 
-Sequential worker, so count-then-merge is race-free. May move to
-`moderatorQueue` later; inline is fine.
+`questionLabelEnum` owns the classifier class space.
 
----
+Each enum stores `label`, `description`, `valueShape`, and `examples`.
 
-## Capture flow (extension)
+Each enum stores `active` and `verified` state.
 
-1. Fill phase records `resolverOutcome`, `profileField`, and the
-   classifier's `labelEnumId` per field.
-2. Captures buffer in extension memory per form.
-3. Submit-success detection per ATS, generic best-effort, leaning toward
-   false positives over lost captures.
-4. On success, POST `originalJobPostUrl`; backend reuses a
-   `talentJobApplication` matched on `(talentProfileId,
-   originalJobPostUrl)` within 24h or creates one, returns its id.
-5. Flush buffered captures with `talentJobApplicationId` and `labelEnumId`.
+A new teacher proposal starts active and unverified.
 
-`hasMeaningfulValue` rejects placeholder text via `isPlaceholderText`.
-Only touched or resolver-filled fields are captured. Unsubmitted captures
-are discarded on `pagehide`.
+`valueShape` must equal the field `answerKind`.
 
----
+The labeler enforces this rule.
 
-## Out of scope
+The capture endpoint enforces this rule.
 
-Classifier training infrastructure, ONNX export, in-extension inference,
-multilingual handling (English-first), cross-device sync (server is source
-of truth; last-write-wins on the unique constraint).
+The merge endpoint enforces this rule.
 
----
+Enums with different value shapes must not merge.
 
-## Schema is canonical
+A verified enum must not be the merge loser.
 
-This document describes intent; the live Prisma schema describes truth.
+Country-dependent labels use a lowercase country suffix.
+
+Example:
+
+```text
+work_permit_de
+need_visa_us
+```
+
+Country-independent labels use no country suffix.
+
+The worker loads active enums with an immutable `createdAt + id` keyset.
+
+The load stops at the 20,000-row safety cap and warns when truncated.
+
+The worker does not run embeddings.
+
+It ranks lexical candidates with Dice similarity.
+
+Qwen reuses a compatible candidate or proposes a new enum.
+
+The curation pass starts when ten active enums remain unverified.
+
+The moderator returns loser and winner pairs.
+
+The backend merges each pair atomically.
+
+## Normalization
+
+`normalizeQuestion` owns question identity normalization.
+
+`normalizeAnswerKind` owns answer shape normalization.
+
+Valid answer kinds are:
+
+```text
+boolean
+choice
+multiChoice
+text
+number
+date
+file
+```
+
+Boolean-shaped option sets normalize to `boolean`.
+
+Placeholder values do not count as answers.
+
+Form fingerprints must not deduplicate corpus rows.
+
+## Worker Runtime
+
+`yarn worker:index` starts the apply-form training lane.
+
+The provider reads unscraped job ads through the backend import API.
+
+The provider orders rows by `createdAt DESC, id DESC`.
+
+The provider uses a matching keyset cursor.
+
+Retained BullMQ jobs must not block older eligible jobs.
+
+A queue failure must not advance past the failed row.
+
+Workday is unsupported.
+
+Authenticated application walls are unsupported.
+
+The current worker captures only the first reachable form DOM.
+
+It does not walk later form steps.
+
+It writes snapshot scope `initial_dom`.
+
+HTTP and navigation failures throw into BullMQ retry.
+
+Confirmed absence and unsupported flows are terminal.
+
+The worker classifies each extracted field before persistence.
+
+One backend transaction stores:
+
+- The form snapshot.
+- Every form field.
+- Every new corpus row.
+- Every occurrence increment.
+- Every enum resolution.
+- The job scrape success marker.
+
+The transaction commits all data or no data.
+
+A deferred write leaves the job unmarked until the write drainer commits it.
+
+## Form Snapshots
+
+`applicationFormSnapshot` owns one observed target form.
+
+Every snapshot belongs to one `jobAd`.
+
+Every snapshot stores source URL, job country, ATS, fingerprint, and scope.
+
+Valid scopes are `initial_dom` and `complete`.
+
+The fingerprint identifies an identical snapshot for the same job and scope.
+
+The fingerprint does not identify a corpus row.
+
+`applicationFormField` owns the ordered target fields.
+
+Each field stores its target question, type, answer kind, options, requirement, and step.
+
+Each field may link to its corpus row and canonical enum.
+
+Each field may store classifier version and confidence.
+
+## Talent Answers
+
+`talentAnswer` owns observed candidate answers.
+
+The answer identity is:
+
+```text
+talentProfileId + talentJobApplicationId + normalizedQuestion
+```
+
+`labelEnumId` links answer history to the classifier class.
+
+`talentJobApplicationId` links the answer to the candidate application.
+
+`sourceAnswerId` must belong to the same talent profile.
+
+Application-less answer rows remain valid.
+
+PostgreSQL treats null application IDs as distinct in the unique key.
+
+The capture batch commits all answers or no answers.
+
+The capture batch accepts only an explicitly handed-off external application owned by the caller.
+
+Without an explicit ID, the backend may reuse a recent URL match or create a URL-only external application.
+
+## Public Job Handoff
+
+The public job page creates or resolves the external `talentJobApplication` when a profile exists.
+
+It sends that application ID to the extension before opening the company tab.
+
+The company tab still opens when the extension is absent.
+
+The extension pairs the handoff with the opened tab.
+
+Unpaired handoff records expire.
+
+A paired application context lasts for the tab session.
+
+Successful answer capture clears the paired context.
+
+Tab close clears the paired context.
+
+Direct browsing has no explicit application ID.
+
+Direct browsing uses the URL fallback.
+
+## Extension Capture
+
+The extension captures only touched or resolver-filled fields.
+
+It reads option labels from the live DOM.
+
+It stages records in `storage.session` before page destruction.
+
+`storage.session` survives service-worker suspension.
+
+It does not survive browser restart.
+
+The extension commits a stage only after submit-success detection.
+
+The extension discards a confirmed failed or abandoned stage.
+
+A top-level navigation may commit a stage after the source page is destroyed.
+
+The extension sends `labelEnumId = null` until country-aware inference exists.
+
+Null enum IDs are safe to backfill.
+
+Wrong inferred enum IDs are not safe.
+
+## Preview And Diff
+
+`applicationFillPlan` owns a mutable draft for one talent, job, application, and snapshot.
+
+The database constrains those relations to the same owners.
+
+`applicationFillPlanField` owns one planned target field.
+
+Each planned field stores:
+
+- The target field and question.
+- Whether the target requires a value.
+- The planned answer value and display text.
+- The source kind.
+- The source answer or profile field.
+- The source answer version time.
+- The decision outcome and reason.
+
+Valid source kinds are `profile`, `learned_answer`, `user_override`, `generated`, `manual`, and `none`.
+
+The UI can derive the target-form diff from plan outcomes.
+
+`missing` means the target asks for data the candidate does not have.
+
+`needs_confirmation` means the candidate must decide before approval.
+
+`unsupported` means the engine cannot apply the field.
+
+`will_fill` means the preview has a concrete value.
+
+The preview UI is not implemented.
+
+The plan generator is not implemented.
+
+## Approval And Execution
+
+Approval creates an immutable `applicationFillPlanRevision`.
+
+The revision copies snapshot, talent, model version, and content hash.
+
+The revision copies every approved field and its provenance.
+
+Later draft edits do not change an approved revision.
+
+`applicationExecutionAttempt` owns one execution try against one approved revision.
+
+`applicationExecutionField` owns one field result for that try.
+
+Attempts and field results are append-only records.
+
+Execution must use an approved revision.
+
+Execution must not use a mutable draft.
+
+The executor is not implemented.
+
+Submission is not implemented.
+
+## Training Work Still Open
+
+The corpus must first contain real observations.
+
+The training pipeline must then:
+
+1. Export `(questionText, fieldType, jobCountry) -> labelEnumId` examples.
+2. Distil the student model from the teacher corpus.
+3. Validate class and value-shape accuracy.
+4. Export the student to ONNX.
+5. Ship the model with the extension and headless runtime.
+6. Replace question-text matching with classifier enum matching.
+
+Multilingual training is not implemented.
+
+Complete multi-step form scraping is not implemented.
+
+Country-aware extension inference is not implemented.
+
+Premium headless planning, review UI, execution, and submission are not implemented.

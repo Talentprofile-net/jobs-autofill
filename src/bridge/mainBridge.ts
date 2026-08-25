@@ -3,8 +3,8 @@ import type { Profile, ProfileNote } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
 import type { AtsName } from '~/field/types'
 import type {
-  AnswerCaptureRecord,
   AuthStatus,
+  CaptureStagePayload,
   ContentScriptRequest,
   FieldResolveRequest,
   FieldResolveResult,
@@ -82,7 +82,9 @@ const startListener = (() => {
         msg.kind === 'note.touchResult' ||
         msg.kind === 'mode.result' ||
         msg.kind === 'learnedAnswersResult' ||
-        msg.kind === 'answers.flushResult'
+        msg.kind === 'answers.stageResult' ||
+        msg.kind === 'answers.commitResult' ||
+        msg.kind === 'answers.discardResult'
       ) {
         const pendingReq = pending.get(msg.id)
         if (pendingReq) {
@@ -267,28 +269,63 @@ export const resolveLearnedAnswersBatchViaBridge = async (
   })
 }
 
-export const flushAnswersViaBridge = async (params: {
-  records: AnswerCaptureRecord[]
-  pageUrl: string
-  ats: AtsName
-}): Promise<{ ok: boolean; error?: string }> => {
+export const stageCaptureViaBridge = async (
+  payload: CaptureStagePayload,
+): Promise<{ ok: boolean; stageId?: string; error?: string }> => {
   const id = crypto.randomUUID()
   const result = await sendRequest(
-    {
-      ats: params.ats,
-      id,
-      kind: 'answers.flush',
-      pageUrl: params.pageUrl,
-      records: params.records,
-    },
+    { id, kind: 'answers.stage', payload },
     FLUSH_TIMEOUT_MS,
     (msg) =>
-      msg.kind === 'answers.flushResult'
+      msg.kind === 'answers.stageResult'
+        ? ({
+            error: msg.error,
+            id: msg.id,
+            kind: msg.kind,
+            ok: msg.ok,
+            stageId: msg.stageId,
+          } as any)
+        : null,
+    { error: 'Timed out', id, kind: 'answers.stageResult', ok: false } as any,
+  )
+  return {
+    error: (result as any).error,
+    ok: (result as any).ok,
+    stageId: (result as any).stageId,
+  }
+}
+
+export const commitCaptureViaBridge = async (
+  stageId: string,
+): Promise<{ ok: boolean; error?: string }> => {
+  const id = crypto.randomUUID()
+  const result = await sendRequest(
+    { id, kind: 'answers.commit', stageId },
+    FLUSH_TIMEOUT_MS,
+    (msg) =>
+      msg.kind === 'answers.commitResult'
         ? ({ error: msg.error, id: msg.id, kind: msg.kind, ok: msg.ok } as any)
         : null,
-    { error: 'Timed out', id, kind: 'answers.flushResult', ok: false } as any,
+    { error: 'Timed out', id, kind: 'answers.commitResult', ok: false } as any,
   )
   return { error: (result as any).error, ok: (result as any).ok }
+}
+
+export const discardCaptureViaBridge = async (
+  stageId: string,
+  outcome: 'failure' | 'unknown',
+): Promise<{ ok: boolean }> => {
+  const id = crypto.randomUUID()
+  const result = await sendRequest(
+    { id, kind: 'answers.discard', outcome, stageId },
+    FLUSH_TIMEOUT_MS,
+    (msg) =>
+      msg.kind === 'answers.discardResult'
+        ? ({ id: msg.id, kind: msg.kind, ok: msg.ok } as any)
+        : null,
+    { id, kind: 'answers.discardResult', ok: false } as any,
+  )
+  return { ok: (result as any).ok }
 }
 
 export const onBridgeMessage = (handler: Handler): (() => void) => {

@@ -1,5 +1,6 @@
 import type { TalentAnswer } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
+import { toCorpusFieldType } from '~/capture/corpusVocabulary'
 import { normalizeQuestion } from './normalizeQuestion'
 
 const STOPWORDS = new Set([
@@ -69,11 +70,27 @@ export type MatchResult = {
 const JACCARD_MIN_SCORE = 0.7
 const JACCARD_MIN_SHARED = 3
 
-const typesCompatible = (a: string, b: string): boolean => {
+// Both sides are canonicalised before comparison.
+//
+// Stored answers carry the CORPUS field type (capture/corpusVocabulary.ts), so
+// that a captured answer and the scraped corpus row for the same question agree.
+// The live field being filled carries the ADAPTER type. Comparing the two
+// directly silently stopped every checkbox, multi-select, date, file and
+// content-editable answer from ever matching again — `SingleCheckbox` is not
+// `Checkbox`, `MonthYear` is not `DateInput`, and only `TextInput` and a couple
+// of others happened to spell the same.
+//
+// Answers written before this carry adapter types; `toCorpusFieldType` maps an
+// already-corpus name to itself, so both generations canonicalise to the same
+// value and old rows keep matching.
+const TEXTISH = new Set(['TextArea', 'TextInput'])
+
+const typesCompatible = (stored: string, live: string): boolean => {
+  const a = toCorpusFieldType(stored)
+  const b = toCorpusFieldType(live)
   if (a === b) return true
-  if (a === 'ContentEditable' && b === 'TextInput') return true
-  if (a === 'TextInput' && b === 'ContentEditable') return true
-  return false
+  // Free text is free text: a textarea answer fills a text input and back.
+  return TEXTISH.has(a) && TEXTISH.has(b)
 }
 
 export const findLearnedAnswer = (

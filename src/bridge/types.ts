@@ -88,17 +88,32 @@ export type ResolvedOriginMode = 'application' | 'notesOnly'
 
 export type ResolverOutcomeKind = 'filled' | 'skipped' | 'unsupported' | 'failed'
 
+// `fieldType` and `answerKind` are the CORPUS vocabulary, not the adapter's —
+// mapped in capture/corpusVocabulary.ts before a record is built, so a captured
+// answer and the scraped corpus row describing the same question agree.
 export type AnswerCaptureRecord = {
-  fieldName: string
+  questionText: string
+  normalizedQuestion: string
   fieldType: string
   section: string
   answerKind: string
   answerValue: ProfileValue
   answerText: string | null
+  labelEnumId: string | null
   profileField: string | null
   resolverOutcome: ResolverOutcomeKind
   source: 'manual' | 'correction' | 'resolver_filled' | 'resolver_skipped'
   sourceAnswerId: string | null
+}
+
+// The capture handoff is two steps because a submit can destroy the page.
+// `stage` runs at submit time and hands the batch to the background worker;
+// `commit` or `discard` runs after detection, if the page is still alive to run
+// it. An orphaned stage is resolved by the background worker, not here.
+export type CaptureStagePayload = {
+  applicationUrl: string
+  ats: AtsName
+  records: AnswerCaptureRecord[]
 }
 
 export type MainWorldRequest =
@@ -144,10 +159,15 @@ export type MainWorldRequest =
   | { id: string; kind: 'mode.get' }
   | {
       id: string
-      kind: 'answers.flush'
-      records: AnswerCaptureRecord[]
-      pageUrl: string
-      ats: AtsName
+      kind: 'answers.stage'
+      payload: CaptureStagePayload
+    }
+  | { id: string; kind: 'answers.commit'; stageId: string }
+  | {
+      id: string
+      kind: 'answers.discard'
+      stageId: string
+      outcome: 'failure' | 'unknown'
     }
 
 export type ContentScriptRequest =
@@ -191,7 +211,15 @@ export type ContentScriptRequest =
   | { id: string; kind: 'mode.resolveAuto' }
   | { id: string; kind: 'cmd.openPicker' }
   | { id: string; kind: 'cmd.fillAllHotkey' }
-  | { id: string; kind: 'answers.flushResult'; ok: boolean; error?: string }
+  | {
+      id: string
+      kind: 'answers.stageResult'
+      ok: boolean
+      stageId?: string
+      error?: string
+    }
+  | { id: string; kind: 'answers.commitResult'; ok: boolean; error?: string }
+  | { id: string; kind: 'answers.discardResult'; ok: boolean }
 
 export type DetectedAts = AtsName | null
 
@@ -275,11 +303,12 @@ export type ContentToBackground =
       pass: number
     }
   | { kind: 'frame.fillTotalIncreased'; batchId: string; addedTotal: number; pass: number }
+  | { kind: 'answers.stage'; payload: CaptureStagePayload }
+  | { kind: 'answers.commit'; stageId: string }
   | {
-      kind: 'answers.flush'
-      records: AnswerCaptureRecord[]
-      pageUrl: string
-      ats: AtsName
+      kind: 'answers.discard'
+      stageId: string
+      outcome: 'failure' | 'unknown'
     }
 
 export type ExternalToBackground =
@@ -290,6 +319,11 @@ export type ExternalToBackground =
       method: AuthMethod
     }
   | { kind: 'auth.ping' }
+  | {
+      destinationUrl: string
+      kind: 'application.handoff'
+      talentJobApplicationId: string
+    }
 
 export type BackgroundResponse<T = unknown> =
   | { ok: true; data?: T }

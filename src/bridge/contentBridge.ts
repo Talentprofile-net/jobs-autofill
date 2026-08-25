@@ -260,17 +260,44 @@ export const startContentBridge = (ats: AtsName): void => {
       return;
     }
 
-    if (msg.kind === "answers.flush") {
-      const res = await sendToBackground({
-        ats: msg.ats,
-        kind: "answers.flush",
-        pageUrl: msg.pageUrl,
-        records: msg.records,
+    if (msg.kind === "answers.stage") {
+      const res = await sendToBackground<{ stageId: string }>({
+        kind: "answers.stage",
+        payload: msg.payload,
       });
       sendFromContent({
         error: res.ok ? undefined : res.error,
         id: msg.id,
-        kind: "answers.flushResult",
+        kind: "answers.stageResult",
+        ok: res.ok,
+        stageId: res.ok ? res.data?.stageId : undefined,
+      });
+      return;
+    }
+
+    if (msg.kind === "answers.commit") {
+      const res = await sendToBackground({
+        kind: "answers.commit",
+        stageId: msg.stageId,
+      });
+      sendFromContent({
+        error: res.ok ? undefined : res.error,
+        id: msg.id,
+        kind: "answers.commitResult",
+        ok: res.ok,
+      });
+      return;
+    }
+
+    if (msg.kind === "answers.discard") {
+      const res = await sendToBackground({
+        kind: "answers.discard",
+        outcome: msg.outcome,
+        stageId: msg.stageId,
+      });
+      sendFromContent({
+        id: msg.id,
+        kind: "answers.discardResult",
         ok: res.ok,
       });
       return;

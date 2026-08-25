@@ -47,12 +47,32 @@ import type {
   ResolvedOriginMode,
   TabOriginInfo,
 } from "~/bridge/types";
-import type { Profile, ProfileNote } from "~/api/types";
+import type { Profile, ProfileNote, TalentAnswer } from "~/api/types";
+import {
+  createStageStore,
+  drainPendingStages,
+  recordRetryableStageFailure,
+  stageAndSettle,
+  type CaptureStage,
+  type StageDeps,
+  type StageStorageArea,
+} from "~/capture/stageStore";
 import type { AtsName, OriginMode, ProfileValue } from "~/field/types";
 import { browser } from "wxt/browser";
+import {
+  clearApplicationContextForTab,
+  readApplicationContextForTab,
+  registerApplicationHandoff,
+  registerOpenedApplicationTab,
+  updateOpenedApplicationTab,
+  type ApplicationContextStorage,
+} from "~/capture/applicationContext";
 
 const FRAME_REGISTRY_KEY = "tp.frameRegistry";
 const PROFILE_CACHE_KEY = "tp.profileCache";
+const CAPTURE_STAGE_KEY = "tp.captureStages";
+const CAPTURE_STAGE_TTL_MS = 30 * 60 * 1000;
+const CAPTURE_RETRY_LIMIT = 5;
 const MAIN_WORLD_SCRIPT_PATH = "/main-world.js";
 const CONTENT_SCRIPT_PATH = "/content-scripts/content.js";
 
@@ -171,6 +191,7 @@ export default defineBackground(() => {
   const fillPorts = new Set<FillPortState>();
   const portStateByBatchId = new Map<string, FillPortState>();
   const mainWorldInjected = new Set<string>();
+  const applicationOpenerByTab = new Map<number, number>();
 
   const frameAutoModeCache = new Map<string, FrameAutoModeCacheEntry>();
   const pendingAutoModeRequests = new Map<string, PendingAutoModeRequest>();
@@ -598,6 +619,118 @@ export default defineBackground(() => {
     });
   };
 
+  // Staged captures outlive the page that produced them.
+  //
+  // A form submit destroys the content script on any full-page POST, and rewrites
+  // the URL on any SPA that routes to a confirmation screen. Both happen before
+  // submit detection finishes, so anything the page still held at that moment was
+  // lost and the URL read afterwards identified the wrong thing. The page
+  // therefore hands the batch over at submit time, with the URL it was filled
+  // against, and this worker decides what becomes of it.
+  //
+  // `storage.session`, not memory, and not `storage.local`.
+  //
+  // MV3 suspends this service worker between events, so a stage held in a module
+  // variable would be gone before the navigation it is waiting for. Session
+  // storage survives that suspension, which is the only lifetime a stage needs.
+  //
+  // It does NOT survive a browser restart, and that is a decision rather than an
+  // oversight. A stage holds the applicant's raw form answers — legal name,
+  // salary expectations, immigration status — for a submission the server has not
+  // accepted. Writing that to disk until something happens to clear it is a
+  // privacy trade nobody has made, so an unsent batch dies with the browser
+  // session. Anything that reached the server is already durable there.
+  //
+  // The consequence is that the startup drain below can only ever find stages
+  // from the CURRENT session — a worker that was suspended and woken, not a
+  // browser that was closed and reopened. Moving to `storage.local` is what would
+  // change that, and it needs the privacy decision first.
+  //
+  // The store itself lives in ~/capture/stageStore so its concurrency and
+  // ordering rules can be executed by a test; see stageStore.spec.ts.
+  const sessionStorage: StageStorageArea & ApplicationContextStorage = {
+    get: (keys) => browser.storage.session.get(keys),
+    remove: (keys) => browser.storage.session.remove(keys),
+    set: (items) => browser.storage.session.set(items),
+  };
+  const stageStore = createStageStore(sessionStorage);
+  const applicationContextStorage = sessionStorage;
+
+  const stageDeps = (): StageDeps => ({
+    commit: (stage) => commitStage(stage),
+    store: stageStore,
+    tabUrl: async (tabId) => {
+      try {
+        const tab = await browser.tabs.get(tabId);
+        // No tab means it is gone. An unreadable url is not evidence of
+        // navigation, so it reads as "still here" and the stage stays pending.
+        if (!tab) return "";
+        return typeof tab.url === "string" && tab.url.length > 0
+          ? tab.url
+          : null;
+      } catch {
+        return "";
+      }
+    },
+  });
+
+  // A failure is only worth keeping if repeating the request could succeed.
+  // Network and 5xx are; a 4xx is the batch itself being wrong and will be just
+  // as wrong next time, so it is dropped rather than retried forever.
+  const isRetryableCaptureError = (e: unknown): boolean => {
+    if (e instanceof NetworkError) return true;
+    if (e instanceof AuthError) return true;
+    if (e instanceof ApiError) return e.status === 0 || e.status >= 500;
+    return false;
+  };
+
+  const commitStage = async (
+    stage: CaptureStage,
+  ): Promise<{ ok: boolean; error?: string; retryable?: boolean }> => {
+    if (!(await ensureAuthenticated())) {
+      await recordRetryableStageFailure(
+        stageStore,
+        stage,
+        "Not authenticated",
+      );
+      return { error: "Not authenticated", ok: false, retryable: true };
+    }
+
+    try {
+      const { captureAnswerBatch } = await import("~/api/talentAnswer");
+      await captureAnswerBatch({
+        ats: stage.ats,
+        originalJobPostUrl: stage.applicationUrl,
+        pageUrl: stage.applicationUrl,
+        records: stage.records,
+        talentJobApplicationId: stage.talentJobApplicationId,
+      });
+      if (stage.tabId !== null) {
+        await clearApplicationContextForTab(
+          applicationContextStorage,
+          stage.tabId,
+        );
+      }
+      await stageStore.drop(stage.id);
+      // The batch just changed the answer store, so the next fill must not read
+      // a cache that predates it.
+      await refreshCachedAnswers();
+      return { ok: true };
+    } catch (e) {
+      const retryable = isRetryableCaptureError(e);
+      const message = (e as Error).message;
+      if (retryable) {
+        await recordRetryableStageFailure(stageStore, stage, message);
+      } else {
+        await stageStore.drop(stage.id);
+      }
+      return { error: message, ok: false, retryable };
+    }
+  };
+
+  const retryPendingStages = (): Promise<void> =>
+    drainPendingStages(stageDeps(), Date.now());
+
   const ensureAuthenticated = async (): Promise<boolean> => {
     const status = await getAuthStatus();
     if (!status.authenticated) {
@@ -609,6 +742,65 @@ export default defineBackground(() => {
     return true;
   };
 
+  // Learned answers do NOT arrive with the profile.
+  //
+  // `/talentprofile/first` does not project `talentAnswers` and must not start:
+  // it is the broad hydration read, and the answer store is an unbounded
+  // per-application history. Hydrating from it therefore left
+  // `profile.talentAnswers` null after every restart, and
+  // resolveLearnedAnswersBatch silently answered `unsupported` for every field —
+  // the fill quietly forgot everything the user had ever taught it.
+  //
+  // So they are read from their own route, which the guard already scopes to the
+  // caller's own profile with a forced value, and merged into the cached profile
+  // object the resolver reads.
+  const mergeAnswers = (
+    profile: Profile,
+    fetched: TalentAnswer[],
+  ): Profile => {
+    // Deduplicate by id, newest write winning. The cached copy can already hold
+    // rows a just-committed batch returned, and the same row must not appear
+    // twice to the matcher — it would double its weight in the ranking.
+    const byId = new Map<string, TalentAnswer>();
+    for (const answer of profile.talentAnswers ?? []) byId.set(answer.id, answer);
+    for (const answer of fetched) byId.set(answer.id, answer);
+    return { ...profile, talentAnswers: [...byId.values()] };
+  };
+
+  const hydrateProfile = async (): Promise<Profile> => {
+    const profile = await fetchMyProfile();
+    let answers: TalentAnswer[] = [];
+    try {
+      const { fetchMyTalentAnswers } = await import("~/api/talentAnswer");
+      answers = await fetchMyTalentAnswers();
+    } catch (e) {
+      // A profile without its answers is degraded but usable — the resolver just
+      // falls back to profile fields. Failing the whole hydration would take the
+      // fill down with it.
+      console.warn("[TP] Could not load learned answers", (e as Error).message);
+    }
+    const merged = mergeAnswers(profile, answers);
+    await setCachedProfile(merged);
+    return merged;
+  };
+
+  const refreshCachedAnswers = async (): Promise<void> => {
+    const cached = await getCachedProfile();
+    if (!cached) return;
+    try {
+      const { fetchMyTalentAnswers } = await import("~/api/talentAnswer");
+      const answers = await fetchMyTalentAnswers();
+      await browser.storage.session.set({
+        [PROFILE_CACHE_KEY]: {
+          data: mergeAnswers(cached.data, answers),
+          fetchedAt: cached.fetchedAt,
+        },
+      });
+    } catch {
+      // Best effort. The next full hydration picks them up.
+    }
+  };
+
   const getProfile = async (force = false): Promise<Profile> => {
     if (!force) {
       const cached = await getCachedProfile();
@@ -618,9 +810,7 @@ export default defineBackground(() => {
       if (inflightNonForce) return inflightNonForce;
       inflightNonForce = (async () => {
         try {
-          const profile = await fetchMyProfile();
-          await setCachedProfile(profile);
-          return profile;
+          return await hydrateProfile();
         } finally {
           inflightNonForce = null;
         }
@@ -631,9 +821,7 @@ export default defineBackground(() => {
     if (inflightForce) return inflightForce;
     inflightForce = (async () => {
       try {
-        const profile = await fetchMyProfile();
-        await setCachedProfile(profile);
-        return profile;
+        return await hydrateProfile();
       } finally {
         inflightForce = null;
       }
@@ -1180,7 +1368,7 @@ export default defineBackground(() => {
     });
   });
 
-  const handleExternalAuth = async (
+  const handleExternalMessage = async (
     message: ExternalToBackground,
     senderTabId: number | undefined,
   ): Promise<BackgroundResponse> => {
@@ -1206,7 +1394,26 @@ export default defineBackground(() => {
       });
       await clearCachedProfile();
       broadcastAuthChanged();
+      await retryPendingStages();
       void finalizeConnectAttempt(senderTabId);
+      return { ok: true };
+    }
+    if (message.kind === "application.handoff") {
+      if (
+        senderTabId === undefined ||
+        typeof message.talentJobApplicationId !== "string" ||
+        message.talentJobApplicationId.length === 0 ||
+        message.talentJobApplicationId.length > 128 ||
+        typeof message.destinationUrl !== "string"
+      ) {
+        return { ok: false, error: "Invalid application handoff" };
+      }
+      await registerApplicationHandoff(
+        applicationContextStorage,
+        senderTabId,
+        message.talentJobApplicationId,
+        message.destinationUrl,
+      );
       return { ok: true };
     }
     return { ok: false, error: "Unknown external message kind" };
@@ -1220,7 +1427,7 @@ export default defineBackground(() => {
             sendResponse({ ok: false, error: "Invalid message" });
             return;
           }
-          const result = await handleExternalAuth(
+          const result = await handleExternalMessage(
             message as ExternalToBackground,
             sender.tab?.id,
           );
@@ -1652,6 +1859,52 @@ export default defineBackground(() => {
           };
         }
       }
+      case "answers.stage": {
+        const payload = message.payload;
+        if (!payload?.applicationUrl || !Array.isArray(payload.records)) {
+          return { ok: false, error: "Invalid capture payload" };
+        }
+        if (payload.records.length === 0) {
+          return { ok: false, error: "Nothing to capture" };
+        }
+        const stageId = crypto.randomUUID();
+        const senderTabId = sender?.tab?.id ?? null;
+        const talentJobApplicationId =
+          senderTabId === null
+            ? null
+            : await readApplicationContextForTab(
+                applicationContextStorage,
+                senderTabId,
+              );
+        const stage = {
+          applicationUrl: payload.applicationUrl,
+          ats: payload.ats ?? null,
+          attempts: 0,
+          id: stageId,
+          lastError: null,
+          records: payload.records,
+          stagedAt: Date.now(),
+          tabId: sender?.tab?.id ?? null,
+          talentJobApplicationId,
+        };
+        // Persists, then settles the race the persistence itself opens: a
+        // navigation can commit while the write is still in flight.
+        await stageAndSettle(stageDeps(), stage);
+        return { ok: true, data: { stageId } };
+      }
+      case "answers.commit": {
+        const stage = await stageStore.read(message.stageId);
+        // Already committed, or committed on the caller's behalf when its tab
+        // navigated. Either way the batch is not pending, so this is a success.
+        if (!stage) return { ok: true };
+        const result = await commitStage(stage);
+        if (result.ok) return { ok: true };
+        return { ok: false, error: result.error ?? "Capture failed" };
+      }
+      case "answers.discard": {
+        await stageStore.drop(message.stageId);
+        return { ok: true };
+      }
       case "learnedAnswers.delete": {
         if (!(await ensureAuthenticated())) {
           return { ok: false, error: "Not authenticated" };
@@ -1693,7 +1946,33 @@ export default defineBackground(() => {
     },
   );
 
+  browser.tabs.onCreated.addListener((tab) => {
+    if (tab.id === undefined || tab.openerTabId === undefined) return;
+    applicationOpenerByTab.set(tab.id, tab.openerTabId);
+    void registerOpenedApplicationTab(
+      applicationContextStorage,
+      tab.openerTabId,
+      tab.id,
+      tab.pendingUrl ?? tab.url ?? "",
+    );
+  });
+
+  browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    const currentUrl = changeInfo.url ?? tab.url;
+    const openerTabId =
+      tab.openerTabId ?? applicationOpenerByTab.get(tabId);
+    if (!currentUrl || openerTabId === undefined) return;
+    void updateOpenedApplicationTab(
+      applicationContextStorage,
+      openerTabId,
+      tabId,
+      currentUrl,
+    );
+  });
+
   browser.tabs.onRemoved.addListener(async (tabId) => {
+    applicationOpenerByTab.delete(tabId);
+    void clearApplicationContextForTab(applicationContextStorage, tabId);
     void removeTabFromRegistry(tabId);
     purgeInjectionMarkersForTab(tabId);
     purgeFrameAutoModeForTab(tabId);
@@ -1721,9 +2000,40 @@ export default defineBackground(() => {
     }
   };
 
+  // The orphan rule, stated explicitly because it is a judgement call.
+  //
+  // A staged batch is committed when its own tab commits a TOP-LEVEL navigation
+  // away from the page it was staged on. The content script that would have
+  // reported the outcome no longer exists, so the alternative is discarding a
+  // completed application's answers on every ATS that submits with a real POST —
+  // which is most of them.
+  //
+  // A top-level navigation immediately after a submit click is the strongest
+  // success signal available from outside the page, and the cost of being wrong
+  // is asymmetric: a false positive stores answers for an application that was
+  // not sent, which the user can delete; a false negative loses the capture with
+  // no way to recover it. The extension's own submit detection already leans the
+  // same way by design.
+  //
+  // Subframe navigations do not qualify: an embedded ATS iframe reloading is not
+  // the applicant leaving the page.
+  const commitStagesOrphanedByNavigation = async (
+    tabId: number,
+    url: string,
+  ): Promise<void> => {
+    for (const stage of await stageStore.readAll()) {
+      if (stage.tabId !== tabId) continue;
+      if (stage.applicationUrl === url) continue;
+      await commitStage(stage);
+    }
+  };
+
   if (browser.webNavigation?.onCommitted) {
     browser.webNavigation.onCommitted.addListener((details) => {
       handleFrameDisposal(details.tabId, details.frameId);
+      if (details.frameId === 0) {
+        void commitStagesOrphanedByNavigation(details.tabId, details.url);
+      }
     });
   } else {
     console.warn(
@@ -1736,6 +2046,21 @@ export default defineBackground(() => {
       handleFrameDisposal(details.tabId, details.frameId);
     });
   }
+
+  // A retryable failure — offline, a 5xx, an expired session — keeps its stage,
+  // and this drain is the only thing that ever retries one.
+  //
+  // Its reach is bounded by where stages live. `storage.session` is cleared when
+  // the browser closes, so a stage can only ever be drained within the SAME
+  // browser session that created it: this covers the worker being suspended and
+  // woken, and covers nothing across a restart, because after a restart there is
+  // nothing left to drain. `onStartup` is registered anyway — it fires on a fresh
+  // profile load where the read simply comes back empty — while the bare call
+  // below is what actually matters, running on every wake of a suspended worker.
+  browser.runtime.onStartup?.addListener(() => {
+    void retryPendingStages();
+  });
+  void retryPendingStages();
 
   if (browser.permissions?.onRemoved) {
     browser.permissions.onRemoved.addListener(async (perm) => {

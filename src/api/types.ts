@@ -99,6 +99,12 @@ export type TalentAnswer = {
   pageUrl: string | null
   ats: string | null
   source: string | null
+  // The classifier's enum, and the key answer history will be queried by. It is
+  // null on every row today: the country-aware classifier that fills it does not
+  // exist yet, and nothing infers one. The field is declared because the column
+  // is real, the backend returns it, and enum-driven matching cannot be built
+  // against a type that pretends it is absent.
+  labelEnumId: string | null
   profileField: string | null
   resolverOutcome: 'filled' | 'skipped' | 'unsupported' | 'failed' | null
   lastUsedAt: string | null
