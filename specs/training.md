@@ -18,7 +18,7 @@ The collected corpus trains a small question classifier.
 
 Qwen acts as the teacher.
 
-The student model will export to ONNX.
+The training pipeline exports the student model to ONNX.
 
 The extension will run the student model locally.
 
@@ -117,7 +117,15 @@ Enums with different value shapes must not merge.
 
 A verified enum must not be the merge loser.
 
-Country-dependent labels use a lowercase country suffix.
+Country scope comes from a reviewed map keyed by `labelEnumId`.
+
+The reviewed value is an ISO 3166-1 alpha-2 code or `null`.
+
+`null` means the class is country independent.
+
+A lowercase two-letter label suffix is a review suggestion only.
+
+The trainer must not enforce a country from the label text.
 
 Example:
 
@@ -126,7 +134,11 @@ work_permit_de
 need_visa_us
 ```
 
-Country-independent labels use no country suffix.
+Every class needs a reviewed country-scope entry before model approval.
+
+Every unreviewed class must abstain with `class_not_evaluable`.
+
+The suffix suggestion must not change runtime eligibility.
 
 The worker loads active enums with an immutable `createdAt + id` keyset.
 
@@ -167,6 +179,232 @@ Boolean-shaped option sets normalize to `boolean`.
 Placeholder values do not count as answers.
 
 Form fingerprints must not deduplicate corpus rows.
+
+## Training Repository
+
+`jobs-autofill-training` owns offline model training.
+
+Repository:
+
+```text
+git@github.com:Talentprofile-net/jobs-autofill-training.git
+```
+
+The extension pins it at `training` as a nested submodule.
+
+The training repository owns:
+
+- REST corpus export client.
+- Dataset validation and snapshot creation.
+- Deterministic grouped split.
+- Blind gold review packets.
+- Gold calibration and final-test splits.
+- Student training.
+- Per-variant calibration and abstention policy.
+- Optional dynamic int8 comparison.
+- Runtime variant selection.
+- Evaluation.
+- Advisory final-test accounting.
+- ONNX export and parity check.
+- Candidate manifest.
+- Synthetic tests and isolated CI.
+
+The training repository does not own:
+
+- Browser inference.
+- Form scrape or teacher label work.
+- Backend corpus storage.
+- Model approval, promotion, or deployment.
+- Extension packaging.
+
+The training repository stays outside the Nx workspace.
+
+Root CI does not install its Python dependencies.
+
+Training CI uses synthetic data only.
+
+Training CI does not call production.
+
+Git does not store production corpus data, secrets, checkpoints, or model artifacts.
+
+## Corpus Export API
+
+The backend serves:
+
+```text
+GET /import/training/question-labels
+```
+
+The existing import API key protects this route.
+
+The route is read only.
+
+The trainer never reads PostgreSQL directly.
+
+The route accepts `limit` and an opaque `cursor` only.
+
+`limit` defaults to 500.
+
+`limit` has a maximum of 1,000.
+
+Unknown query keys return `400 invalid_query`.
+
+A malformed cursor returns `400 invalid_cursor`.
+
+Pagination uses an `id` keyset.
+
+The first page fixes `asOf` for later pages.
+
+Each page carries the same corpus revision.
+
+The revision contains `asOf`, `corpusMaxUpdatedAt`, `eligibleCount`, and `enumDigest`.
+
+The client restarts the full export when any revision value changes.
+
+The response uses schema version `1`.
+
+One item contains:
+
+- `id`.
+- `questionText`.
+- `normalizedQuestion`.
+- `fieldType`.
+- `answerKind`.
+- `jobCountry`.
+- `occurrenceCount`.
+- `updatedAt`.
+- Enum `id`, `label`, `valueShape`, `active`, `verified`, and `updatedAt`.
+
+The route does not return page URL, job ID, options, profile field, answer, profile, or contact data.
+
+The route returns exclusion counts only for rejected rows.
+
+The route refuses more than 20,000 eligible rows with `409 corpus_exceeds_cap`.
+
+The route never truncates a training export.
+
+## Dataset Eligibility
+
+A row trains only when `labelEnumId` exists.
+
+Its enum must be active.
+
+Its enum must be verified.
+
+Its `answerKind` must equal the enum `valueShape`.
+
+The classifier features remain:
+
+```text
+questionText + fieldType + jobCountry
+```
+
+`answerKind` checks integrity only.
+
+`normalizedQuestion` owns split grouping only.
+
+No normalized question group may cross evidence splits.
+
+A reviewed group leaves teacher training and teacher validation.
+
+Reviewed groups split into gold calibration and gold test.
+
+Other groups split into teacher training and teacher validation.
+
+An unreviewed row inside a reviewed group is excluded.
+
+A gold `exclude` decision excludes the row.
+
+A gold `unknown` decision requires abstention.
+
+`occurrenceCount` may set a bounded sample weight.
+
+The trainer must not duplicate corpus rows before the split.
+
+The teacher corpus contains hard labels only.
+
+Teacher logits do not exist.
+
+The pipeline performs supervised student training from hard teacher labels.
+
+Teacher validation selects the training checkpoint.
+
+Gold calibration fits confidence and abstention policy.
+
+Gold test measures the selected runtime variant only.
+
+The pipeline returns `insufficient_data` when it cannot create a valid teacher training and validation run.
+
+The pipeline must not fabricate a successful model.
+
+## Candidate Artifact
+
+The pipeline writes:
+
+- `model.onnx`.
+- `tokenizer.json`.
+- `preprocessing.json`.
+- `labels.json`.
+- `metrics.json`.
+- `dataset.json`.
+- `base_model.json`.
+- `verification.json`.
+- `policy.<variant>.json`.
+- `calibration.<variant>.json`.
+- `selection.json`.
+- `selective_policy.json`.
+- `browser.json`.
+- `manifest.json`.
+
+The pipeline may also write `model.int8.onnx` and `quantization.json`.
+
+Input serialization version is `autofill-question-input.v1`.
+
+ONNX inputs are `input_ids` and `attention_mask`.
+
+ONNX output is `logits`.
+
+`labels.json` maps each output index to `labelEnumId`.
+
+The pipeline verifies PyTorch and ONNX logit parity.
+
+The pipeline verifies equal top-one predictions on teacher validation and gold inputs.
+
+Each runtime variant owns its own calibration policy.
+
+The pipeline selects a runtime variant from teacher validation and gold calibration only.
+
+The runtime bundle identity covers variant, model, policy, tokenizer, preprocessing, labels, and country-scope map.
+
+Changing any runtime bundle input creates a different candidate.
+
+The pipeline refuses evaluation or finalization after a selected runtime file changes.
+
+The final-test identity covers the exact serialized classifier input, answer kind, gold decision, expected label, row ID, and schema versions.
+
+Notes, review time, occurrence count, row timestamps, and calibration rows do not change final-test identity.
+
+The first runtime bundle evaluated against one final-test identity is `final`.
+
+A different runtime bundle against the same final-test identity is `exploratory`.
+
+An identical retry reuses its ledger entry.
+
+The final-test ledger uses a file lock and atomic replacement.
+
+The final-test ledger is local and advisory.
+
+External immutable holdout governance is not implemented.
+
+The pipeline marks every artifact `candidate`.
+
+The pipeline never replaces a different artifact with the same candidate version.
+
+No production acceptance threshold is locked.
+
+Model approval is open.
+
+Artifact promotion is not implemented.
 
 ## Worker Runtime
 
@@ -367,14 +605,36 @@ Submission is not implemented.
 
 The corpus must first contain real observations.
 
-The training pipeline must then:
+The production corpus export has not run.
 
-1. Export `(questionText, fieldType, jobCountry) -> labelEnumId` examples.
-2. Distil the student model from the teacher corpus.
-3. Validate class and value-shape accuracy.
-4. Export the student to ONNX.
-5. Ship the model with the extension and headless runtime.
-6. Replace question-text matching with classifier enum matching.
+The production corpus language and class distribution are unknown.
+
+The production base model choice is open.
+
+The production model acceptance threshold is open.
+
+The reviewed country-scope map is open.
+
+The country-scope reviewer owner is open.
+
+The int8 degradation limits are open.
+
+The minimum gold groups per class is open.
+
+External immutable final-test governance is open.
+
+No model is approved.
+
+The remaining training work is:
+
+1. Deploy the protected corpus export route.
+2. Export and inspect the real corpus.
+3. Choose the production base model from corpus evidence.
+4. Train and evaluate a production candidate.
+5. Lock the acceptance threshold.
+6. Approve and promote a passing artifact.
+7. Ship the approved model with the extension and headless runtime.
+8. Replace question-text matching with classifier enum matching.
 
 Multilingual training is not implemented.
 
