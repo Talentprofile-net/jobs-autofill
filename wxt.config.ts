@@ -5,7 +5,7 @@ export default defineConfig({
   manifest: ({ mode }) => ({
     name: 'TalentProfile Autofill',
     description: 'Fill job application forms from your TalentProfile.',
-    permissions: ['storage', 'tabs', 'webNavigation', 'scripting'],
+    permissions: ['storage', 'tabs', 'webNavigation', 'scripting', 'offscreen'],
     host_permissions: [
       'https://*.myworkdayjobs.com/*',
       'https://boards.greenhouse.io/*',
@@ -34,6 +34,9 @@ export default defineConfig({
         description: 'Fill all visible fields with TalentProfile',
       },
     },
+    content_security_policy: {
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+    },
     externally_connectable: {
       matches: [
         'https://talentprofile.net/*',
@@ -46,4 +49,8 @@ export default defineConfig({
       : {}),
   }),
   srcDir: 'src',
+  vite: () => ({
+    resolve: { conditions: ['onnxruntime-web-use-extern-wasm'] },
+    optimizeDeps: { esbuildOptions: { conditions: ['onnxruntime-web-use-extern-wasm'] } },
+  }),
 })

@@ -16,7 +16,10 @@ declare module 'bun:test' {
   interface Matchers {
     not: Omit<Matchers, 'not'>
     toBe(expected: unknown): void
+    toBeCloseTo(expected: number, digits?: number): void
     toBeGreaterThan(expected: number): void
+    toBeLessThan(expected: number): void
+    toBeLessThanOrEqual(expected: number): void
     toBeNull(): void
     toContain(expected: unknown): void
     toEqual(expected: unknown): void
@@ -28,8 +31,9 @@ declare module 'bun:test' {
   }
 
   interface TestFn {
-    (label: string, fn: () => MaybePromise): void
+    (label: string, fn: () => MaybePromise, timeoutMs?: number): void
     each<Row>(cases: readonly Row[]): EachFn<Row>
+    skipIf(condition: boolean): (label: string, fn: () => MaybePromise, timeoutMs?: number) => void
   }
 
   export const describe: (label: string, fn: () => void) => void

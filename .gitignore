@@ -13,3 +13,5 @@ Thumbs.db
 .yarn/cache
 *.DS_Store
 **/.DS_Store
+public/classifier/
+public/ort/
