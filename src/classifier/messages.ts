@@ -1,23 +1,18 @@
 import type { AnswerKind, ClassifierInput, Decision } from '~/classifier/contract'
 
-export const CLASSIFY_MESSAGE = 'classifier.classify'
-export const STATUS_MESSAGE = 'classifier.status'
+// A named port, not runtime.sendMessage: a broadcast message is delivered to
+// every extension context, and the background router answers unknown kinds
+// first, so the offscreen document's reply never wins the race. onConnect is
+// filtered by name in every context, so only the classifier answers this one.
+export const CLASSIFIER_PORT = 'classifier'
 
-export type ClassifyMessage = {
-  kind: typeof CLASSIFY_MESSAGE
-  requests: { input: ClassifierInput; answerKind: AnswerKind }[]
-}
+export type ClassifierRequestBody =
+  | { kind: 'classify'; requests: { input: ClassifierInput; answerKind: AnswerKind }[] }
+  | { kind: 'status' }
 
-export type StatusMessage = {
-  kind: typeof STATUS_MESSAGE
-}
+export type ClassifierRequest = ClassifierRequestBody & { id: number }
 
-export type ClassifierMessage = ClassifyMessage | StatusMessage
-
-export type ClassifyResponse =
-  | { ok: true; decisions: Decision[] }
-  | { ok: false; error: string }
-
-export type StatusResponse =
-  | { ok: true; modelVersion: string; labels: number; loadMs: number }
-  | { ok: false; error: string }
+export type ClassifierResponse =
+  | { id: number; ok: true; kind: 'classify'; decisions: Decision[] }
+  | { id: number; ok: true; kind: 'status'; modelVersion: string; labels: number; loadMs: number }
+  | { id: number; ok: false; error: string }

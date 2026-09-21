@@ -18,7 +18,11 @@ type Case = {
 
 const cases = fixture.cases as unknown as Case[]
 const ASSETS = resolve(dirname(fileURLToPath(import.meta.url)), '../../public/classifier')
-const enabled = process.env.CLASSIFIER_MODEL_PARITY === '1' && existsSync(resolve(ASSETS, 'model.onnx'))
+const requested = process.env.CLASSIFIER_MODEL_PARITY === '1'
+const enabled = requested && existsSync(resolve(ASSETS, 'model.onnx'))
+if (requested && !enabled) {
+  throw new Error(`no staged model in ${ASSETS}; run scripts/stage-classifier-assets.mjs first`)
+}
 const readAsset = <T>(name: string): T => JSON.parse(readFileSync(resolve(ASSETS, name), 'utf8')) as T
 
 describe('model parity', () => {

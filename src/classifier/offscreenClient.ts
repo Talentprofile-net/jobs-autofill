@@ -2,16 +2,26 @@ import { browser } from 'wxt/browser'
 
 import type { AnswerKind, ClassifierInput, Decision } from '~/classifier/contract'
 import {
-  CLASSIFY_MESSAGE,
-  STATUS_MESSAGE,
-  type ClassifyResponse,
-  type StatusResponse,
+  CLASSIFIER_PORT,
+  type ClassifierRequestBody,
+  type ClassifierResponse,
 } from '~/classifier/messages'
 
 export const OFFSCREEN_PATH = 'offscreen.html'
 const JUSTIFICATION = 'Runs the local question classifier so form fields never leave the device.'
 
+type Port = ReturnType<typeof browser.runtime.connect>
+
 let creating: Promise<unknown> | null = null
+let channel: Port | null = null
+let nextId = 1
+const waiting = new Map<number, { done: (value: ClassifierResponse) => void; fail: (error: Error) => void }>()
+
+export class ClassifierDisconnected extends Error {
+  constructor() {
+    super('the classifier disconnected')
+  }
+}
 
 async function documentExists(): Promise<boolean> {
   const contexts = await browser.runtime.getContexts({
@@ -39,7 +49,62 @@ export async function ensureOffscreenDocument(): Promise<void> {
   }
 }
 
+function connect(): Port {
+  if (channel) return channel
+  const port = browser.runtime.connect({ name: CLASSIFIER_PORT })
+  port.onMessage.addListener((message) => {
+    const response = message as ClassifierResponse
+    const pending = waiting.get(response.id)
+    if (!pending) return
+    waiting.delete(response.id)
+    pending.done(response)
+  })
+  port.onDisconnect.addListener(() => {
+    channel = null
+    for (const [id, pending] of waiting) {
+      waiting.delete(id)
+      pending.fail(new ClassifierDisconnected())
+    }
+  })
+  channel = port
+  return port
+}
+
+async function send(request: ClassifierRequestBody): Promise<ClassifierResponse> {
+  await ensureOffscreenDocument()
+  const port = connect()
+  const id = nextId++
+  return new Promise<ClassifierResponse>((done, fail) => {
+    waiting.set(id, { done, fail })
+    try {
+      port.postMessage({ ...request, id })
+    } catch {
+      waiting.delete(id)
+      fail(new ClassifierDisconnected())
+    }
+  })
+}
+
+// The offscreen document can go away under us: Chrome may reclaim it, another
+// caller may close it, or the extension may reload. That loses the in-flight
+// request but nothing else, so one retry reopens the document and asks again.
+async function ask(request: ClassifierRequestBody): Promise<ClassifierResponse> {
+  try {
+    return await send(request)
+  } catch (error) {
+    if (!(error instanceof ClassifierDisconnected)) throw error
+    channel = null
+    return send(request)
+  }
+}
+
+export function disconnectClassifier(): void {
+  channel?.disconnect()
+  channel = null
+}
+
 export async function closeOffscreenDocument(): Promise<void> {
+  disconnectClassifier()
   if (await documentExists()) await browser.offscreen.closeDocument()
 }
 
@@ -47,16 +112,15 @@ export async function classifyQuestions(
   requests: { input: ClassifierInput; answerKind: AnswerKind }[],
 ): Promise<Decision[]> {
   if (!requests.length) return []
-  await ensureOffscreenDocument()
-  const response = (await browser.runtime.sendMessage({
-    kind: CLASSIFY_MESSAGE,
-    requests,
-  })) as ClassifyResponse
-  if (!response?.ok) throw new Error(response?.error ?? 'the classifier did not answer')
+  const response = await ask({ kind: 'classify', requests })
+  if (!response.ok) throw new Error(response.error)
+  if (response.kind !== 'classify') throw new Error('the classifier answered the wrong request')
   return response.decisions
 }
 
-export async function classifierStatus(): Promise<StatusResponse> {
-  await ensureOffscreenDocument()
-  return (await browser.runtime.sendMessage({ kind: STATUS_MESSAGE })) as StatusResponse
+export async function classifierStatus(): Promise<{ modelVersion: string; labels: number; loadMs: number }> {
+  const response = await ask({ kind: 'status' })
+  if (!response.ok) throw new Error(response.error)
+  if (response.kind !== 'status') throw new Error('the classifier answered the wrong request')
+  return { modelVersion: response.modelVersion, labels: response.labels, loadMs: response.loadMs }
 }

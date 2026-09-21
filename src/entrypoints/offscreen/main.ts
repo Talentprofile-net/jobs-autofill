@@ -3,19 +3,21 @@ import { browser } from 'wxt/browser'
 
 import { loadAssets } from '~/classifier/assets'
 import {
-  CLASSIFY_MESSAGE,
-  STATUS_MESSAGE,
-  type ClassifierMessage,
-  type ClassifyResponse,
-  type StatusResponse,
+  CLASSIFIER_PORT,
+  type ClassifierRequest,
+  type ClassifierResponse,
 } from '~/classifier/messages'
 import { QuestionClassifier, type OrtLike } from '~/classifier/session'
 
 ort.env.wasm.wasmPaths = new URL('ort/', browser.runtime.getURL('/')).toString()
 ort.env.wasm.numThreads = 1
 
-let pending: Promise<{ classifier: QuestionClassifier; modelVersion: string; labels: number; loadMs: number }> | null =
-  null
+let pending: Promise<{
+  classifier: QuestionClassifier
+  modelVersion: string
+  labels: number
+  loadMs: number
+}> | null = null
 
 function load() {
   pending ??= (async () => {
@@ -32,29 +34,33 @@ function load() {
   return pending
 }
 
-function fail(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+async function answer(request: ClassifierRequest): Promise<ClassifierResponse> {
+  try {
+    const loaded = await load()
+    if (request.kind === 'classify') {
+      return { id: request.id, ok: true, kind: 'classify', decisions: await loaded.classifier.classify(request.requests) }
+    }
+    return {
+      id: request.id,
+      ok: true,
+      kind: 'status',
+      modelVersion: loaded.modelVersion,
+      labels: loaded.labels,
+      loadMs: loaded.loadMs,
+    }
+  } catch (error) {
+    return { id: request.id, ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
-browser.runtime.onMessage.addListener((
-  message: ClassifierMessage,
-  _sender: unknown,
-  sendResponse: (response: ClassifyResponse | StatusResponse) => void,
-) => {
-  if (message?.kind === CLASSIFY_MESSAGE) {
-    load()
-      .then(({ classifier }) => classifier.classify(message.requests))
-      .then((decisions) => sendResponse({ ok: true, decisions } satisfies ClassifyResponse))
-      .catch((error) => sendResponse({ ok: false, error: fail(error) } satisfies ClassifyResponse))
-    return true
-  }
-  if (message?.kind === STATUS_MESSAGE) {
-    load()
-      .then(({ modelVersion, labels, loadMs }) =>
-        sendResponse({ ok: true, modelVersion, labels, loadMs } satisfies StatusResponse),
-      )
-      .catch((error) => sendResponse({ ok: false, error: fail(error) } satisfies StatusResponse))
-    return true
-  }
-  return false
+browser.runtime.onConnect.addListener((port) => {
+  if (port.name !== CLASSIFIER_PORT) return
+  port.onMessage.addListener((message) => {
+    const request = message as ClassifierRequest
+    answer(request).then((response) => {
+      try {
+        port.postMessage(response)
+      } catch {}
+    })
+  })
 })

@@ -4,6 +4,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-svelte'],
   manifest: ({ mode }) => ({
     name: 'TalentProfile Autofill',
+    minimum_chrome_version: '116',
     description: 'Fill job application forms from your TalentProfile.',
     permissions: ['storage', 'tabs', 'webNavigation', 'scripting', 'offscreen'],
     host_permissions: [
