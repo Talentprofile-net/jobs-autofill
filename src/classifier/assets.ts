@@ -5,12 +5,23 @@ import {
   PREPROCESSING_SCHEMA_VERSION,
   INPUT_SERIALIZATION_VERSION,
   INPUT_TEMPLATE,
+  EMPTY_OPTIONS,
+  OPTION_SEPARATOR,
+  QUESTION_OPTIONS_SEPARATOR,
+  VOCABULARY_RULE_VERSION,
   type LabelMap,
   type SelectivePolicy,
 } from '~/classifier/contract'
 import type { ClassifierAssets } from '~/classifier/session'
 
 export const ASSET_DIR = 'classifier'
+
+export type ExportVocabulary = {
+  ruleVersion: string
+  baseSize: number
+  requestedSize: number
+  keptSize: number
+}
 
 export type Preprocessing = {
   preprocessingSchemaVersion: string
@@ -20,6 +31,10 @@ export type Preprocessing = {
   padTokenId: number
   paddingSide: 'left' | 'right'
   unicodeNormalization: string
+  questionOptionsSeparator: string
+  optionSeparator: string
+  emptyOptions: string
+  vocabulary: ExportVocabulary | null
 }
 
 export type ManifestSummary = {
@@ -40,6 +55,35 @@ export function checkPreprocessing(preprocessing: Preprocessing): void {
   if (preprocessing.template !== INPUT_TEMPLATE) throw new Error('artifact template does not match the runtime')
   if (preprocessing.paddingSide !== 'right') throw new Error('only right padding is supported')
   if (preprocessing.unicodeNormalization !== 'NFC') throw new Error('only NFC normalization is supported')
+  if (
+    preprocessing.questionOptionsSeparator !== QUESTION_OPTIONS_SEPARATOR ||
+    preprocessing.optionSeparator !== OPTION_SEPARATOR ||
+    preprocessing.emptyOptions !== EMPTY_OPTIONS
+  ) {
+    throw new Error('artifact option serialization does not match the runtime')
+  }
+  if (preprocessing.vocabulary === undefined) throw new Error('the artifact does not record its export vocabulary')
+  if (preprocessing.vocabulary !== null && preprocessing.vocabulary.ruleVersion !== VOCABULARY_RULE_VERSION) {
+    throw new Error(`unsupported export vocabulary rule ${preprocessing.vocabulary.ruleVersion}`)
+  }
+}
+
+export function tokenizerVocabularySize(tokenizerJson: unknown): number {
+  if (typeof tokenizerJson === 'object' && tokenizerJson !== null && 'model' in tokenizerJson) {
+    const model = tokenizerJson.model
+    if (typeof model === 'object' && model !== null && 'vocab' in model && Array.isArray(model.vocab)) {
+      return model.vocab.length
+    }
+  }
+  throw new Error('tokenizer.json has no vocabulary list')
+}
+
+export function checkVocabulary(preprocessing: Preprocessing, tokenizerJson: unknown): void {
+  if (preprocessing.vocabulary === null) return
+  const size = tokenizerVocabularySize(tokenizerJson)
+  if (size !== preprocessing.vocabulary.keptSize) {
+    throw new Error(`tokenizer has ${size} pieces but the artifact records ${preprocessing.vocabulary.keptSize}`)
+  }
 }
 
 export function checkPolicy(policy: SelectivePolicy): void {
@@ -63,6 +107,7 @@ export async function loadAssets(): Promise<{ assets: ClassifierAssets; model: A
     readJson<unknown>(assetUrl('tokenizer.json')),
   ])
   checkPreprocessing(preprocessing)
+  checkVocabulary(preprocessing, tokenizerJson)
   checkPolicy(policy)
   const response = await fetch(assetUrl('model.onnx'))
   if (!response.ok) throw new Error(`cannot read the model: ${response.status}`)

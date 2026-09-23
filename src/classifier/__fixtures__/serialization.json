@@ -1,0 +1,88 @@
+{
+ "inputSerializationVersion": "autofill-question-input.v2",
+ "cases": [
+  {
+   "input": {
+    "questionText": "Degree",
+    "fieldType": "Combobox",
+    "jobCountry": "US",
+    "optionLabels": [
+     "Bachelor's",
+     "Master's",
+     "PhD"
+    ]
+   },
+   "text": "field type: Combobox | job country: US | question: Degree\nBachelor's / Master's / PhD"
+  },
+  {
+   "input": {
+    "questionText": "Degree",
+    "fieldType": "Combobox",
+    "jobCountry": "US",
+    "optionLabels": []
+   },
+   "text": "field type: Combobox | job country: US | question: Degree"
+  },
+  {
+   "input": {
+    "questionText": "Degree",
+    "fieldType": "Combobox",
+    "jobCountry": "US",
+    "optionLabels": [
+     "   ",
+     "\u00a0"
+    ]
+   },
+   "text": "field type: Combobox | job country: US | question: Degree"
+  },
+  {
+   "input": {
+    "questionText": "  First   Name\u00a0 ",
+    "fieldType": "TextInput",
+    "jobCountry": "US",
+    "optionLabels": []
+   },
+   "text": "field type: TextInput | job country: US | question: First Name"
+  },
+  {
+   "input": {
+    "questionText": "Niveau\td'\u00e9tudes",
+    "fieldType": "SimpleDropdown",
+    "jobCountry": "FR",
+    "optionLabels": [
+     "  Licence ",
+     "",
+     "Master\u2003professionnel",
+     "Cafe\u0301"
+    ]
+   },
+   "text": "field type: SimpleDropdown | job country: FR | question: Niveau d'\u00e9tudes\nLicence / Master professionnel / Caf\u00e9"
+  },
+  {
+   "input": {
+    "questionText": "Gender",
+    "fieldType": "RadioGroup",
+    "jobCountry": "_unknown",
+    "optionLabels": [
+     "Woman",
+     "Man",
+     "Non-binary",
+     "Prefer not to say"
+    ]
+   },
+   "text": "field type: RadioGroup | job country: _unknown | question: Gender\nWoman / Man / Non-binary / Prefer not to say"
+  },
+  {
+   "input": {
+    "questionText": "\u5fd7\u671b\u52d5\u6a5f",
+    "fieldType": "RadioGroup",
+    "jobCountry": "JP",
+    "optionLabels": [
+     "\u306f\u3044",
+     "\u3044\u3044\u3048"
+    ]
+   },
+   "text": "field type: RadioGroup | job country: JP | question: \u5fd7\u671b\u52d5\u6a5f\n\u306f\u3044 / \u3044\u3044\u3048"
+  }
+ ]
+}

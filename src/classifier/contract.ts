@@ -1,5 +1,9 @@
-export const INPUT_SERIALIZATION_VERSION = 'autofill-question-input.v1'
-export const PREPROCESSING_SCHEMA_VERSION = 'preprocessing.v1'
+export const INPUT_SERIALIZATION_VERSION = 'autofill-question-input.v2'
+export const PREPROCESSING_SCHEMA_VERSION = 'preprocessing.v3'
+export const QUESTION_OPTIONS_SEPARATOR = '\n'
+export const OPTION_SEPARATOR = ' / '
+export const EMPTY_OPTIONS = 'question_only'
+export const VOCABULARY_RULE_VERSION = 'export-vocabulary.v1'
 export const POLICY_SCHEMA_VERSION = 'selective-policy.v1'
 export const MASKED_LOGIT = -1.0e30
 
@@ -69,6 +73,7 @@ export type ClassifierInput = {
   questionText: string
   fieldType: string
   jobCountry: string
+  optionLabels: string[]
 }
 
 export type DecisionContext = {

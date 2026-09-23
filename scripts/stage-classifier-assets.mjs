@@ -1,4 +1,5 @@
 import { cp, mkdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 
 const ARTIFACT_FILES = ['model.onnx', 'tokenizer.json', 'labels.json', 'selective_policy.json', 'preprocessing.json']
@@ -27,7 +28,8 @@ for (const name of ORT_FILES) {
   await cp(resolve(root, 'node_modules/onnxruntime-web/dist', name), resolve(ortTarget, name))
 }
 
-const manifest = JSON.parse(await readFile(resolve(artifact, 'manifest.json'), 'utf8'))
+const versionFile = ['manifest.json', 'model-version.json'].find((name) => existsSync(resolve(artifact, name)))
+const manifest = versionFile ? JSON.parse(await readFile(resolve(artifact, versionFile), 'utf8')) : {}
 const modelVersion = manifest.modelVersion ?? basename(artifact)
 await writeFile(resolve(target, 'model-version.json'), `${JSON.stringify({ modelVersion }, null, 2)}\n`)
 console.log(`modelVersion ${modelVersion}`)

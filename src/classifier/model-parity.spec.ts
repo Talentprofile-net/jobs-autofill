@@ -9,7 +9,7 @@ import type { Preprocessing } from '~/classifier/assets'
 import { QuestionClassifier, type OrtLike } from '~/classifier/session'
 
 type Case = {
-  input: { questionText: string; fieldType: string; jobCountry: string }
+  input: { questionText: string; fieldType: string; jobCountry: string; optionLabels: string[] }
   answerKind: AnswerKind
   text: string
   logits: number[]

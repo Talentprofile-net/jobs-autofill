@@ -4,14 +4,21 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import fixture from '~/classifier/__fixtures__/parity.json'
+import serialization from '~/classifier/__fixtures__/serialization.json'
 import type { AnswerKind, Decision, LabelMap, SelectivePolicy } from '~/classifier/contract'
-import { checkPolicy, checkPreprocessing, type Preprocessing } from '~/classifier/assets'
+import {
+  checkPolicy,
+  checkPreprocessing,
+  checkVocabulary,
+  tokenizerVocabularySize,
+  type Preprocessing,
+} from '~/classifier/assets'
 import { decide } from '~/classifier/policy'
 import { collapseWhitespace, serializeInput } from '~/classifier/preprocess'
 import { encodeBatch, truncateIds, unknownQuestion } from '~/classifier/session'
 
 type Case = {
-  input: { questionText: string; fieldType: string; jobCountry: string }
+  input: { questionText: string; fieldType: string; jobCountry: string; optionLabels: string[] }
   answerKind: AnswerKind
   note: string
   text: string
@@ -29,6 +36,38 @@ if (!staged && process.env.CLASSIFIER_STRICT_PARITY === '1') {
   )
 }
 const readAsset = <T>(name: string): T => JSON.parse(readFileSync(resolve(ASSETS, name), 'utf8')) as T
+
+describe('option serialization parity', () => {
+  it('serializes options exactly as python does', () => {
+    expect(serialization.inputSerializationVersion).toBe('autofill-question-input.v2')
+    for (const item of serialization.cases) {
+      expect(serializeInput(item.input)).toBe(item.text)
+    }
+  })
+
+  it('refuses an artifact with different option rules', () => {
+    const preprocessing = {
+      preprocessingSchemaVersion: 'preprocessing.v3',
+      inputSerializationVersion: 'autofill-question-input.v2',
+      template: 'field type: {fieldType} | job country: {jobCountry} | question: {questionText}',
+      maxLength: 128,
+      padTokenId: 1,
+      paddingSide: 'right' as const,
+      unicodeNormalization: 'NFC',
+      questionOptionsSeparator: '\n',
+      optionSeparator: ', ',
+      emptyOptions: 'question_only',
+      vocabulary: null,
+    }
+    let message = ''
+    try {
+      checkPreprocessing(preprocessing)
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toContain('option serialization')
+  })
+})
 
 describe('preprocessing parity', () => {
   it('serializes every fixture case exactly as python does', () => {
@@ -77,8 +116,61 @@ describe('policy parity', () => {
   })
 
   it.skipIf(!staged)('accepts the artifact preprocessing and policy contracts', () => {
-    checkPreprocessing(readAsset<Preprocessing>('preprocessing.json'))
+    const preprocessing = readAsset<Preprocessing>('preprocessing.json')
+    checkPreprocessing(preprocessing)
+    checkVocabulary(preprocessing, readAsset('tokenizer.json'))
     checkPolicy(policy!)
+  })
+})
+
+const failure = (run: () => void): string => {
+  try {
+    run()
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+  return ''
+}
+
+describe('export vocabulary contract', () => {
+  const base: Preprocessing = {
+    preprocessingSchemaVersion: 'preprocessing.v3',
+    inputSerializationVersion: 'autofill-question-input.v2',
+    template: 'field type: {fieldType} | job country: {jobCountry} | question: {questionText}',
+    maxLength: 64,
+    padTokenId: 1,
+    paddingSide: 'right',
+    unicodeNormalization: 'NFC',
+    questionOptionsSeparator: '\n',
+    optionSeparator: ' / ',
+    emptyOptions: 'question_only',
+    vocabulary: { ruleVersion: 'export-vocabulary.v1', baseSize: 10, requestedSize: 3, keptSize: 3 },
+  }
+  const tokenizer = { model: { type: 'Unigram', vocab: [['<s>', 0], ['<pad>', 0], ['a', -1]] } }
+
+  it('accepts a trimmed or an untrimmed v2 artifact', () => {
+    checkPreprocessing(base)
+    checkPreprocessing({ ...base, vocabulary: null })
+    checkVocabulary(base, tokenizer)
+    checkVocabulary({ ...base, vocabulary: null }, { model: { vocab: [] } })
+    expect(tokenizerVocabularySize(tokenizer)).toBe(3)
+  })
+
+  it('refuses a v1 artifact, an unknown rule and a vocabulary size mismatch', () => {
+    const unrecorded: Preprocessing = JSON.parse(JSON.stringify({ ...base, vocabulary: undefined }))
+    expect(failure(() => checkPreprocessing({ ...base, preprocessingSchemaVersion: 'preprocessing.v1' }))).toContain(
+      'unsupported preprocessing schema',
+    )
+    expect(failure(() => checkPreprocessing(unrecorded))).toContain('does not record')
+    expect(
+      failure(() =>
+        checkPreprocessing({ ...base, vocabulary: { ...base.vocabulary!, ruleVersion: 'export-vocabulary.v9' } }),
+      ),
+    ).toContain('unsupported export vocabulary rule')
+    expect(
+      failure(() => checkVocabulary({ ...base, vocabulary: { ...base.vocabulary!, keptSize: 4 } }, tokenizer)),
+    ).toContain('tokenizer has 3 pieces')
+    expect(failure(() => tokenizerVocabularySize({ model: {} }))).toContain('no vocabulary list')
   })
 })
 
