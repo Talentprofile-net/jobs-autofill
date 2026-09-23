@@ -14,6 +14,7 @@ the fill or capture paths yet.
 | `assets.ts` | loads the artifact files and rejects unsupported schema versions |
 | `offscreenClient.ts` | background-side API; creates the offscreen document |
 | `messages.ts` | the message contract between background and offscreen |
+| `attestation.ts` | the browser attestation contract shared with the Python trainer |
 
 The model runs in an offscreen document (`src/entrypoints/offscreen/`), because
 an MV3 service worker is stopped while idle and would reload the model on every
@@ -29,6 +30,10 @@ node scripts/stage-classifier-assets.mjs <training-artifact-dir>
 ```
 
 That also copies the onnxruntime WASM binary into `public/ort/`.
+
+When the artifact has `browser_candidate.json`, staging copies the selected model file to
+`model.onnx`, takes the model version from the candidate, and fails if any staged digest
+differs from the candidate.
 
 ## Parity with the trainer
 
@@ -89,6 +94,36 @@ Two things it depends on:
 - Classification requests must come from a context that outlives the model load.
   A service worker is stopped while idle, so a request made from it can be lost
   while the model is still loading.
+
+## Browser attestation
+
+A final training run clears `browser_runtime_unverified` only with a browser attestation of
+the exact selected artifact, built from the extension commit frozen in the preregistration.
+After `browser-candidate` in the trainer, staging, and committing every change:
+
+```sh
+CHROME_PATH="<chrome for testing binary>" bun run smoke:chrome --attest <training-artifact-dir>
+```
+
+Attest mode, in order:
+
+1. Reads `browser_candidate.json`.
+2. Refuses, and writes nothing, when the tree has uncommitted changes or `HEAD` is not the
+   candidate's `extensionCommit`.
+3. Deletes `.output/chrome-mv3` and runs `bun run build`.
+4. Hashes every file of `.output/chrome-mv3` into the build tree digest.
+5. Hashes the staged files, then runs `CLASSIFIER_STRICT_PARITY=1` and
+   `CLASSIFIER_MODEL_PARITY=1` parity.
+6. Runs the 17 Chrome checks with Chrome loading `.output/chrome-mv3`.
+7. Re-hashes the build tree and re-reads the commit and the tree state.
+8. Writes `browser_attestation.json` into the artifact only when the tree stayed clean, the
+   commit never changed, the build tree did not change, the built classifier files equal the
+   candidate, and every required check passed.
+
+The tree digest is SHA-256 over `<path>\0<file sha256>\n` lines sorted by path; the trainer
+recomputes it. The required check names and build files live in `attestation.ts` and in the
+trainer's `browser_attestation.py`; changing them needs a new attestation schema version on
+both sides.
 
 ## Transport
 

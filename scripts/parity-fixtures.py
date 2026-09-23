@@ -14,10 +14,13 @@ run, artifact, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 context = load_context(run, allow_code_drift=True)
 label_map = LabelMap.model_validate_json((artifact / "labels.json").read_bytes())
 policy = SelectivePolicy.model_validate_json((artifact / "selective_policy.json").read_bytes())
-version_file = artifact / "manifest.json"
-if not version_file.is_file():
-    version_file = artifact / "model-version.json"
+version_file = next(
+    artifact / name
+    for name in ("browser_candidate.json", "manifest.json", "model-version.json")
+    if (artifact / name).is_file()
+)
 manifest = json.loads(version_file.read_text())
+model_file = manifest.get("sourceModelFile", "model.onnx")
 tokenizer = load_tokenizer(artifact / TOKENIZER_FILE, context.run.training.max_length)
 
 train = rows_for(context.snapshot.rows, context.plan, "train")
@@ -85,7 +88,7 @@ for value, kind, note in extra:
 
 texts = [serialize_input(ClassifierInput.model_validate(case["input"])) for case in cases]
 batch = encode_texts(tokenizer, texts)
-logits = onnx_logits(cpu_session(artifact / "model.onnx"), tokenizer, texts)
+logits = onnx_logits(cpu_session(artifact / model_file), tokenizer, texts)
 decisions = decide_batch(
     logits,
     policy=policy,
