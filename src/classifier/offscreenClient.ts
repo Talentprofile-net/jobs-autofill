@@ -23,6 +23,12 @@ export class ClassifierDisconnected extends Error {
   }
 }
 
+export class ClassifierClosed extends Error {
+  constructor() {
+    super('the classifier was closed')
+  }
+}
+
 async function documentExists(): Promise<boolean> {
   const contexts = await browser.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
@@ -101,6 +107,10 @@ async function ask(request: ClassifierRequestBody): Promise<ClassifierResponse> 
 export function disconnectClassifier(): void {
   channel?.disconnect()
   channel = null
+  for (const [id, pending] of waiting) {
+    waiting.delete(id)
+    pending.fail(new ClassifierClosed())
+  }
 }
 
 export async function closeOffscreenDocument(): Promise<void> {
@@ -108,19 +118,38 @@ export async function closeOffscreenDocument(): Promise<void> {
   if (await documentExists()) await browser.offscreen.closeDocument()
 }
 
+export type Classification = { decisions: Decision[]; runtimeId: string }
+
+export async function classifyWithRuntime(
+  requests: { input: ClassifierInput; answerKind: AnswerKind }[],
+): Promise<Classification> {
+  const response = await ask({ kind: 'classify', requests })
+  if (!response.ok) throw new Error(response.error)
+  if (response.kind !== 'classify') throw new Error('the classifier answered the wrong request')
+  if (response.decisions.length !== requests.length) throw new Error('the classifier skipped a request')
+  return { decisions: response.decisions, runtimeId: response.runtimeId }
+}
+
 export async function classifyQuestions(
   requests: { input: ClassifierInput; answerKind: AnswerKind }[],
 ): Promise<Decision[]> {
   if (!requests.length) return []
-  const response = await ask({ kind: 'classify', requests })
-  if (!response.ok) throw new Error(response.error)
-  if (response.kind !== 'classify') throw new Error('the classifier answered the wrong request')
-  return response.decisions
+  return (await classifyWithRuntime(requests)).decisions
 }
 
-export async function classifierStatus(): Promise<{ modelVersion: string; labels: number; loadMs: number }> {
+export async function classifierStatus(): Promise<{
+  modelVersion: string
+  runtimeId: string
+  labels: number
+  loadMs: number
+}> {
   const response = await ask({ kind: 'status' })
   if (!response.ok) throw new Error(response.error)
   if (response.kind !== 'status') throw new Error('the classifier answered the wrong request')
-  return { modelVersion: response.modelVersion, labels: response.labels, loadMs: response.loadMs }
+  return {
+    modelVersion: response.modelVersion,
+    runtimeId: response.runtimeId,
+    labels: response.labels,
+    loadMs: response.loadMs,
+  }
 }

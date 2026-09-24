@@ -38,6 +38,8 @@ export const unregisterField = (uuid: string): void => {
 
 export const allFields = (): BaseField[] => Array.from(fieldRegistry.values())
 
+export const fieldByUuid = (uuid: string): BaseField | null => fieldRegistry.get(uuid) ?? null
+
 let currentMode: ResolvedOriginMode = 'notesOnly'
 
 export const getCurrentMode = (): ResolvedOriginMode => currentMode

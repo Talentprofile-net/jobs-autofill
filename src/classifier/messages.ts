@@ -13,6 +13,14 @@ export type ClassifierRequestBody =
 export type ClassifierRequest = ClassifierRequestBody & { id: number }
 
 export type ClassifierResponse =
-  | { id: number; ok: true; kind: 'classify'; decisions: Decision[] }
-  | { id: number; ok: true; kind: 'status'; modelVersion: string; labels: number; loadMs: number }
+  | { id: number; ok: true; kind: 'classify'; decisions: Decision[]; runtimeId: string }
+  | {
+      id: number
+      ok: true
+      kind: 'status'
+      modelVersion: string
+      runtimeId: string
+      labels: number
+      loadMs: number
+    }
   | { id: number; ok: false; error: string }

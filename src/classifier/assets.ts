@@ -12,6 +12,7 @@ import {
   type LabelMap,
   type SelectivePolicy,
 } from '~/classifier/contract'
+import { runtimeIdentity, type RuntimeFile } from '~/classifier/runtimeIdentity'
 import type { ClassifierAssets } from '~/classifier/session'
 
 export const ASSET_DIR = 'classifier'
@@ -92,27 +93,46 @@ export function checkPolicy(policy: SelectivePolicy): void {
   }
 }
 
-async function readJson<T>(url: string): Promise<T> {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`cannot read ${url}: ${response.status}`)
-  return (await response.json()) as T
+export type FetchStaged = (name: RuntimeFile) => Promise<ArrayBuffer>
+
+const fetchStaged: FetchStaged = async (name) => {
+  const response = await fetch(assetUrl(name))
+  if (!response.ok) throw new Error(`cannot read ${name}: ${response.status}`)
+  return response.arrayBuffer()
 }
 
-export async function loadAssets(): Promise<{ assets: ClassifierAssets; model: ArrayBuffer }> {
-  const [preprocessing, labelMap, policy, manifest, tokenizerJson] = await Promise.all([
-    readJson<Preprocessing>(assetUrl('preprocessing.json')),
-    readJson<LabelMap>(assetUrl('labels.json')),
-    readJson<SelectivePolicy>(assetUrl('selective_policy.json')),
-    readJson<ManifestSummary>(assetUrl('model-version.json')),
-    readJson<unknown>(assetUrl('tokenizer.json')),
+const parseJson = <T>(bytes: ArrayBuffer): T => JSON.parse(new TextDecoder().decode(bytes)) as T
+
+export async function loadAssets(
+  fetchBytes: FetchStaged = fetchStaged,
+): Promise<{ assets: ClassifierAssets; model: ArrayBuffer; runtimeId: string }> {
+  const [preprocessingBytes, labelsBytes, policyBytes, versionBytes, tokenizerBytes] = await Promise.all([
+    fetchBytes('preprocessing.json'),
+    fetchBytes('labels.json'),
+    fetchBytes('selective_policy.json'),
+    fetchBytes('model-version.json'),
+    fetchBytes('tokenizer.json'),
   ])
+  const preprocessing = parseJson<Preprocessing>(preprocessingBytes)
+  const labelMap = parseJson<LabelMap>(labelsBytes)
+  const policy = parseJson<SelectivePolicy>(policyBytes)
+  const manifest = parseJson<ManifestSummary>(versionBytes)
+  const tokenizerJson = parseJson<unknown>(tokenizerBytes)
   checkPreprocessing(preprocessing)
   checkVocabulary(preprocessing, tokenizerJson)
   checkPolicy(policy)
-  const response = await fetch(assetUrl('model.onnx'))
-  if (!response.ok) throw new Error(`cannot read the model: ${response.status}`)
+  const model = await fetchBytes('model.onnx')
+  const runtimeId = await runtimeIdentity({
+    'labels.json': labelsBytes,
+    'model-version.json': versionBytes,
+    'model.onnx': model,
+    'preprocessing.json': preprocessingBytes,
+    'selective_policy.json': policyBytes,
+    'tokenizer.json': tokenizerBytes,
+  })
   return {
-    model: await response.arrayBuffer(),
+    model,
+    runtimeId,
     assets: {
       tokenizerJson,
       labelMap,

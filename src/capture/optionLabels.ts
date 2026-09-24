@@ -11,7 +11,7 @@
 // where boolean-shaped option sets live, and they are also what the scrape
 // worker's own extractor reads. A custom ATS widget returns null, and the
 // caller falls back — see corpusVocabulary.ts for what null means per type.
-const MAX_OPTIONS = 60
+export const MAX_OPTIONS = 60
 
 const escapeSelectorValue = (value: string): string =>
   typeof CSS !== 'undefined' && typeof CSS.escape === 'function'

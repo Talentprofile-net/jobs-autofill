@@ -21,6 +21,10 @@
     PROFILE_SCORE_EMPTY_BELOW,
   } from "~/config";
   import { onDestroy, onMount } from "svelte";
+  import {
+    readClassifierSuggestions,
+    writeClassifierSuggestions,
+  } from "~/classifier/suggestionSwitch";
 
   const REGISTER_RETRY_DELAY_MS = 500;
   const WAITING_TIMEOUT_MS = 5 * 60 * 1000;
@@ -52,6 +56,7 @@
   let enabledList = $state<EnabledOriginEntry[]>([]);
   let settingsOpen = $state(false);
   let manageOpen = $state(false);
+  let classifierSuggestions = $state(false);
   let confirmRevoke = $state<EnabledOriginEntry | null>(null);
   let busy = $state(false);
   let errorMsg = $state<string | null>(null);
@@ -172,8 +177,17 @@
     }
   };
 
+  const toggleClassifierSuggestions = async () => {
+    const next = !classifierSuggestions;
+    await writeClassifierSuggestions(browser.storage.local, next);
+    classifierSuggestions = next;
+  };
+
   onMount(() => {
     void refreshStatus();
+    void readClassifierSuggestions(browser.storage.local).then((enabled) => {
+      classifierSuggestions = enabled;
+    });
     browser.runtime.onMessage.addListener(handleAuthChanged);
   });
 
@@ -1004,6 +1018,18 @@
           </div>
         {/if}
       </div>
+
+      <button
+        type="button"
+        class="settings-row"
+        role="switch"
+        aria-checked={classifierSuggestions}
+        data-testid="classifier-suggestions-toggle"
+        onclick={toggleClassifierSuggestions}
+      >
+        <span>Classifier suggestions (beta)</span>
+        <span class="settings-count">{classifierSuggestions ? "On" : "Off"}</span>
+      </button>
 
       <button type="button" class="settings-row" onclick={openShortcuts}>
         <span>Keyboard shortcuts</span>

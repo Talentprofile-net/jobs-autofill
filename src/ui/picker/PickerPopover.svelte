@@ -14,11 +14,19 @@
     deleteNote,
     getAuthStatus,
     getProfile,
+    requestClassifierSuggestion,
     requestSignIn,
     touchNote,
     updateNote,
   } from '~/bridge/mainBridge'
   import type { Profile, ProfileNote } from '~/api/types'
+  import { fieldByUuid } from '~/field/registry'
+  import {
+    createSuggestionLoader,
+    rowForField,
+    suggestionRequestFor,
+    type FieldSuggestion,
+  } from './suggestion'
   import {
     ICON_ARROW_LEFT,
     ICON_LOGO,
@@ -78,6 +86,11 @@
   let confirmDeleteId = $state<string | null>(null)
   let revealedSwipeId = $state<string | null>(null)
   let pendingDeleteError = $state<string | null>(null)
+  let suggestion = $state<FieldSuggestion | null>(null)
+  const suggestionRow = $derived(rowForField(suggestion, ctx.fieldUuid))
+  const suggestionLoader = createSuggestionLoader(requestClassifierSuggestion, (next) => {
+    suggestion = next
+  })
 
   let listSwipeGesture: DragGesture | null = null
   let swipeStartX = 0
@@ -115,6 +128,7 @@
         return
       }
       authState = 'authenticated'
+      void loadSuggestion()
       await loadProfile()
     } catch (e) {
       loadError = (e as Error).message
@@ -122,10 +136,22 @@
     }
   }
 
+  const loadSuggestion = () =>
+    suggestionLoader.load(ctx.fieldUuid, () => suggestionRequestFor(ctx))
+
+  const applySuggestion = async () => {
+    const row = suggestionRow
+    const field = fieldByUuid(ctx.fieldUuid)
+    if (!row || !field) return
+    await field.fillFromResolved(row.value, true)
+    onClose()
+  }
+
   onMount(() => {
     void initialize()
 
     return () => {
+      suggestionLoader.close()
       if (truncationTimer) clearTimeout(truncationTimer)
       if (flashTimer) clearTimeout(flashTimer)
       listSwipeGesture?.destroy()
@@ -685,6 +711,20 @@
       {:else if !tree}
         <div class="empty">Loading…</div>
       {:else}
+        {#if suggestionRow && path.length === 0 && !search.trim()}
+          <button
+            type="button"
+            class="item"
+            data-tp-suggestion="true"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={applySuggestion}
+          >
+            <div class="item-label">
+              <span class="label-text">{suggestionRow.title}</span>
+              <span class="value">Suggested answer</span>
+            </div>
+          </button>
+        {/if}
         {#if showAddNoteRow}
           <button
             type="button"

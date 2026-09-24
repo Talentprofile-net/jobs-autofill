@@ -1,7 +1,65 @@
 # Question classifier runtime
 
-Local inference for the autofill question classifier. Nothing here is wired into
-the fill or capture paths yet.
+Local inference for the autofill question classifier. It never fills a field on
+its own. The fill and capture paths do not call it.
+
+## Suggestions (off by default)
+
+- Switch: `tp.classifierSuggestions` in `storage.local`, the popup setting
+  "Classifier suggestions (beta)". Off unless turned on.
+- Switch off: the content script answers the picker with no row and never
+  messages the background. The background also checks the switch before it
+  reads answers, fetches labels or starts the offscreen document. Turning the
+  switch off closes the offscreen document. A request still running at that
+  moment answers `disabled`, and the document is closed again after it ends.
+- Trigger: opening the field picker sends `classifier.suggest` through the page
+  bridge to the background. Nothing runs during fill.
+- Request check: `readSuggestionRequest` in `suggest.ts` runs in the content
+  script and again in the background. It needs a known `answerKind`, a
+  `fieldType` of 1 to 64 characters, a `questionText` of at most 4,096
+  characters (empty is allowed), at most 60 `optionLabels` (the DOM extractor's
+  `MAX_OPTIONS`), each at most 4,096 characters, and at most 65,536 option
+  characters in total. Anything else is dropped before classification.
+- Order: exact question slug, then word overlap, then the classifier.
+- Exact and word-overlap matches never load label names or start the model.
+- Answer link: each stored answer is classified with job country `_unknown`, no
+  options, and its own field type. `answerLabels.ts` caches the label in
+  `storage.session` per answer id, keyed by the answer's `updatedAt`, its exact
+  classifier input, and the runtime identity.
+- Runtime identity: the offscreen document hashes the bytes of every staged
+  file (`model.onnx`, `tokenizer.json`, `labels.json`, `selective_policy.json`,
+  `preprocessing.json`, `model-version.json`) and the runtime contract constants
+  (`runtimeIdentity.ts`). Every classify answer carries it. `modelVersion` alone
+  is not trusted, because the staged files can change under the same version.
+  Stored-answer labels from another runtime identity are discarded.
+- Answer choice: among compatible answers whose accepted label equals the field's
+  accepted label, the newest `lastUsedAt ?? updatedAt` wins, then the newest
+  `updatedAt`, then the lowest `id`. An answer whose value cannot be filled is
+  skipped.
+- Job country: only the `jobCountry` the public site sends with
+  `application.handoff`, checked against the 249-code training allowlist in
+  `jobCountry.ts`. Anything else, and every page without a handoff, is `_unknown`.
+  The public site maps `UK` to `GB` before it sends.
+- Context lifetime: the bound tab context stores the normalized handoff
+  destination. A top-frame commit or History API navigation to any other origin,
+  path or query removes the whole context, application id and country together
+  (`followApplicationNavigation` in `capture/applicationContext.ts`). A
+  fragment-only change keeps it. Subframe navigations are ignored. An
+  application flow that moves to another URL therefore loses its context; that
+  is intended.
+- Page boundary: only `{ title, value }` of the suggested saved answer crosses
+  into the page (`suggestClient.ts`). Classifier labels, calibrated confidence,
+  abstention reasons, errors and model metadata stay in the extension. `value`
+  is the fill value; a text value keeps its fill flag `confidence: 'guess'`.
+- The popover shows one row, the suggested saved answer, only when a saved
+  answer was found. The row is titled by the answer text, else by the value it
+  fills. The field is filled only when the user clicks the row.
+- A late answer to an older request, or to a closed picker, is dropped
+  (`ui/picker/suggestion.ts`).
+- A request dropped by a stopped service worker is sent once more
+  (`suggestClient.ts`). A failed model load is retried on the next request.
+- `bun run smoke:suggest` checks this path in real Chrome. See
+  [Suggestion smoke test](#suggestion-smoke-test).
 
 ## Layout
 
@@ -13,6 +71,12 @@ the fill or capture paths yet.
 | `session.ts` | tokenizer, batching, ONNX run, decision |
 | `assets.ts` | loads the artifact files and rejects unsupported schema versions |
 | `offscreenClient.ts` | background-side API; creates the offscreen document |
+| `runtimeIdentity.ts` | the hash of the staged files and contract that keys cached labels |
+| `suggest.ts` | request check, match order, answer choice |
+| `answerLabels.ts` | stored-answer labels cached per revision, input and runtime |
+| `suggestionService.ts` | switch, request check, then suggestion |
+| `suggestionRuntime.ts` | the browser wiring of the suggestion service |
+| `suggestClient.ts` | content-side request, retry, and the row sent to the page |
 | `messages.ts` | the message contract between background and offscreen |
 | `attestation.ts` | the browser attestation contract shared with the Python trainer |
 
@@ -94,6 +158,35 @@ Two things it depends on:
 - Classification requests must come from a context that outlives the model load.
   A service worker is stopped while idle, so a request made from it can be lost
   while the model is still loading.
+
+## Suggestion smoke test
+
+```sh
+bun run build
+CHROME_PATH="<chrome for testing binary>" bun run smoke:suggest
+```
+
+It loads a copy of `.output/chrome-mv3`, so the build tree is never changed, and
+checks that the built model bytes equal the staged ones. All network requests
+are blocked, and every request from every page, the service worker and the
+offscreen document is recorded. A Greenhouse-shaped page and a job page on
+`talentprofile.net` are served by DevTools request interception. The job page
+runs the public website's own `jobCountryForExtension`, read from
+`../public-website` or `PUBLIC_WEBSITE_DIR`.
+
+The signed-in picker runs on test data made inside the script: a JWT with
+`alg: none`, a fake signature and a year-2100 `exp`, a synthetic profile, and
+three saved answers. The extension only decodes the token's claims on this path.
+The script fails if the tokens change or any backend request is made.
+
+It checks the switch, request limits, the cold load with the service worker
+stopped, the job countries DE, GB and `_unknown`, a deliberate close, a failed
+model load and its recovery, a request running while the switch turns off, the
+real handoff binding for UK, Germany, no country and a raw `UK`, the page
+bridge, the signed-out and signed-in picker, exact and word-overlap rows without
+the model, the classifier row and its fill, abstention and no-answer, the cached
+reopen, and the context clearing on same-tab navigation. It exits 0 only when
+every check passes and the temporary Chrome profile is removed.
 
 ## Browser attestation
 

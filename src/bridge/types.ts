@@ -1,5 +1,7 @@
 import type { AtsName, OriginMode, ProfileValue } from '~/field/types'
 import type { Profile, ProfileNote, TalentAnswer } from '~/api/types'
+import type { SuggestionRequest } from '~/classifier/suggest'
+import type { SuggestionRow } from '~/classifier/suggestClient'
 
 export type AuthMethod = 'local' | 'google' | 'github' | 'magic' | 'auth0' | 'email'
 
@@ -135,6 +137,7 @@ export type MainWorldRequest =
       fields: LearnedAnswerFieldRequest[]
     }
   | { id: string; kind: 'learnedAnswer.delete'; answerId: string }
+  | { id: string; kind: 'classifier.suggest'; request: SuggestionRequest }
   | { id: string; kind: 'mainWorld.ready' }
   | { id: string; kind: 'tab.fillAllResult'; batchId: string; counts: FillCounts; passes: number }
   | { id: string; kind: 'tab.fillStarted'; batchId: string; total: number; pass: number }
@@ -196,6 +199,7 @@ export type ContentScriptRequest =
       answerId: string | null
       error?: string
     }
+  | { id: string; kind: 'classifier.suggestResult'; row: SuggestionRow | null }
   | { id: string; kind: 'mainWorld.ping' }
   | { id: string; kind: 'tab.fillAll'; batchId: string }
   | { id: string; kind: 'auth.statusResult'; status: AuthStatus }
@@ -281,6 +285,7 @@ export type ContentToBackground =
       fields: LearnedAnswerFieldRequest[]
     }
   | { kind: 'learnedAnswers.delete'; answerId: string }
+  | { kind: 'classifier.suggest'; request: unknown }
   | { kind: 'auth.status' }
   | { kind: 'auth.openConnectPage' }
   | { kind: 'auth.openDashboard' }
@@ -321,6 +326,7 @@ export type ExternalToBackground =
   | { kind: 'auth.ping' }
   | {
       destinationUrl: string
+      jobCountry?: string | null
       kind: 'application.handoff'
       talentJobApplicationId: string
     }

@@ -61,12 +61,15 @@ import type { AtsName, OriginMode, ProfileValue } from "~/field/types";
 import { browser } from "wxt/browser";
 import {
   clearApplicationContextForTab,
+  followApplicationNavigation,
   readApplicationContextForTab,
   registerApplicationHandoff,
   registerOpenedApplicationTab,
   updateOpenedApplicationTab,
   type ApplicationContextStorage,
 } from "~/capture/applicationContext";
+import { closeOffscreenDocument } from "~/classifier/offscreenClient";
+import { CLASSIFIER_SUGGESTIONS_KEY } from "~/classifier/suggestionSwitch";
 
 const FRAME_REGISTRY_KEY = "tp.frameRegistry";
 const PROFILE_CACHE_KEY = "tp.profileCache";
@@ -1413,6 +1416,8 @@ export default defineBackground(() => {
         senderTabId,
         message.talentJobApplicationId,
         message.destinationUrl,
+        Date.now(),
+        message.jobCountry,
       );
       return { ok: true };
     }
@@ -1859,6 +1864,23 @@ export default defineBackground(() => {
           };
         }
       }
+      case "classifier.suggest": {
+        const { browserSuggestionService } = await import(
+          "~/classifier/suggestionRuntime"
+        );
+        const suggest = browserSuggestionService(
+          applicationContextStorage,
+          async () =>
+            (await ensureAuthenticated())
+              ? ((await getProfile(false).catch(() => null))?.talentAnswers ??
+                [])
+              : [],
+        );
+        return {
+          ok: true,
+          data: await suggest(message.request, sender.tab?.id),
+        };
+      }
       case "answers.stage": {
         const payload = message.payload;
         if (!payload?.applicationUrl || !Array.isArray(payload.records)) {
@@ -1946,6 +1968,12 @@ export default defineBackground(() => {
     },
   );
 
+  browser.storage.onChanged.addListener((changes, areaName) => {
+    const change = changes[CLASSIFIER_SUGGESTIONS_KEY];
+    if (areaName !== "local" || !change || change.newValue === true) return;
+    void closeOffscreenDocument().catch(() => {});
+  });
+
   browser.tabs.onCreated.addListener((tab) => {
     if (tab.id === undefined || tab.openerTabId === undefined) return;
     applicationOpenerByTab.set(tab.id, tab.openerTabId);
@@ -2031,6 +2059,7 @@ export default defineBackground(() => {
   if (browser.webNavigation?.onCommitted) {
     browser.webNavigation.onCommitted.addListener((details) => {
       handleFrameDisposal(details.tabId, details.frameId);
+      void followApplicationNavigation(applicationContextStorage, details);
       if (details.frameId === 0) {
         void commitStagesOrphanedByNavigation(details.tabId, details.url);
       }
@@ -2044,6 +2073,7 @@ export default defineBackground(() => {
   if (browser.webNavigation?.onHistoryStateUpdated) {
     browser.webNavigation.onHistoryStateUpdated.addListener((details) => {
       handleFrameDisposal(details.tabId, details.frameId);
+      void followApplicationNavigation(applicationContextStorage, details);
     });
   }
 

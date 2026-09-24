@@ -15,6 +15,7 @@ ort.env.wasm.numThreads = 1
 let pending: Promise<{
   classifier: QuestionClassifier
   modelVersion: string
+  runtimeId: string
   labels: number
   loadMs: number
 }> | null = null
@@ -22,15 +23,19 @@ let pending: Promise<{
 function load() {
   pending ??= (async () => {
     const started = Date.now()
-    const { assets, model } = await loadAssets()
+    const { assets, model, runtimeId } = await loadAssets()
     const classifier = await QuestionClassifier.create(ort as unknown as OrtLike, model, assets)
     return {
       classifier,
       modelVersion: assets.modelVersion,
+      runtimeId,
       labels: assets.labelMap.labels.length,
       loadMs: Date.now() - started,
     }
-  })()
+  })().catch((error: unknown) => {
+    pending = null
+    throw error
+  })
   return pending
 }
 
@@ -38,13 +43,20 @@ async function answer(request: ClassifierRequest): Promise<ClassifierResponse> {
   try {
     const loaded = await load()
     if (request.kind === 'classify') {
-      return { id: request.id, ok: true, kind: 'classify', decisions: await loaded.classifier.classify(request.requests) }
+      return {
+        id: request.id,
+        ok: true,
+        kind: 'classify',
+        decisions: await loaded.classifier.classify(request.requests),
+        runtimeId: loaded.runtimeId,
+      }
     }
     return {
       id: request.id,
       ok: true,
       kind: 'status',
       modelVersion: loaded.modelVersion,
+      runtimeId: loaded.runtimeId,
       labels: loaded.labels,
       loadMs: loaded.loadMs,
     }

@@ -13,6 +13,8 @@ import type {
   ResolvedOriginMode,
 } from './types'
 import type { LearnedAnswerResult } from '~/resolver/learnedAnswers'
+import type { SuggestionRequest } from '~/classifier/suggest'
+import type { SuggestionRow } from '~/classifier/suggestClient'
 
 type Envelope<T> = {
   magic: typeof BRIDGE_MAGIC
@@ -36,6 +38,7 @@ const NOTE_OP_TIMEOUT_MS = 10_000
 const MODE_REQUEST_TIMEOUT_MS = 3_000
 const LEARNED_BATCH_TIMEOUT_MS = 8_000
 const FLUSH_TIMEOUT_MS = 15_000
+const SUGGEST_TIMEOUT_MS = 60_000
 
 const sendFromMain = (payload: MainWorldRequest): void => {
   const envelope: Envelope<MainWorldRequest> = {
@@ -82,6 +85,7 @@ const startListener = (() => {
         msg.kind === 'note.touchResult' ||
         msg.kind === 'mode.result' ||
         msg.kind === 'learnedAnswersResult' ||
+        msg.kind === 'classifier.suggestResult' ||
         msg.kind === 'answers.stageResult' ||
         msg.kind === 'answers.commitResult' ||
         msg.kind === 'answers.discardResult'
@@ -209,6 +213,19 @@ export const resolveValuesForFields = async (
       kind: 'resolveFieldValues',
     })
   })
+}
+
+export const requestClassifierSuggestion = async (
+  request: SuggestionRequest,
+): Promise<SuggestionRow | null> => {
+  const id = crypto.randomUUID()
+  const result = await sendRequest<ContentScriptRequest>(
+    { id, kind: 'classifier.suggest', request },
+    SUGGEST_TIMEOUT_MS,
+    (msg) => (msg.kind === 'classifier.suggestResult' ? msg : null),
+    { id, kind: 'classifier.suggestResult', row: null },
+  )
+  return result.kind === 'classifier.suggestResult' ? result.row : null
 }
 
 export const resolveLearnedAnswersBatchViaBridge = async (

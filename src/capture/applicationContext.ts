@@ -1,3 +1,5 @@
+import { normalizeJobCountry } from '~/classifier/jobCountry'
+
 export type ApplicationContextStorage = {
   get(key: string): Promise<Record<string, unknown>>
   remove(key: string | string[]): Promise<void>
@@ -8,6 +10,7 @@ type PendingHandoff = {
   applicationId: string
   destinationUrl: string
   expiresAt: number
+  jobCountry?: string
 }
 
 type PendingTab = {
@@ -16,7 +19,9 @@ type PendingTab = {
   tabId: number
 }
 
-type BoundContext = { applicationId: string }
+type BoundContext = { applicationId: string; destinationUrl: string; jobCountry?: string }
+
+export type TopFrameNavigation = { tabId: number; frameId: number; url: string }
 
 const TTL_MS = 10 * 60 * 1000
 const handoffKey = (openerTabId: number) =>
@@ -44,6 +49,23 @@ const read = async <T>(
   return value && typeof value === 'object' ? (value as T) : null
 }
 
+const isBoundContext = (value: unknown): value is BoundContext =>
+  typeof value === 'object' &&
+  value !== null &&
+  'applicationId' in value &&
+  typeof value.applicationId === 'string' &&
+  'destinationUrl' in value &&
+  typeof value.destinationUrl === 'string'
+
+const readBound = async (
+  storage: ApplicationContextStorage,
+  tabId: number,
+): Promise<BoundContext | null> => {
+  const key = tabKey(tabId)
+  const value = (await storage.get(key))[key]
+  return isBoundContext(value) ? value : null
+}
+
 const bind = async (
   storage: ApplicationContextStorage,
   openerTabId: number,
@@ -58,15 +80,16 @@ const bind = async (
     ])
     return
   }
-  if (
-    normalizedDestination(handoff.destinationUrl) !==
-    normalizedDestination(pendingTab.currentUrl)
-  ) {
+  const destinationUrl = normalizedDestination(handoff.destinationUrl)
+  if (!destinationUrl || destinationUrl !== normalizedDestination(pendingTab.currentUrl)) {
     return
   }
-  await storage.set({
-    [tabKey(pendingTab.tabId)]: { applicationId: handoff.applicationId },
-  })
+  const context: BoundContext = {
+    applicationId: handoff.applicationId,
+    destinationUrl,
+    jobCountry: normalizeJobCountry(handoff.jobCountry),
+  }
+  await storage.set({ [tabKey(pendingTab.tabId)]: context })
   await storage.remove([handoffKey(openerTabId), pendingTabKey(openerTabId)])
 }
 
@@ -76,9 +99,15 @@ export const registerApplicationHandoff = async (
   applicationId: string,
   destinationUrl: string,
   now = Date.now(),
+  jobCountry: unknown = undefined,
 ): Promise<void> => {
   if (!normalizedDestination(destinationUrl)) return
-  const handoff = { applicationId, destinationUrl, expiresAt: now + TTL_MS }
+  const handoff: PendingHandoff = {
+    applicationId,
+    destinationUrl,
+    expiresAt: now + TTL_MS,
+    jobCountry: normalizeJobCountry(jobCountry),
+  }
   await storage.set({ [handoffKey(openerTabId)]: handoff })
   const pendingTab = await read<PendingTab>(storage, pendingTabKey(openerTabId))
   if (pendingTab) await bind(storage, openerTabId, handoff, pendingTab, now)
@@ -118,11 +147,23 @@ export const updateOpenedApplicationTab = async (
 export const readApplicationContextForTab = async (
   storage: ApplicationContextStorage,
   tabId: number,
-): Promise<string | null> => {
-  const key = tabKey(tabId)
-  const context = await read<BoundContext>(storage, key)
-  if (!context) return null
-  return context.applicationId
+): Promise<string | null> => (await readBound(storage, tabId))?.applicationId ?? null
+
+export const readJobCountryForTab = async (
+  storage: ApplicationContextStorage,
+  tabId: number,
+): Promise<string> => normalizeJobCountry((await readBound(storage, tabId))?.jobCountry)
+
+export const followApplicationNavigation = async (
+  storage: ApplicationContextStorage,
+  navigation: TopFrameNavigation,
+): Promise<void> => {
+  if (navigation.frameId !== 0) return
+  const key = tabKey(navigation.tabId)
+  const value = (await storage.get(key))[key]
+  if (value === undefined) return
+  if (isBoundContext(value) && value.destinationUrl === normalizedDestination(navigation.url)) return
+  await storage.remove(key)
 }
 
 export const clearApplicationContextForTab = (

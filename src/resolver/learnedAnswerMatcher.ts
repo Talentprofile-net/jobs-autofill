@@ -59,7 +59,7 @@ const jaccard = (a: Set<string>, b: Set<string>): { score: number; shared: numbe
   return { score: union === 0 ? 0 : intersection / union, shared: intersection }
 }
 
-export type MatchMethod = 'normalized_text' | 'jaccard'
+export type MatchMethod = 'normalized_text' | 'jaccard' | 'classifier'
 
 export type MatchResult = {
   answer: TalentAnswer
@@ -85,7 +85,7 @@ const JACCARD_MIN_SHARED = 3
 // value and old rows keep matching.
 const TEXTISH = new Set(['TextArea', 'TextInput'])
 
-const typesCompatible = (stored: string, live: string): boolean => {
+export const typesCompatible = (stored: string, live: string): boolean => {
   const a = toCorpusFieldType(stored)
   const b = toCorpusFieldType(live)
   if (a === b) return true
@@ -133,7 +133,7 @@ export const learnedAnswerToProfileValue = (
 ): ProfileValue => {
   const stored = match.answer.answerValue as ProfileValue | undefined
   if (stored && stored.kind) {
-    if (match.method === 'jaccard' && stored.kind === 'string') {
+    if (match.method !== 'normalized_text' && stored.kind === 'string') {
       return { ...stored, confidence: 'guess' }
     }
     return stored
@@ -155,6 +155,6 @@ export const learnedAnswerToProfileValue = (
     return { kind: 'multiChoice', preferred: [text], fallbacks: [] }
   }
 
-  const confidence: 'exact' | 'guess' = match.method === 'jaccard' ? 'guess' : 'exact'
+  const confidence: 'exact' | 'guess' = match.method === 'normalized_text' ? 'exact' : 'guess'
   return { kind: 'string', value: text, confidence }
 }

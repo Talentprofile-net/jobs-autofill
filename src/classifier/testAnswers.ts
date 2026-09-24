@@ -1,0 +1,25 @@
+import type { TalentAnswer } from '~/api/types'
+
+export const talentAnswer = (over: Partial<TalentAnswer> = {}): TalentAnswer => ({
+  answerKind: 'text',
+  answerText: 'Master of Science',
+  answerValue: { confidence: 'exact', kind: 'string', value: 'Master of Science' },
+  ats: 'greenhouse',
+  createdAt: '2026-08-01T00:00:00.000Z',
+  fieldType: 'TextInput',
+  id: 'answer-1',
+  labelEnumId: null,
+  lastUsedAt: null,
+  normalizedQuestion: 'highest-degree-obtained',
+  pageUrl: null,
+  profileField: null,
+  questionText: 'Highest degree obtained',
+  resolverOutcome: 'filled',
+  section: null,
+  source: 'manual',
+  sourceAnswerId: null,
+  talentJobApplicationId: 'app-1',
+  talentProfileId: 'talent-1',
+  updatedAt: '2026-08-01T00:00:00.000Z',
+  ...over,
+})

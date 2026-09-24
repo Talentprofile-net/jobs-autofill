@@ -14,6 +14,8 @@ import type {
 import type { AtsName } from "~/field/types";
 import type { Profile, ProfileNote } from "~/api/types";
 import type { ProfileValue } from "~/field/types";
+import type { Suggestion } from "~/classifier/suggest";
+import { requestSuggestionRow } from "~/classifier/suggestClient";
 import { browser } from "wxt/browser";
 
 type Envelope<T> = {
@@ -196,6 +198,19 @@ export const startContentBridge = (ats: AtsName): void => {
         id: msg.id,
         kind: "fieldValuesResult",
         values: res.ok && res.data ? res.data : [],
+      });
+      return;
+    }
+
+    if (msg.kind === "classifier.suggest") {
+      sendFromContent({
+        id: msg.id,
+        kind: "classifier.suggestResult",
+        row: await requestSuggestionRow(
+          (message) => sendToBackground<Suggestion>(message),
+          browser.storage.local,
+          msg.request,
+        ),
       });
       return;
     }
