@@ -86,8 +86,10 @@ wake.
 
 ## Assets
 
-The runtime reads five files from `public/classifier/`, which is ignored by git.
-Stage them from a training artifact:
+The runtime reads six files from `public/classifier/`, which is ignored by git:
+the five artifact files (`model.onnx`, `tokenizer.json`, `labels.json`,
+`selective_policy.json`, `preprocessing.json`) and `model-version.json`, which
+staging writes. Stage them from a training artifact:
 
 ```sh
 node scripts/stage-classifier-assets.mjs <training-artifact-dir>
