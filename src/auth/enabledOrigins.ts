@@ -1,6 +1,8 @@
 import { browser } from 'wxt/browser'
 import type { OriginMode } from '~/field/types'
 
+export { normalizeOriginPattern, originFromPattern } from './originPattern'
+
 const STORAGE_KEY = 'tp.enabledOrigins'
 
 export type StoredEnabledOrigin = {
@@ -101,21 +103,6 @@ export const getOriginMode = async (
 ): Promise<OriginMode | null> => {
   const current = await readRaw()
   return current.find((e) => e.pattern === pattern)?.mode ?? null
-}
-
-export const normalizeOriginPattern = (input: string): string | null => {
-  try {
-    const url = new URL(input)
-    return `${url.protocol}//${url.host}/*`
-  } catch {
-    return null
-  }
-}
-
-export const originFromPattern = (pattern: string): string | null => {
-  const match = /^(https?):\/\/([^/]+)\/\*$/.exec(pattern)
-  if (!match) return null
-  return `${match[1]}://${match[2]}`
 }
 
 const hashPattern = (pattern: string): string => {

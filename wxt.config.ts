@@ -11,9 +11,9 @@ export default defineConfig({
       'https://*.myworkdayjobs.com/*',
       'https://boards.greenhouse.io/*',
       'https://job-boards.greenhouse.io/*',
-      'https://api.talentprofile.net/*',
+      'https://backend.talentprofile.net/*',
       'https://*.talentprofile.net/*',
-      'http://localhost:8083/*',
+      ...(mode === 'development' ? ['http://localhost:8083/*'] : []),
     ],
     optional_host_permissions: ['*://*/*'],
     action: {
@@ -35,6 +35,13 @@ export default defineConfig({
         description: 'Fill all visible fields with TalentProfile',
       },
     },
+    web_accessible_resources: [
+      {
+        resources: ['picker.html'],
+        matches: ['<all_urls>'],
+        use_dynamic_url: true,
+      },
+    ],
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },

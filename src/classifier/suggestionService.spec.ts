@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 
+import { createAnswerLabels } from './answerLabels'
 import type { Decision } from './contract'
+import type { ClassifyRequest } from './suggest'
 import { createSuggestionService, type SuggestionServiceDependencies } from './suggestionService'
 import { talentAnswer } from './testAnswers'
 
@@ -122,5 +124,42 @@ describe('suggestion service', () => {
 
     expect(await suggest(request, 7)).toEqual({ error: 'cannot read model.onnx: 404', status: 'unavailable' })
     expect((await suggest(request, 7)).status).toBe('classified')
+  })
+
+  it('keeps a private note inserted into a field and saved as an answer out of every classifier request', async () => {
+    const sentinel = 'TP-PRIVATE-NOTE-SENTINEL-4d7e1b'
+    const classified: ClassifyRequest[][] = []
+    const stored: Record<string, unknown> = {}
+    const classify = async (requests: ClassifyRequest[]) => {
+      classified.push(requests)
+      return { decisions: requests.map(() => accepted), runtimeId: 'runtime-1' }
+    }
+    const { suggest } = recording(true, {
+      answerLabels: createAnswerLabels(
+        {
+          get: async (key) => ({ [key]: stored[key] }),
+          set: async (items) => {
+            Object.assign(stored, items)
+          },
+        },
+        classify,
+      ),
+      answers: async () => [
+        talentAnswer({
+          answerText: sentinel,
+          answerValue: { confidence: 'exact', kind: 'string', value: sentinel },
+        }),
+      ],
+      classify,
+    })
+    const result = await suggest(request, 7)
+
+    expect(result.status === 'classified' ? [result.answer?.answerText, result.value] : result).toEqual([
+      sentinel,
+      { confidence: 'guess', kind: 'string', value: sentinel },
+    ])
+    expect(classified.flat().map((item) => item.input.questionText)).toEqual(['Education', 'Highest degree obtained'])
+    expect(JSON.stringify(classified)).not.toContain(sentinel)
+    expect(JSON.stringify(stored)).not.toContain(sentinel)
   })
 })

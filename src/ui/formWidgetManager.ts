@@ -1,14 +1,10 @@
 import { mountFormFillButton } from './formWidgetMount'
 import { detectFormContainer, fillFormContainer } from '~/field/registry'
-import {
-  getAuthStatus,
-  getProfileSummary,
-  openDashboard,
-  requestSignIn,
-} from '~/bridge/mainBridge'
-import { PROFILE_SCORE_EMPTY_BELOW } from '~/config'
+import { requestFillGrant, requestOpenDashboard } from '~/bridge/mainBridge'
 import { isVisible } from '~/field/baseField'
 import type { ResolvedOriginMode } from '~/bridge/types'
+import type { WidgetFillOutcome } from './formWidgetMount'
+import { composedParent, isAttached, querySelectorAllDeep } from '~/core/shadowDom'
 
 const MARKER_ATTR = 'data-tp-form-widget-host'
 const ANCHOR_ATTR = 'data-tp-form-widget-anchor'
@@ -29,27 +25,25 @@ const FIELD_SELECTOR =
   'select, textarea, [role="combobox"], fieldset, [data-tp-field]'
 
 const findFirstFieldRow = (container: HTMLElement): HTMLElement | null => {
-  const candidates = Array.from(
-    container.querySelectorAll<HTMLElement>(FIELD_SELECTOR),
-  ).filter((el) => isVisible(el))
+  const candidates = querySelectorAllDeep<HTMLElement>(container, FIELD_SELECTOR).filter((el) =>
+    isVisible(el),
+  )
   if (candidates.length === 0) return null
   const first = candidates[0]
-  let node: HTMLElement | null = first
+  let node: Node = first
   let depth = 0
-  while (node && node !== container && depth < 6) {
-    const parent = node.parentElement as HTMLElement
+  while (node !== container && depth < 6) {
+    const parent = composedParent(node)
     if (!parent) break
-    if (parent === container) return node
+    if (parent === container) return node instanceof HTMLElement ? node : first
     node = parent
     depth++
   }
-  return first
+  return first.getRootNode() === document ? first : null
 }
 
 const countVisibleFields = (container: HTMLElement): number => {
-  const els = Array.from(
-    container.querySelectorAll<HTMLElement>(FIELD_SELECTOR),
-  )
+  const els = querySelectorAllDeep<HTMLElement>(container, FIELD_SELECTOR)
   let count = 0
   for (const el of els) {
     if (!isVisible(el)) continue
@@ -59,25 +53,17 @@ const countVisibleFields = (container: HTMLElement): number => {
   return count
 }
 
-const isAuthenticated = async (): Promise<boolean> => {
-  const status = await getAuthStatus()
-  return status.authenticated
-}
-
-const isProfileUsable = async (): Promise<boolean> => {
-  const summary = await getProfileSummary()
-  if (!summary) return false
-  return summary.profileScore >= PROFILE_SCORE_EMPTY_BELOW
-}
-
-const fillContainer = (container: HTMLElement) => async () => {
-  return fillFormContainer(container)
+const fillContainer = (container: HTMLElement) => async (): Promise<WidgetFillOutcome> => {
+  const grant = await requestFillGrant()
+  if (grant.kind !== 'run') return { kind: grant.kind }
+  const counts = await fillFormContainer(grant.batchId, container)
+  return { counts, kind: 'filled', lowScore: grant.lowScore }
 }
 
 const mountForContainer = (container: HTMLElement): void => {
   if (mountedWidgets.has(container)) {
     const existing = mountedWidgets.get(container)!
-    if (document.documentElement.contains(existing.anchor)) return
+    if (isAttached(existing.anchor)) return
     existing.destroy()
     mountedWidgets.delete(container)
   }
@@ -91,14 +77,9 @@ const mountForContainer = (container: HTMLElement): void => {
     container,
     anchorRow: anchor,
     onFillClick: fillContainer(container),
-    onSignInClick: async () => {
-      requestSignIn()
-    },
     onOpenEditorClick: async () => {
-      openDashboard()
+      requestOpenDashboard()
     },
-    isAuthenticated,
-    isProfileUsable,
   })
 
   mountedWidgets.set(container, { destroy: handle.destroy, anchor })
@@ -106,8 +87,8 @@ const mountForContainer = (container: HTMLElement): void => {
 
 const sweepStaleWidgets = (): void => {
   for (const [container, entry] of mountedWidgets) {
-    const stillInDom = document.documentElement.contains(container)
-    const anchorAlive = document.documentElement.contains(entry.anchor)
+    const stillInDom = isAttached(container)
+    const anchorAlive = isAttached(entry.anchor)
     if (!stillInDom || !anchorAlive) {
       entry.destroy()
       mountedWidgets.delete(container)

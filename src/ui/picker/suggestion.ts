@@ -1,16 +1,15 @@
 import { toCorpusAnswerKind, toCorpusFieldType } from '~/capture/corpusVocabulary'
-import { readOptionLabels } from '~/capture/optionLabels'
 import type { SuggestionRequest } from '~/classifier/suggest'
 import type { SuggestionRow } from '~/classifier/suggestClient'
 
 export type FieldSuggestion = { fieldUuid: string; row: SuggestionRow }
 
 export const suggestionRequestFor = (ctx: {
-  field: HTMLElement
   fieldName: string
   fieldType: string
+  optionLabels: string[] | null
 }): SuggestionRequest => {
-  const optionLabels = readOptionLabels(ctx.field)
+  const optionLabels = ctx.optionLabels
   return {
     answerKind: toCorpusAnswerKind(toCorpusFieldType(ctx.fieldType), optionLabels, {
       kind: 'unsupported',

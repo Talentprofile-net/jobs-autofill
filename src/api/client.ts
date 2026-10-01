@@ -159,10 +159,7 @@ const parseErrorBody = async (res: Response): Promise<string> => {
   }
 }
 
-export const apiFetch = async <T>(
-  path: string,
-  init: RequestInit2 = {},
-): Promise<T | undefined> => {
+const apiResponse = async (path: string, init: RequestInit2): Promise<Response> => {
   if (!init.skipAuth) {
     const outcome = await ensureFreshToken()
     if (outcome.kind === 'network') {
@@ -222,6 +219,20 @@ export const apiFetch = async <T>(
     const message = await parseErrorBody(res)
     throw new ApiError(res.status, message || `Request failed: ${res.status}`)
   }
+
+  return res
+}
+
+export const apiFetchBytes = async (
+  path: string,
+  init: RequestInit2 = {},
+): Promise<Uint8Array> => new Uint8Array(await (await apiResponse(path, init)).arrayBuffer())
+
+export const apiFetch = async <T>(
+  path: string,
+  init: RequestInit2 = {},
+): Promise<T | undefined> => {
+  const res = await apiResponse(path, init)
 
   if (res.status === 204) {
     return undefined

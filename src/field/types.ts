@@ -4,6 +4,7 @@ export type ProfileValue =
   | { kind: 'multiChoice'; preferred: string[]; fallbacks: string[] }
   | { kind: 'boolean'; value: boolean }
   | { kind: 'date'; year: string; month?: string; day?: string }
+  | { kind: 'file'; name: string; mimeType: string; base64: string }
   | { kind: 'unsupported' }
   | { kind: 'timeout' }
 

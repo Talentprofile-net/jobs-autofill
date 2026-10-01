@@ -1,26 +1,15 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import { DragGesture } from '@use-gesture/vanilla'
-  import type { PickerContext } from './pickerController'
   import {
     buildMenuTree,
     type MenuGroup,
     type MenuLeaf,
     type MenuNode,
   } from './menuTree'
-  import { insertIntoField } from './insertion'
-  import {
-    createNote,
-    deleteNote,
-    getAuthStatus,
-    getProfile,
-    requestClassifierSuggestion,
-    requestSignIn,
-    touchNote,
-    updateNote,
-  } from '~/bridge/mainBridge'
+  import type { PickerApi } from './pickerApi'
+  import type { PickerFieldContext } from './protocol'
   import type { Profile, ProfileNote } from '~/api/types'
-  import { fieldByUuid } from '~/field/registry'
   import {
     createSuggestionLoader,
     rowForField,
@@ -37,24 +26,17 @@
   } from './icons'
 
   type Props = {
-    ctx: PickerContext
+    api: PickerApi
+    context: PickerFieldContext
     onClose: () => void
-    mobile: boolean
   }
 
-  let { ctx, onClose, mobile }: Props = $props()
+  let { api, context, onClose }: Props = $props()
 
+  const ctx = $derived(context.descriptor)
+  const mobile = $derived(context.mobile)
   const NOTE_MAX_LENGTH = 4000
-
-  const pathKeySegment = (): string => {
-    const path = location.pathname
-    const cleaned = path.replace(/\/+$/, '').replace(/^\//, '')
-    if (!cleaned) return 'root'
-    const segments = cleaned.split('/').slice(0, 3)
-    return segments.join('/') || 'root'
-  }
-
-  const STORAGE_KEY = `tp.picker.path.${location.hostname}.${pathKeySegment()}`
+  const STORAGE_KEY = $derived(context.storageKey)
   const SWIPE_REVEAL_PX = 96
   const TRUNCATION_TOAST_MS = 3200
 
@@ -88,7 +70,7 @@
   let pendingDeleteError = $state<string | null>(null)
   let suggestion = $state<FieldSuggestion | null>(null)
   const suggestionRow = $derived(rowForField(suggestion, ctx.fieldUuid))
-  const suggestionLoader = createSuggestionLoader(requestClassifierSuggestion, (next) => {
+  const suggestionLoader = createSuggestionLoader((request) => api.suggest(request), (next) => {
     suggestion = next
   })
 
@@ -99,7 +81,7 @@
 
   const loadProfile = async () => {
     try {
-      const p = await getProfile()
+      const p = await api.profile()
       if (!p) {
         loadError = 'Profile unavailable'
         return
@@ -122,7 +104,7 @@
     authState = 'checking'
     loadError = null
     try {
-      const status = await getAuthStatus()
+      const status = await api.authStatus()
       if (!status.authenticated) {
         authState = 'unauthenticated'
         return
@@ -137,13 +119,14 @@
   }
 
   const loadSuggestion = () =>
-    suggestionLoader.load(ctx.fieldUuid, () => suggestionRequestFor(ctx))
+    suggestionLoader.load(ctx.fieldUuid, () =>
+      suggestionRequestFor({ ...ctx, optionLabels: context.optionLabels }),
+    )
 
   const applySuggestion = async () => {
     const row = suggestionRow
-    const field = fieldByUuid(ctx.fieldUuid)
-    if (!row || !field) return
-    await field.fillFromResolved(row.value, true)
+    if (!row) return
+    await api.fill(row.value)
     onClose()
   }
 
@@ -159,7 +142,7 @@
   })
 
   const handleSignInClick = () => {
-    requestSignIn()
+    api.signIn()
     onClose()
   }
 
@@ -258,9 +241,9 @@
       activeIndex = 0
       return
     }
-    const result = insertIntoField(ctx.field, item.value)
+    const result = await api.insert(item.value)
     if (result.inserted && item.noteId) {
-      void touchNote(item.noteId)
+      api.touchNote(item.noteId)
     }
     if (result.truncated && result.maxLength) {
       showTruncationToast(result.maxLength)
@@ -335,7 +318,7 @@
     composeError = null
     try {
       if (composeTarget.kind === 'new') {
-        const result = await createNote(content)
+        const result = await api.createNote(content)
         if (!result.note) {
           composeError = result.error ?? 'Failed to save'
           composing = false
@@ -371,7 +354,7 @@
         }, 1600)
       } else {
         const editId = composeTarget.noteId
-        const result = await updateNote(editId, content)
+        const result = await api.updateNote(editId, content)
         if (!result.note) {
           composeError = result.error ?? 'Failed to save'
           composing = false
@@ -421,7 +404,7 @@
     if (!confirmDeleteId) return
     const targetId = confirmDeleteId
     pendingDeleteError = null
-    const result = await deleteNote(targetId)
+    const result = await api.deleteNote(targetId)
     if (!result.deletedId) {
       pendingDeleteError = result.error ?? 'Failed to delete'
       return
@@ -625,15 +608,6 @@
     if (leaf.noteId) askConfirmDelete(leaf.noteId)
   }
 </script>
-
-{#if mobile}
-  <div
-    class="backdrop"
-    data-tp-shown="true"
-    onclick={onClose}
-    role="presentation"
-  ></div>
-{/if}
 
 <div
   class="popover"

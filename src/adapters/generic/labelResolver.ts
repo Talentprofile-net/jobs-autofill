@@ -1,11 +1,12 @@
 import { resolveLabelledByText } from '~/core/labelledBy'
+import { rootQueryScope } from '~/core/shadowDom'
 
 const trimText = (s: string | null | undefined): string => (s ?? '').trim()
 
 const labelByFor = (input: HTMLElement): string => {
   const id = input.getAttribute('id')
   if (!id) return ''
-  const label = document.querySelector(`label[for="${CSS.escape(id)}"]`) as HTMLElement | null
+  const label = rootQueryScope(input).querySelector<HTMLElement>(`label[for="${CSS.escape(id)}"]`)
   return trimText(label?.innerText)
 }
 
@@ -18,7 +19,7 @@ const wrappingLabel = (input: HTMLElement): string => {
 }
 
 const labelByAriaLabelledby = (input: HTMLElement): string =>
-  resolveLabelledByText(input.getAttribute('aria-labelledby'))
+  resolveLabelledByText(input.getAttribute('aria-labelledby'), input)
 
 const ariaLabel = (input: HTMLElement): string => trimText(input.getAttribute('aria-label'))
 
@@ -47,6 +48,12 @@ const precedingSiblingText = (input: HTMLElement): string => {
   return ''
 }
 
+const shadowHostLabel = (input: HTMLElement): string => {
+  const root = input.getRootNode()
+  if (!(root instanceof ShadowRoot)) return ''
+  return trimText(root.host.getAttribute('aria-label')) || trimText(root.host.getAttribute('label'))
+}
+
 const placeholderOrName = (input: HTMLElement): string => {
   const placeholder = trimText(input.getAttribute('placeholder'))
   if (placeholder) return placeholder
@@ -61,6 +68,7 @@ export const resolveFieldLabel = (input: HTMLElement): string => {
     wrappingLabel(input) ||
     labelByAriaLabelledby(input) ||
     ariaLabel(input) ||
+    shadowHostLabel(input) ||
     closestLegend(input) ||
     precedingSiblingText(input) ||
     placeholderOrName(input)
@@ -80,6 +88,7 @@ export const resolveGroupLabel = (group: HTMLElement): string => {
     if (aria) return aria
     const labelled = resolveLabelledByText(
       roleGroup.getAttribute('aria-labelledby'),
+      roleGroup,
     )
     if (labelled) return labelled
   }

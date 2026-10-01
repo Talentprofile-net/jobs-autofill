@@ -1,7 +1,6 @@
-import type { AtsName, OriginMode, ProfileValue } from '~/field/types'
-import type { Profile, ProfileNote, TalentAnswer } from '~/api/types'
-import type { SuggestionRequest } from '~/classifier/suggest'
-import type { SuggestionRow } from '~/classifier/suggestClient'
+import type { AtsName, OriginMode, PickerMode, ProfileValue } from '~/field/types'
+import type { TalentAnswer } from '~/api/types'
+import type { PickerRelay } from '~/ui/picker/protocol'
 
 export type AuthMethod = 'local' | 'google' | 'github' | 'magic' | 'auth0' | 'email'
 
@@ -118,112 +117,71 @@ export type CaptureStagePayload = {
   records: AnswerCaptureRecord[]
 }
 
+export type FieldDescriptor = {
+  fieldUuid: string
+  fieldName: string
+  fieldType: string
+  section: string
+  pickerMode: PickerMode
+}
+
+export type FillValueResult = {
+  requestId: string
+  value: ProfileValue
+  profileField: string | null
+  matchedAnswerId: string | null
+}
+
+export type FillProgressDelta = {
+  filled: number
+  skipped: number
+  failed: number
+  unsupported: number
+}
+
+export type FillDenialReason = 'dismissed' | 'signin' | 'untrusted' | 'unavailable'
+
 export type MainWorldRequest =
-  | {
-      id: string
-      kind: 'resolveFieldValue'
-      fieldName: string
-      fieldType: string
-      section: string
-    }
-  | {
-      id: string
-      kind: 'resolveFieldValues'
-      fields: (FieldResolveRequest & { requestId: string })[]
-    }
-  | {
-      id: string
-      kind: 'resolveLearnedAnswers'
-      fields: LearnedAnswerFieldRequest[]
-    }
-  | { id: string; kind: 'learnedAnswer.delete'; answerId: string }
-  | { id: string; kind: 'classifier.suggest'; request: SuggestionRequest }
   | { id: string; kind: 'mainWorld.ready' }
-  | { id: string; kind: 'tab.fillAllResult'; batchId: string; counts: FillCounts; passes: number }
-  | { id: string; kind: 'tab.fillStarted'; batchId: string; total: number; pass: number }
-  | {
-      id: string
-      kind: 'tab.fillProgress'
-      batchId: string
-      delta: { filled: number; skipped: number; failed: number; unsupported: number }
-      totalDelta: number
-      pass: number
-    }
-  | { id: string; kind: 'tab.fillTotalIncreased'; batchId: string; addedTotal: number; pass: number }
-  | { id: string; kind: 'auth.requestSignIn' }
-  | { id: string; kind: 'auth.getStatus' }
-  | { id: string; kind: 'auth.getSummary' }
-  | { id: string; kind: 'auth.getProfile' }
-  | { id: string; kind: 'auth.openDashboard' }
-  | { id: string; kind: 'note.create'; content: string }
-  | { id: string; kind: 'note.update'; noteId: string; content: string }
-  | { id: string; kind: 'note.delete'; noteId: string }
-  | { id: string; kind: 'note.touch'; noteId: string }
   | { id: string; kind: 'mode.get' }
   | {
       id: string
-      kind: 'answers.stage'
-      payload: CaptureStagePayload
+      kind: 'fill.fields'
+      batchId: string
+      fields: (FieldResolveRequest & { requestId: string })[]
     }
-  | { id: string; kind: 'answers.commit'; stageId: string }
+  | { id: string; kind: 'fill.started'; batchId: string; total: number; pass: number }
   | {
       id: string
-      kind: 'answers.discard'
-      stageId: string
-      outcome: 'failure' | 'unknown'
+      kind: 'fill.progress'
+      batchId: string
+      delta: FillProgressDelta
+      totalDelta: number
+      pass: number
     }
+  | { id: string; kind: 'fill.totalIncreased'; batchId: string; addedTotal: number; pass: number }
+  | { id: string; kind: 'fill.result'; batchId: string; counts: FillCounts; passes: number }
+  | { id: string; kind: 'fill.request' }
+  | { id: string; kind: 'widget.openDashboard' }
+  | { id: string; kind: 'field.descriptor'; descriptor: FieldDescriptor | null }
+  | { id: string; kind: 'capture.submit'; records: AnswerCaptureRecord[] }
 
 export type ContentScriptRequest =
-  | {
-      id: string
-      kind: 'fieldValueResult'
-      value: ProfileValue
-      profileField: string | null
-      error?: string
-    }
-  | {
-      id: string
-      kind: 'fieldValuesResult'
-      values: FieldResolveResult[]
-      error?: string
-    }
-  | {
-      id: string
-      kind: 'learnedAnswersResult'
-      results: LearnedAnswerBridgeResult[]
-      error?: string
-    }
-  | {
-      id: string
-      kind: 'learnedAnswer.deleteResult'
-      answerId: string | null
-      error?: string
-    }
-  | { id: string; kind: 'classifier.suggestResult'; row: SuggestionRow | null }
   | { id: string; kind: 'mainWorld.ping' }
-  | { id: string; kind: 'tab.fillAll'; batchId: string }
-  | { id: string; kind: 'auth.statusResult'; status: AuthStatus }
-  | { id: string; kind: 'auth.summaryResult'; summary: ProfileSummary | null }
-  | { id: string; kind: 'auth.profileResult'; profile: Profile | null }
-  | { id: string; kind: 'auth.statePushed'; status: AuthStatus }
-  | { id: string; kind: 'note.createResult'; note: ProfileNote | null; error?: string }
-  | { id: string; kind: 'note.updateResult'; note: ProfileNote | null; error?: string }
-  | { id: string; kind: 'note.deleteResult'; noteId: string | null; error?: string }
-  | { id: string; kind: 'note.touchResult'; ok: boolean; error?: string }
   | { id: string; kind: 'mode.result'; mode: ResolvedOriginMode }
   | { id: string; kind: 'mode.changed'; mode: ResolvedOriginMode }
-  | { id: string; kind: 'mode.resolveAuto' }
-  | { id: string; kind: 'cmd.openPicker' }
-  | { id: string; kind: 'cmd.fillAllHotkey' }
   | {
       id: string
-      kind: 'answers.stageResult'
-      ok: boolean
-      stageId?: string
-      error?: string
+      kind: 'fill.run'
+      batchId: string
+      emit: boolean
+      requestId: string | null
+      lowScore: boolean
     }
-  | { id: string; kind: 'answers.commitResult'; ok: boolean; error?: string }
-  | { id: string; kind: 'answers.discardResult'; ok: boolean }
+  | { id: string; kind: 'fill.values'; batchId: string; results: FillValueResult[] }
+  | { id: string; kind: 'fill.denied'; requestId: string; reason: FillDenialReason }
+  | { id: string; kind: 'field.describe'; fieldUuid: string }
+  | { id: string; kind: 'field.fill'; fieldUuid: string; value: ProfileValue }
 
 export type DetectedAts = AtsName | null
 
@@ -268,6 +226,8 @@ export type PopupToBackground =
   | { kind: 'auth.changed' }
   | { kind: 'tab.listOrigins'; tabId: number }
   | { kind: 'origin.enable'; pattern: string; mode: OriginMode }
+  | { kind: 'origin.intent.begin'; pattern: string; mode: OriginMode; tabId: number }
+  | { kind: 'origin.intent.cancel'; pattern: string }
   | { kind: 'origin.disable'; pattern: string }
   | { kind: 'origin.setMode'; pattern: string; mode: OriginMode }
   | { kind: 'origin.list' }
@@ -315,6 +275,7 @@ export type ContentToBackground =
       stageId: string
       outcome: 'failure' | 'unknown'
     }
+  | PickerRelay
 
 export type ExternalToBackground =
   | {

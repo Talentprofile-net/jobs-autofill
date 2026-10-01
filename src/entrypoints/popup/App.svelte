@@ -382,17 +382,28 @@
     const { pattern } = pendingEnableChoice;
     pendingEnableChoice = null;
     if (busy) return;
+    if (typeof activeTabId !== "number") return;
     busy = true;
     errorMsg = null;
     try {
+      const intent = send({
+        kind: "origin.intent.begin",
+        mode,
+        pattern,
+        tabId: activeTabId,
+      });
       let granted = false;
       try {
         granted = await browser.permissions.request({ origins: [pattern] });
       } catch (e) {
+        await intent;
+        await send({ kind: "origin.intent.cancel", pattern });
         errorMsg = (e as Error).message;
         return;
       }
+      await intent;
       if (!granted) {
+        await send({ kind: "origin.intent.cancel", pattern });
         errorMsg = "Permission denied";
         return;
       }

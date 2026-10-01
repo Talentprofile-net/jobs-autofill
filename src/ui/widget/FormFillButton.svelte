@@ -1,21 +1,13 @@
 <script lang="ts">
   import type { FillCounts } from '~/bridge/types'
+  import type { WidgetFillOutcome } from '../formWidgetMount'
 
   type Props = {
-    onFillClick: () => Promise<FillCounts>
-    onSignInClick: () => Promise<void>
+    onFillClick: () => Promise<WidgetFillOutcome>
     onOpenEditorClick: () => Promise<void>
-    isAuthenticated: () => Promise<boolean>
-    isProfileUsable: () => Promise<boolean>
   }
 
-  let {
-    onFillClick,
-    onSignInClick,
-    onOpenEditorClick,
-    isAuthenticated,
-    isProfileUsable,
-  }: Props = $props()
+  let { onFillClick, onOpenEditorClick }: Props = $props()
 
   let busy = $state(false)
   let result = $state<FillCounts | null>(null)
@@ -38,15 +30,10 @@
     lowScoreWarning = false
     clearResultTimer()
     try {
-      const authed = await isAuthenticated()
-      if (!authed) {
-        await onSignInClick()
-        return
-      }
-      const usable = await isProfileUsable()
-      const counts = await onFillClick()
-      result = counts
-      lowScoreWarning = !usable
+      const outcome = await onFillClick()
+      if (outcome.kind !== 'filled') return
+      result = outcome.counts
+      lowScoreWarning = outcome.lowScore
       resultTimer = setTimeout(() => {
         result = null
         lowScoreWarning = false

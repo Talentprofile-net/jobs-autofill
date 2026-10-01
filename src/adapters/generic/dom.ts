@@ -1,5 +1,7 @@
 import { isInsideRegistered, isVisible } from '~/field/baseField'
 import { PART_MARKER_ATTR } from '~/core/dateUtils'
+import { querySelectorAllDeep } from '~/core/shadowDom'
+import { isConcealedControl } from '~/core/concealment'
 
 const SKIP_INPUT_TYPES = new Set([
   'hidden',
@@ -20,6 +22,7 @@ export const isCandidateControl = (el: HTMLElement): boolean => {
   if (el.getAttribute('aria-hidden') === 'true') return false
   if (el.getAttribute('aria-disabled') === 'true') return false
   if (el.getAttribute('aria-readonly') === 'true') return false
+  if (isConcealedControl(el)) return false
 
   const tag = el.tagName.toLowerCase()
   if (tag === 'input') {
@@ -32,17 +35,4 @@ export const isCandidateControl = (el: HTMLElement): boolean => {
 export const querySelectorAllInNode = (
   node: Node,
   selector: string,
-): HTMLElement[] => {
-  if (node === document) {
-    return Array.from(document.querySelectorAll<HTMLElement>(selector))
-  }
-  if (node instanceof Element || node instanceof DocumentFragment) {
-    return Array.from(node.querySelectorAll<HTMLElement>(selector))
-  }
-  if (typeof (node as ShadowRoot).querySelectorAll === 'function') {
-    return Array.from(
-      (node as ShadowRoot).querySelectorAll<HTMLElement>(selector),
-    )
-  }
-  return []
-}
+): HTMLElement[] => querySelectorAllDeep<HTMLElement>(node, selector)

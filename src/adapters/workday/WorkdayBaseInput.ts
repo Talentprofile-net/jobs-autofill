@@ -1,5 +1,6 @@
 import { getElement, getElements } from '~/core/getElements'
 import { BaseField } from '~/field/baseField'
+import type { WidgetPlacement } from '~/ui/picker/iconMount'
 
 type SectionKind = 'employment' | 'education' | 'other'
 
@@ -166,6 +167,10 @@ const indexAmongPeers = (
 }
 
 export abstract class WorkdayBaseInput extends BaseField {
+  protected override get widgetPlacement(): WidgetPlacement {
+    return 'field'
+  }
+
   private get sectionContainer(): HTMLElement | null {
     return findSectionContainer(this.element)
   }

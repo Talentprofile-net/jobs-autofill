@@ -1,6 +1,5 @@
-import { FIELD_MARKER_ATTR } from '~/config'
+import { FIELD_MARKER_ATTR, FIELD_PICKER_ICONS_ENABLED } from '~/config'
 import { getElement, getElements } from '~/core/getElements'
-import { resolveValueForField } from '~/bridge/mainBridge'
 import { registerField, unregisterField } from '~/field/registry'
 import {
   registerFieldForCapture,
@@ -8,7 +7,8 @@ import {
 } from '~/capture/captureBuffer'
 import { isPlaceholderText } from '~/core/match'
 import type { PickerMode, ProfileValue, FillOutcome } from './types'
-import { mountPickerIcon } from '~/ui/picker/iconMount'
+import { mountPickerIcon, type WidgetPlacement } from '~/ui/picker/iconMount'
+import { isAttached } from '~/core/shadowDom'
 
 export const isRegistered = (el: HTMLElement): boolean =>
   el.hasAttribute(FIELD_MARKER_ATTR)
@@ -180,9 +180,10 @@ export abstract class BaseField {
   }
 
   hasLiveWidget(): boolean {
+    if (!FIELD_PICKER_ICONS_ENABLED) return true
     const host = this.widgetHost
     if (!host) return false
-    return document.documentElement.contains(host)
+    return isAttached(host)
   }
 
   remountWidget(): void {
@@ -236,16 +237,22 @@ export abstract class BaseField {
     return this.canFill()
   }
 
+  isDisplayed(): boolean {
+    return isVisible(this.element)
+  }
+
+  protected get widgetPlacement(): WidgetPlacement {
+    return 'auto'
+  }
+
   protected mountWidget(): void {
+    if (!FIELD_PICKER_ICONS_ENABLED) return
     const anchor = this.getWidgetAnchor()
     if (!anchor) return
     this.widgetHandle = mountPickerIcon({
       field: anchor,
       fieldUuid: this.uuid,
-      fieldName: this.fieldName,
-      fieldType: this.fieldType,
-      section: this.section,
-      pickerMode: this.pickerMode,
+      placement: this.widgetPlacement,
     })
   }
 
@@ -284,7 +291,7 @@ export abstract class BaseField {
     for (const cleanup of this.interactionCleanup) cleanup()
     this.interactionCleanup = []
     unregisterFieldFromCapture(this)
-    if (document.documentElement.contains(this.element)) {
+    if (isAttached(this.element)) {
       this.element.removeAttribute(FIELD_MARKER_ATTR)
     }
     unregisterField(this.uuid)
@@ -303,23 +310,6 @@ export abstract class BaseField {
     }
     this.fillBusy = true
     try {
-      return await this.applyResolvedValue(value, force)
-    } finally {
-      this.fillBusy = false
-    }
-  }
-
-  async resolveAndFill(force = false): Promise<FillOutcome> {
-    if (this.fillBusy) {
-      return { status: 'skipped', reason: 'busy' }
-    }
-    this.fillBusy = true
-    try {
-      const value = await resolveValueForField(
-        this.fieldName,
-        this.fieldType,
-        this.section,
-      )
       return await this.applyResolvedValue(value, force)
     } finally {
       this.fillBusy = false

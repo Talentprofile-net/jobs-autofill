@@ -1,8 +1,11 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8083'
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ??
+  (import.meta.env.DEV ? 'http://localhost:8083' : 'https://backend.talentprofile.net')
 export const TOKEN_STORAGE_KEY = 'tp.tokens'
 export const FIELD_MARKER_ATTR = 'data-tp-field'
 export const BRIDGE_MAGIC = 'tp:bridge'
 export const PROFILE_CACHE_TTL_MS = 5 * 60 * 1000
+export const FIELD_PICKER_ICONS_ENABLED = false
 
 export const WEB_APP_BASE_URL = import.meta.env.VITE_WEB_APP_URL ?? 'https://talentprofile.net'
 export const WEB_APP_DASHBOARD_URL = import.meta.env.VITE_WEB_APP_DASHBOARD_URL ?? 'https://app.talentprofile.net'

@@ -1,4 +1,6 @@
 import { isInsideRegistered, isVisible } from '~/field/baseField'
+import { hasConcealingAncestor } from '~/core/concealment'
+import { querySelectorAllDeep } from '~/core/shadowDom'
 
 export type RadioGroup = {
   anchor: HTMLInputElement
@@ -37,10 +39,11 @@ const containerKeySuffix = (container: HTMLElement): string => {
 
 export const discoverRadioGroups = (root: ParentNode): RadioGroup[] => {
   const radios = Array.from(
-    root.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    querySelectorAllDeep<HTMLInputElement>(root, 'input[type="radio"]'),
   ).filter((el) => {
     if (isInsideRegistered(el)) return false
     if (!isVisible(el)) return false
+    if (hasConcealingAncestor(el)) return false
     if (el.hasAttribute('disabled')) return false
     return true
   })
@@ -79,10 +82,11 @@ export const discoverCheckboxGroups = (
   root: ParentNode,
 ): { singles: HTMLInputElement[]; groups: CheckboxGroup[] } => {
   const checkboxes = Array.from(
-    root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    querySelectorAllDeep<HTMLInputElement>(root, 'input[type="checkbox"]'),
   ).filter((el) => {
     if (isInsideRegistered(el)) return false
     if (!isVisible(el)) return false
+    if (hasConcealingAncestor(el)) return false
     if (el.hasAttribute('disabled')) return false
     return true
   })

@@ -2,14 +2,16 @@ import { mount, unmount } from "svelte";
 import FormFillButton from "./widget/FormFillButton.svelte";
 import type { FillCounts } from "~/bridge/types";
 
+export type WidgetFillOutcome =
+  | { kind: "filled"; counts: FillCounts; lowScore: boolean }
+  | { kind: "signin" }
+  | { kind: "none" };
+
 type MountOptions = {
   container: HTMLElement;
   anchorRow: HTMLElement;
-  onFillClick: () => Promise<FillCounts>;
-  onSignInClick: () => Promise<void>;
+  onFillClick: () => Promise<WidgetFillOutcome>;
   onOpenEditorClick: () => Promise<void>;
-  isAuthenticated: () => Promise<boolean>;
-  isProfileUsable: () => Promise<boolean>;
 };
 
 const STYLE_TEXT = `
@@ -169,10 +171,7 @@ export const mountFormFillButton = (
     target: mountTarget,
     props: {
       onFillClick: opts.onFillClick,
-      onSignInClick: opts.onSignInClick,
       onOpenEditorClick: opts.onOpenEditorClick,
-      isAuthenticated: opts.isAuthenticated,
-      isProfileUsable: opts.isProfileUsable,
     },
   });
 

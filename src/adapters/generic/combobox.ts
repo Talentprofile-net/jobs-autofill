@@ -6,6 +6,7 @@ import { createKeyboardEvent } from '~/core/events'
 import { sleep } from '~/core/verify'
 import { GenericBaseField } from './GenericBaseField'
 import type { ProfileValue } from '~/field/types'
+import { getElementByIdInScope, rootQueryScope } from '~/core/shadowDom'
 
 const OPEN_SETTLE_MS = 150
 const LISTBOX_WAIT_MS = 600
@@ -24,19 +25,23 @@ const isListboxVisible = (lb: HTMLElement): boolean => {
 const listboxByExplicitRelation = (combobox: HTMLElement): HTMLElement | null => {
   const controls = combobox.getAttribute('aria-controls')
   if (controls) {
-    const byId = document.getElementById(controls)
+    const byId = getElementByIdInScope(combobox, controls)
     if (byId && byId.getAttribute('role') === 'listbox' && isListboxVisible(byId)) return byId
   }
   const owns = combobox.getAttribute('aria-owns')
   if (owns) {
-    const byId = document.getElementById(owns)
+    const byId = getElementByIdInScope(combobox, owns)
     if (byId && byId.getAttribute('role') === 'listbox' && isListboxVisible(byId)) return byId
   }
   return null
 }
 
 const findFloatingListbox = (combobox: HTMLElement): HTMLElement | null => {
-  const lists = document.querySelectorAll<HTMLElement>('[role="listbox"]')
+  const scope = rootQueryScope(combobox)
+  const lists = [
+    ...Array.from(document.querySelectorAll<HTMLElement>('[role="listbox"]')),
+    ...(scope === document ? [] : Array.from(scope.querySelectorAll<HTMLElement>('[role="listbox"]'))),
+  ]
   const cbRect = combobox.getBoundingClientRect()
   let best: HTMLElement | null = null
   let bestDist = Infinity
@@ -110,7 +115,7 @@ const waitForListboxByRelation = async (
     })
     const scopeObserver = new MutationObserver(() => {
       if (resolved) return
-      if (!document.documentElement.contains(combobox)) {
+      if (!combobox.isConnected) {
         cleanup(null)
         return
       }
@@ -165,7 +170,7 @@ const findInternalInput = (combobox: HTMLElement): HTMLInputElement | null => {
 const readCommittedValue = (combobox: HTMLElement): string => {
   const controls = combobox.getAttribute('aria-controls')
   if (controls) {
-    const listbox = document.getElementById(controls)
+    const listbox = getElementByIdInScope(combobox, controls)
     if (listbox) {
       const selected = listbox.querySelector<HTMLElement>(
         '[role="option"][aria-selected="true"]',

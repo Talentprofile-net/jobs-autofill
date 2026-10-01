@@ -17,6 +17,21 @@ import {
   updateEnabledOriginMode,
 } from "~/auth/enabledOrigins";
 import {
+  cancelPermissionIntent,
+  handleGrantedOrigins,
+  matchIntentFrame,
+  recordPermissionIntent,
+  takePermissionIntent,
+} from "~/auth/permissionIntent";
+import { isUnrelatedFrameUrl } from "~/auth/frameOrigins";
+import { enableGrantedOrigin } from "~/auth/originGrant";
+import { fetchOwnCvBytes } from "~/api/cv";
+import {
+  isCvFileRequest,
+  toCvFileValue,
+  type CvFileValue,
+} from "~/resolver/cvFile";
+import {
   clearConnectAttempt,
   getConnectAttempt,
   setConnectAttempt,
@@ -70,6 +85,7 @@ import {
 } from "~/capture/applicationContext";
 import { closeOffscreenDocument } from "~/classifier/offscreenClient";
 import { CLASSIFIER_SUGGESTIONS_KEY } from "~/classifier/suggestionSwitch";
+import { PICKER_PAGE, type PickerRelay } from "~/ui/picker/protocol";
 
 const FRAME_REGISTRY_KEY = "tp.frameRegistry";
 const PROFILE_CACHE_KEY = "tp.profileCache";
@@ -170,6 +186,7 @@ class Serializer {
 }
 
 const frameRegistrySerializer = new Serializer();
+const originGrantSerializer = new Serializer();
 
 type FillPortState = {
   port: Browser.runtime.Port;
@@ -438,6 +455,7 @@ export default defineBackground(() => {
       if (!pattern) continue;
       if (pattern === topPattern) continue;
       if (iframeMap.has(pattern)) continue;
+      if (isUnrelatedFrameUrl(frame.url) && !enabledMap.has(pattern)) continue;
       const origin = originFromPattern(pattern) ?? "";
       iframeMap.set(pattern, { pattern, origin });
     }
@@ -509,32 +527,72 @@ export default defineBackground(() => {
     })().catch(() => {});
   };
 
-  const grantAndEnableOrigin = async (
+  const grantAndEnableOrigin = (
+    pattern: string,
+    mode: OriginMode,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    originGrantSerializer.run(() =>
+      enableGrantedOrigin(pattern, mode, {
+        broadcast: broadcastModeToOrigin,
+        hasPermission: (origin) =>
+          browser.permissions.contains({ origins: [origin] }),
+        inject: (origin) => void injectIntoActiveFrames(origin),
+        readMode: getOriginMode,
+        register: registerDynamicScripts,
+        save: async (origin, originMode) => {
+          await addEnabledOrigin(origin, originMode);
+          cachedBroadcastFilter = null;
+        },
+        unregister: unregisterDynamicScripts,
+      }),
+    );
+
+  const beginPermissionIntent = async (
+    pattern: string,
+    mode: OriginMode,
+    tabId: number,
+  ): Promise<{ ok: boolean; error?: string }> => {
+    let frames: Browser.webNavigation.GetAllFrameResultDetails[] = [];
+    try {
+      frames = (await browser.webNavigation.getAllFrames({ tabId })) ?? [];
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+    const frame = matchIntentFrame(pattern, frames);
+    if (!frame) return { ok: false, error: "Origin is not open in this tab" };
+    await originGrantSerializer.run(() =>
+      recordPermissionIntent(
+        browser.storage.session,
+        {
+          createdAt: Date.now(),
+          frameId: frame.frameId,
+          frameOrigin: frame.frameOrigin,
+          mode,
+          pattern,
+          tabId,
+        },
+        Date.now(),
+      ),
+    );
+    return { ok: true };
+  };
+
+  const completeOriginEnable = async (
     pattern: string,
     mode: OriginMode,
   ): Promise<{ ok: boolean; error?: string }> => {
-    let hasPermission = false;
-    try {
-      hasPermission = await browser.permissions.contains({
-        origins: [pattern],
-      });
-    } catch (e) {
-      return { ok: false, error: (e as Error).message };
+    const result = await grantAndEnableOrigin(pattern, mode);
+    if (result.ok) {
+      await originGrantSerializer.run(() =>
+        cancelPermissionIntent(browser.storage.session, pattern, Date.now()),
+      );
     }
-    if (!hasPermission) {
-      return { ok: false, error: "Permission not granted" };
-    }
-    await addEnabledOrigin(pattern, mode);
-    cachedBroadcastFilter = null;
-    try {
-      await registerDynamicScripts(pattern);
-    } catch (e) {
-      return { ok: false, error: (e as Error).message };
-    }
-    void injectIntoActiveFrames(pattern);
-    broadcastModeToOrigin(pattern, mode);
-    return { ok: true };
+    return result;
   };
+
+  const isPopupSender = (sender: Browser.runtime.MessageSender): boolean =>
+    sender.id === browser.runtime.id &&
+    sender.url === browser.runtime.getURL("/popup.html");
 
   const revokeAndDisableOrigin = async (
     pattern: string,
@@ -782,7 +840,12 @@ export default defineBackground(() => {
       // fill down with it.
       console.warn("[TP] Could not load learned answers", (e as Error).message);
     }
-    const merged = mergeAnswers(profile, answers);
+    let talentNotes: ProfileNote[] = [];
+    try {
+      const { fetchMyTalentNotes } = await import("~/api/talentNote");
+      talentNotes = await fetchMyTalentNotes();
+    } catch {}
+    const merged = mergeAnswers({ ...profile, talentNotes }, answers);
     await setCachedProfile(merged);
     return merged;
   };
@@ -802,6 +865,26 @@ export default defineBackground(() => {
     } catch {
       // Best effort. The next full hydration picks them up.
     }
+  };
+
+  let cvCache: {
+    fetchedAt: number;
+    profileId: string;
+    value: CvFileValue | null;
+  } | null = null;
+
+  const getOwnCvValue = async (profile: Profile): Promise<CvFileValue | null> => {
+    if (
+      cvCache &&
+      cvCache.profileId === profile.id &&
+      Date.now() - cvCache.fetchedAt < PROFILE_CACHE_TTL_MS
+    ) {
+      return cvCache.value;
+    }
+    const bytes = await fetchOwnCvBytes();
+    const value = bytes ? toCvFileValue(bytes, profile.profileName) : null;
+    cvCache = { fetchedAt: Date.now(), profileId: profile.id, value };
+    return value;
   };
 
   const getProfile = async (force = false): Promise<Profile> => {
@@ -1455,12 +1538,52 @@ export default defineBackground(() => {
       .catch(() => {});
   };
 
+  const pickerFrameOwner = async (
+    tabId: number,
+    frameId: number,
+  ): Promise<number | null> => {
+    try {
+      const frame = await browser.webNavigation.getFrame({ frameId, tabId });
+      return frame ? frame.parentFrameId : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const relayPickerAction = async (
+    message: PickerRelay,
+    sender: Browser.runtime.MessageSender,
+  ): Promise<BackgroundResponse> => {
+    const tabId = sender.tab?.id;
+    const frameId = sender.frameId;
+    const fromPicker =
+      !!sender.url &&
+      new URL(sender.url).protocol === "chrome-extension:" &&
+      new URL(sender.url).pathname === PICKER_PAGE;
+    if (!fromPicker || typeof tabId !== "number" || typeof frameId !== "number") {
+      return { ok: false, error: "Invalid picker sender" };
+    }
+    const owner = await pickerFrameOwner(tabId, frameId);
+    const relayed = { action: message.action, kind: "picker.relay", sessionId: message.sessionId };
+    try {
+      const response = (await (owner === null || owner < 0
+        ? browser.tabs.sendMessage(tabId, relayed)
+        : browser.tabs.sendMessage(tabId, relayed, { frameId: owner }))) as
+        | BackgroundResponse
+        | undefined;
+      return response ?? { ok: false, error: "Picker closed" };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  };
+
   const handleMessage = async (
     message: ContentToBackground | PopupToBackground,
     sender: Browser.runtime.MessageSender,
   ): Promise<BackgroundResponse> => {
     switch (message.kind) {
       case "auth.logout": {
+        cvCache = null;
         await clearTokens();
         await clearCachedProfile();
         broadcastAuthChanged();
@@ -1701,10 +1824,21 @@ export default defineBackground(() => {
         }
         try {
           const profile = await getProfile(false);
-          const out = message.fields.map((f) => ({
-            requestId: f.requestId,
-            value: resolveField(f.fieldName, f.fieldType, f.section, profile),
-          }));
+          const cv = message.fields.some(isCvFileRequest)
+            ? await getOwnCvValue(profile).catch(() => null)
+            : null;
+          const out = message.fields.map((f) =>
+            isCvFileRequest(f)
+              ? {
+                  profileField: cv ? "cv" : null,
+                  requestId: f.requestId,
+                  value: cv ?? { kind: "unsupported" as const },
+                }
+              : {
+                  requestId: f.requestId,
+                  ...resolveField(f.fieldName, f.fieldType, f.section, profile),
+                },
+          );
           return { ok: true, data: out };
         } catch (e) {
           if (e instanceof NetworkError) {
@@ -1808,12 +1942,37 @@ export default defineBackground(() => {
         return { ok: true, data: info };
       }
       case "origin.enable": {
-        const result = await grantAndEnableOrigin(
+        const result = await completeOriginEnable(
           message.pattern,
           message.mode,
         );
         if (result.ok) return { ok: true };
         return { ok: false, error: result.error ?? "Failed" };
+      }
+      case "origin.intent.begin": {
+        if (!isPopupSender(sender)) {
+          return { ok: false, error: "Invalid sender" };
+        }
+        const result = await beginPermissionIntent(
+          message.pattern,
+          message.mode,
+          message.tabId,
+        );
+        if (result.ok) return { ok: true };
+        return { ok: false, error: result.error ?? "Failed" };
+      }
+      case "origin.intent.cancel": {
+        if (!isPopupSender(sender)) {
+          return { ok: false, error: "Invalid sender" };
+        }
+        await originGrantSerializer.run(() =>
+          cancelPermissionIntent(
+            browser.storage.session,
+            message.pattern,
+            Date.now(),
+          ),
+        );
+        return { ok: true };
       }
       case "origin.disable": {
         const result = await revokeAndDisableOrigin(message.pattern);
@@ -1926,6 +2085,9 @@ export default defineBackground(() => {
       case "answers.discard": {
         await stageStore.drop(message.stageId);
         return { ok: true };
+      }
+      case "picker.relay": {
+        return relayPickerAction(message, sender);
       }
       case "learnedAnswers.delete": {
         if (!(await ensureAuthenticated())) {
@@ -2099,19 +2261,34 @@ export default defineBackground(() => {
         await removeEnabledOrigin(pattern);
         cachedBroadcastFilter = null;
         await unregisterDynamicScripts(pattern).catch(() => {});
+        await originGrantSerializer
+          .run(() =>
+            cancelPermissionIntent(browser.storage.session, pattern, Date.now()),
+          )
+          .catch(() => {});
       }
     });
   }
 
   if (browser.permissions?.onAdded) {
     browser.permissions.onAdded.addListener(async (perm) => {
-      const origins = perm.origins ?? [];
-      const enabled = await getEnabledPatterns();
-      const enabledSet = new Set(enabled);
-      for (const pattern of origins) {
-        if (!enabledSet.has(pattern)) continue;
-        await registerDynamicScripts(pattern).catch(() => {});
-      }
+      await handleGrantedOrigins(perm.origins ?? [], {
+        enable: (pattern, mode) => grantAndEnableOrigin(pattern, mode),
+        restoreIntent: (intent) =>
+          originGrantSerializer.run(() =>
+            recordPermissionIntent(browser.storage.session, intent, Date.now()),
+          ),
+        ensureRegistered: (pattern) =>
+          registerDynamicScripts(pattern).catch(() => {}),
+        isEnabled: async (pattern) =>
+          (await getEnabledPatterns()).includes(pattern),
+        takeIntent: (pattern) =>
+          originGrantSerializer.run(() =>
+            takePermissionIntent(browser.storage.session, pattern, Date.now()),
+          ),
+      }).catch((e) =>
+        console.warn("[TP] permission grant handling failed", (e as Error).message),
+      );
     });
   }
 

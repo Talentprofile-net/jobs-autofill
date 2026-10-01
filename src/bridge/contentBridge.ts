@@ -1,4 +1,4 @@
-import { BRIDGE_MAGIC } from "~/config";
+import { BRIDGE_MAGIC, FIELD_MARKER_ATTR, PROFILE_SCORE_EMPTY_BELOW } from "~/config";
 import { resolveAutoModeFromDom } from "~/auth/autoModeHeuristic";
 import type {
   AnswerCaptureRecord,
@@ -6,17 +6,35 @@ import type {
   BackgroundResponse,
   ContentScriptRequest,
   ContentToBackground,
+  FieldDescriptor,
+  FieldResolveRequest,
   FieldResolveResult,
+  FillDenialReason,
   MainWorldRequest,
   ProfileSummary,
   ResolvedOriginMode,
 } from "./types";
-import type { AtsName } from "~/field/types";
-import type { Profile, ProfileNote } from "~/api/types";
-import type { ProfileValue } from "~/field/types";
-import type { Suggestion } from "~/classifier/suggest";
-import { requestSuggestionRow } from "~/classifier/suggestClient";
+import type { AtsName, ProfileValue } from "~/field/types";
+import type { LearnedAnswerResult } from "~/resolver/learnedAnswers";
+import { stageSubmittedAnswers } from "~/capture/captureStage";
+import { fieldsWithoutProfileValue, mergeFillValues } from "./fillValues";
+import { createGestureTracker } from "./trustedGesture";
+import {
+  closePicker,
+  handlePickerAction,
+  openFillConfirm,
+  openPicker,
+} from "~/ui/picker/pickerController";
+import {
+  FIELD_WIDGET_ATTR,
+  FIELD_WIDGET_UUID_ATTR,
+  fieldElementByUuid,
+  findHostAnchor,
+  widgetHostByUuid,
+} from "~/ui/picker/fieldAnchor";
+import type { PickerRelay } from "~/ui/picker/protocol";
 import { browser } from "wxt/browser";
+import { focusedFieldTarget } from "~/ui/picker/focusTarget";
 
 type Envelope<T> = {
   magic: typeof BRIDGE_MAGIC;
@@ -24,8 +42,15 @@ type Envelope<T> = {
   payload: T;
 };
 
+type FieldRequest = FieldResolveRequest & { requestId: string };
+
+type Batch = { emit: boolean; valueRequests: number; expiresAt: number };
+
 const MAIN_WORLD_READY_TIMEOUT_MS = 10_000;
 const MAIN_WORLD_PING_INTERVAL_MS = 100;
+const DESCRIBE_TIMEOUT_MS = 1_500;
+const BATCH_TTL_MS = 5 * 60_000;
+const MAX_VALUE_REQUESTS_PER_BATCH = 3;
 
 const sendFromContent = (payload: ContentScriptRequest): void => {
   const envelope: Envelope<ContentScriptRequest> = {
@@ -140,17 +165,163 @@ const computeAutoModeAfterPaint = (): Promise<ResolvedOriginMode> =>
     }
   });
 
+const resolveFillValues = async (fields: FieldRequest[]) => {
+  const profileRes = await sendToBackground<FieldResolveResult[]>({
+    fields,
+    kind: "resolveMany",
+  });
+  const profile = profileRes.ok && profileRes.data ? profileRes.data : [];
+  const missing = fieldsWithoutProfileValue(fields, profile);
+  let learned: LearnedAnswerResult[] = [];
+  if (missing.length > 0) {
+    const learnedRes = await sendToBackground<LearnedAnswerResult[]>({
+      fields: missing,
+      kind: "learnedAnswers.resolve",
+    });
+    learned = learnedRes.ok && learnedRes.data ? learnedRes.data : [];
+  }
+  return mergeFillValues(fields, profile, learned);
+};
+
 export const startContentBridge = (ats: AtsName): void => {
   if (bridgeStarted) return;
   bridgeStarted = true;
 
   const gate = createMainWorldGate();
+  const gestures = createGestureTracker(window);
+  const batches = new Map<string, Batch>();
+  const describing = new Map<string, (d: FieldDescriptor | null) => void>();
 
   sendToBackground({
     ats,
     kind: "frame.register",
     url: window.location.href,
   }).catch(() => {});
+
+  const liveBatch = (batchId: string): Batch | null => {
+    const batch = batches.get(batchId);
+    if (!batch) return null;
+    if (Date.now() > batch.expiresAt) {
+      batches.delete(batchId);
+      return null;
+    }
+    return batch;
+  };
+
+  const startBatch = (
+    batchId: string,
+    emit: boolean,
+    requestId: string | null,
+    lowScore: boolean,
+  ): void => {
+    batches.set(batchId, {
+      emit,
+      expiresAt: Date.now() + BATCH_TTL_MS,
+      valueRequests: 0,
+    });
+    gate.send({
+      batchId,
+      emit,
+      id: crypto.randomUUID(),
+      kind: "fill.run",
+      lowScore,
+      requestId,
+    });
+  };
+
+  const describeField = (fieldUuid: string): Promise<FieldDescriptor | null> =>
+    new Promise((resolve) => {
+      const id = crypto.randomUUID();
+      const timer = window.setTimeout(() => {
+        describing.delete(id);
+        resolve(null);
+      }, DESCRIBE_TIMEOUT_MS);
+      describing.set(id, (descriptor) => {
+        window.clearTimeout(timer);
+        describing.delete(id);
+        resolve(descriptor && descriptor.fieldUuid === fieldUuid ? descriptor : null);
+      });
+      gate.send({ fieldUuid, id, kind: "field.describe" });
+    });
+
+  const openPickerFor = async (
+    fieldUuid: string,
+    anchorOverride: HTMLElement | null,
+  ): Promise<void> => {
+    const field = fieldElementByUuid(fieldUuid);
+    if (!field) return;
+    const anchor = anchorOverride ?? findHostAnchor(field) ?? field;
+    const descriptor = await describeField(fieldUuid);
+    if (!descriptor) return;
+    openPicker({ anchor, descriptor, field, trigger: widgetHostByUuid(fieldUuid) });
+  };
+
+  const fillField = (fieldUuid: string, value: ProfileValue): void => {
+    gate.send({ fieldUuid, id: crypto.randomUUID(), kind: "field.fill", value });
+  };
+
+  const denyFill = (requestId: string, reason: FillDenialReason): void =>
+    sendFromContent({ id: crypto.randomUUID(), kind: "fill.denied", reason, requestId });
+
+  const handleFillRequest = (requestId: string): void => {
+    const click = gestures.consume("click");
+    if (!click?.element || !click.element.isConnected) {
+      denyFill(requestId, "untrusted");
+      return;
+    }
+    openFillConfirm({
+      anchor: click.element,
+      onConfirm: () => void runConfirmedFill(requestId),
+      onDismiss: () => denyFill(requestId, "dismissed"),
+    });
+  };
+
+  const runConfirmedFill = async (requestId: string): Promise<void> => {
+    const status = await sendToBackground<AuthStatus>({ kind: "auth.status" });
+    if (!status.ok || !status.data?.authenticated) {
+      await sendToBackground({ kind: "auth.openConnectPage" });
+      denyFill(requestId, "signin");
+      return;
+    }
+    const summary = await sendToBackground<ProfileSummary>({ kind: "profile.summary" });
+    const lowScore =
+      !summary.ok || !summary.data || summary.data.profileScore < PROFILE_SCORE_EMPTY_BELOW;
+    startBatch(crypto.randomUUID(), false, requestId, lowScore);
+  };
+
+  const handleCapture = async (records: AnswerCaptureRecord[]): Promise<void> => {
+    const gesture = gestures.consume("submit");
+    if (!gesture) return;
+    await stageSubmittedAnswers(sendToBackground, ats, gesture.form, records);
+  };
+
+  const relayFillEvent = async (msg: MainWorldRequest): Promise<void> => {
+    if (!("batchId" in msg)) return;
+    const batch = liveBatch(msg.batchId);
+    if (!batch) return;
+    if (msg.kind === "fill.result") batches.delete(msg.batchId);
+    if (!batch.emit) return;
+    if (msg.kind === "fill.started") {
+      await sendToBackground({ batchId: msg.batchId, kind: "frame.fillStarted", pass: msg.pass, total: msg.total });
+    } else if (msg.kind === "fill.progress") {
+      await sendToBackground({
+        batchId: msg.batchId,
+        delta: msg.delta,
+        kind: "frame.fillProgress",
+        pass: msg.pass,
+        totalDelta: msg.totalDelta,
+      });
+    } else if (msg.kind === "fill.totalIncreased") {
+      await sendToBackground({
+        addedTotal: msg.addedTotal,
+        batchId: msg.batchId,
+        kind: "frame.fillTotalIncreased",
+        pass: msg.pass,
+      });
+    } else if (msg.kind === "fill.result") {
+      await sendToBackground({ batchId: msg.batchId, counts: msg.counts, kind: "frame.fillResult", passes: msg.passes });
+    }
+  };
 
   const messageHandler = async (event: MessageEvent): Promise<void> => {
     if (event.source !== window) return;
@@ -164,274 +335,58 @@ export const startContentBridge = (ats: AtsName): void => {
       return;
     }
 
-    if (msg.kind === "resolveFieldValue") {
-      const res = await sendToBackground<{
-        value: ProfileValue;
-        profileField: string | null;
-      }>({
-        fieldName: msg.fieldName,
-        fieldType: msg.fieldType,
-        kind: "resolve",
-        section: msg.section,
-      });
-      const value: ProfileValue =
-        res.ok && res.data ? res.data.value : { kind: "unsupported" };
-      const profileField: string | null =
-        res.ok && res.data ? res.data.profileField : null;
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "fieldValueResult",
-        profileField,
-        value,
-      });
-      return;
-    }
-
-    if (msg.kind === "resolveFieldValues") {
-      const res = await sendToBackground<FieldResolveResult[]>({
-        fields: msg.fields,
-        kind: "resolveMany",
-      });
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "fieldValuesResult",
-        values: res.ok && res.data ? res.data : [],
-      });
-      return;
-    }
-
-    if (msg.kind === "classifier.suggest") {
-      sendFromContent({
-        id: msg.id,
-        kind: "classifier.suggestResult",
-        row: await requestSuggestionRow(
-          (message) => sendToBackground<Suggestion>(message),
-          browser.storage.local,
-          msg.request,
-        ),
-      });
-      return;
-    }
-
-    if (msg.kind === "resolveLearnedAnswers") {
-      const res = await sendToBackground<
-        Array<{
-          requestId: string;
-          value: ProfileValue;
-          matchedAnswerId: string | null;
-        }>
-      >({
-        fields: msg.fields,
-        kind: "learnedAnswers.resolve",
-      });
-      sendFromContent({
-        id: msg.id,
-        kind: "learnedAnswersResult",
-        results: res.ok && res.data ? res.data : [],
-      });
-      return;
-    }
-
-    if (msg.kind === "tab.fillStarted") {
-      await sendToBackground({
-        batchId: msg.batchId,
-        kind: "frame.fillStarted",
-        pass: msg.pass,
-        total: msg.total,
-      });
-      return;
-    }
-
-    if (msg.kind === "tab.fillProgress") {
-      await sendToBackground({
-        batchId: msg.batchId,
-        delta: msg.delta,
-        kind: "frame.fillProgress",
-        pass: msg.pass,
-        totalDelta: msg.totalDelta,
-      });
-      return;
-    }
-
-    if (msg.kind === "tab.fillTotalIncreased") {
-      await sendToBackground({
-        addedTotal: msg.addedTotal,
-        batchId: msg.batchId,
-        kind: "frame.fillTotalIncreased",
-        pass: msg.pass,
-      });
-      return;
-    }
-
-    if (msg.kind === "tab.fillAllResult") {
-      await sendToBackground({
-        batchId: msg.batchId,
-        counts: msg.counts,
-        kind: "frame.fillResult",
-        passes: msg.passes,
-      });
-      return;
-    }
-
-    if (msg.kind === "answers.stage") {
-      const res = await sendToBackground<{ stageId: string }>({
-        kind: "answers.stage",
-        payload: msg.payload,
-      });
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "answers.stageResult",
-        ok: res.ok,
-        stageId: res.ok ? res.data?.stageId : undefined,
-      });
-      return;
-    }
-
-    if (msg.kind === "answers.commit") {
-      const res = await sendToBackground({
-        kind: "answers.commit",
-        stageId: msg.stageId,
-      });
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "answers.commitResult",
-        ok: res.ok,
-      });
-      return;
-    }
-
-    if (msg.kind === "answers.discard") {
-      const res = await sendToBackground({
-        kind: "answers.discard",
-        outcome: msg.outcome,
-        stageId: msg.stageId,
-      });
-      sendFromContent({
-        id: msg.id,
-        kind: "answers.discardResult",
-        ok: res.ok,
-      });
-      return;
-    }
-
-    if (msg.kind === "auth.requestSignIn") {
-      await sendToBackground({ kind: "auth.openConnectPage" });
-      return;
-    }
-
-    if (msg.kind === "auth.openDashboard") {
-      await sendToBackground({ kind: "auth.openDashboard" });
-      return;
-    }
-
-    if (msg.kind === "auth.getStatus") {
-      const res = await sendToBackground<AuthStatus>({ kind: "auth.status" });
-      sendFromContent({
-        id: msg.id,
-        kind: "auth.statusResult",
-        status:
-          res.ok && res.data
-            ? res.data
-            : { authenticated: false, reason: "network-error" },
-      });
-      return;
-    }
-
-    if (msg.kind === "auth.getSummary") {
-      const res = await sendToBackground<ProfileSummary>({
-        kind: "profile.summary",
-      });
-      sendFromContent({
-        id: msg.id,
-        kind: "auth.summaryResult",
-        summary: res.ok && res.data ? res.data : null,
-      });
-      return;
-    }
-
-    if (msg.kind === "auth.getProfile") {
-      const res = await sendToBackground<Profile>({
-        kind: "profile.get",
-      });
-      sendFromContent({
-        id: msg.id,
-        kind: "auth.profileResult",
-        profile: res.ok && res.data ? res.data : null,
-      });
-      return;
-    }
-
-    if (msg.kind === "note.create") {
-      const res = await sendToBackground<ProfileNote>({
-        content: msg.content,
-        kind: "note.create",
-      });
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "note.createResult",
-        note: res.ok && res.data ? res.data : null,
-      });
-      return;
-    }
-
-    if (msg.kind === "note.update") {
-      const res = await sendToBackground<ProfileNote>({
-        content: msg.content,
-        kind: "note.update",
-        noteId: msg.noteId,
-      });
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "note.updateResult",
-        note: res.ok && res.data ? res.data : null,
-      });
-      return;
-    }
-
-    if (msg.kind === "note.delete") {
-      const res = await sendToBackground<{ id: string }>({
-        kind: "note.delete",
-        noteId: msg.noteId,
-      });
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "note.deleteResult",
-        noteId: res.ok ? msg.noteId : null,
-      });
-      return;
-    }
-
-    if (msg.kind === "note.touch") {
-      const res = await sendToBackground({
-        kind: "note.touch",
-        noteId: msg.noteId,
-      });
-      sendFromContent({
-        error: res.ok ? undefined : res.error,
-        id: msg.id,
-        kind: "note.touchResult",
-        ok: res.ok,
-      });
-      return;
-    }
-
     if (msg.kind === "mode.get") {
-      const res = await sendToBackground<ResolvedOriginMode>({
-        kind: "mode.get",
-      });
+      const res = await sendToBackground<ResolvedOriginMode>({ kind: "mode.get" });
       sendFromContent({
         id: msg.id,
         kind: "mode.result",
         mode: res.ok && res.data ? res.data : "notesOnly",
       });
       return;
+    }
+
+    if (msg.kind === "fill.fields") {
+      const batch = liveBatch(msg.batchId);
+      if (!batch || batch.valueRequests >= MAX_VALUE_REQUESTS_PER_BATCH) return;
+      batch.valueRequests += 1;
+      sendFromContent({
+        batchId: msg.batchId,
+        id: msg.id,
+        kind: "fill.values",
+        results: await resolveFillValues(msg.fields),
+      });
+      return;
+    }
+
+    if (
+      msg.kind === "fill.started" ||
+      msg.kind === "fill.progress" ||
+      msg.kind === "fill.totalIncreased" ||
+      msg.kind === "fill.result"
+    ) {
+      await relayFillEvent(msg);
+      return;
+    }
+
+    if (msg.kind === "fill.request") {
+      handleFillRequest(msg.id);
+      return;
+    }
+
+    if (msg.kind === "widget.openDashboard") {
+      if (gestures.consume("click")) {
+        await sendToBackground({ kind: "auth.openDashboard" });
+      }
+      return;
+    }
+
+    if (msg.kind === "field.descriptor") {
+      describing.get(msg.id)?.(msg.descriptor);
+      return;
+    }
+
+    if (msg.kind === "capture.submit") {
+      await handleCapture(msg.records);
     }
   };
 
@@ -441,32 +396,45 @@ export const startContentBridge = (ats: AtsName): void => {
     });
   });
 
-  const runtimeListener = (message: unknown): void => {
-    if (!message || typeof message !== "object") return;
+  const onIconClick = (event: MouseEvent): void => {
+    if (!event.isTrusted || !(event.target instanceof Element)) return;
+    const host = event.target.closest<HTMLElement>(`[${FIELD_WIDGET_ATTR}]`);
+    const fieldUuid = host?.getAttribute(FIELD_WIDGET_UUID_ATTR);
+    if (!fieldUuid) return;
+    void openPickerFor(fieldUuid, null);
+  };
+  window.addEventListener("click", onIconClick, true);
+
+  const openPickerFromFocus = (): void => {
+    const target = focusedFieldTarget();
+    if (target) void openPickerFor(target.fieldUuid, target.focused);
+  };
+
+  const runtimeListener = (
+    message: unknown,
+    _sender: unknown,
+    sendResponse: (response: unknown) => void,
+  ): boolean | undefined => {
+    if (!message || typeof message !== "object") return undefined;
     const m = message as {
       kind?: string;
       batchId?: string;
       mode?: ResolvedOriginMode;
     };
-    if (m.kind === "tab.fillAll" && typeof m.batchId === "string") {
-      const id = crypto.randomUUID();
-      gate.send({ batchId: m.batchId, id, kind: "tab.fillAll" });
+    if (m.kind === "picker.relay") {
+      const relay = message as PickerRelay;
+      const response = handlePickerAction(relay.sessionId, relay.action, fillField);
+      if (response !== null) sendResponse(response);
+      return undefined;
     }
-    if (m.kind === "auth.changed") {
-      (async () => {
-        const res = await sendToBackground<AuthStatus>({ kind: "auth.status" });
-        const status: AuthStatus =
-          res.ok && res.data
-            ? res.data
-            : { authenticated: false, reason: "network-error" };
-        gate.send({
-          id: crypto.randomUUID(),
-          kind: "auth.statePushed",
-          status,
-        });
-      })().catch((e) => {
-        console.error("[TP] contentBridge auth push error", e);
-      });
+    if (m.kind === "tab.fillAll" && typeof m.batchId === "string") {
+      startBatch(m.batchId, true, null, false);
+    }
+    if (m.kind === "cmd.fillAll") {
+      startBatch(crypto.randomUUID(), true, null, false);
+    }
+    if (m.kind === "cmd.openPicker") {
+      openPickerFromFocus();
     }
     if (m.kind === "mode.changed" && m.mode) {
       gate.send({
@@ -476,7 +444,6 @@ export const startContentBridge = (ats: AtsName): void => {
       });
     }
     if (m.kind === "mode.resolveAuto") {
-      gate.send({ id: crypto.randomUUID(), kind: "mode.resolveAuto" });
       void (async () => {
         const mode = await computeAutoModeAfterPaint();
         await sendToBackground({
@@ -487,17 +454,15 @@ export const startContentBridge = (ats: AtsName): void => {
         console.error("[TP] contentBridge mode.resolveAuto error", e);
       });
     }
-    if (m.kind === "cmd.openPicker") {
-      gate.send({ id: crypto.randomUUID(), kind: "cmd.openPicker" });
-    }
-    if (m.kind === "cmd.fillAll") {
-      gate.send({ id: crypto.randomUUID(), kind: "cmd.fillAllHotkey" });
-    }
+    return undefined;
   };
   browser.runtime.onMessage.addListener(runtimeListener);
 
   window.addEventListener("pagehide", () => {
     gate.destroy();
+    gestures.destroy();
+    closePicker();
+    window.removeEventListener("click", onIconClick, true);
     browser.runtime.onMessage.removeListener(runtimeListener);
   });
 };

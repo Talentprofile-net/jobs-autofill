@@ -1,10 +1,5 @@
-import { detectAts } from '~/core/ats'
-import { detectSubmitOutcome } from './submitDetection'
-import {
-  commitCaptureViaBridge,
-  discardCaptureViaBridge,
-  stageCaptureViaBridge,
-} from '~/bridge/mainBridge'
+import { submitCapture } from '~/bridge/mainBridge'
+import { findEnclosingForm, submitButtonFor } from './submitTarget'
 import { normalizeQuestion } from '~/resolver/normalizeQuestion'
 import {
   coerceToProfileValueShape,
@@ -20,28 +15,13 @@ type FormCaptureState = {
   form: HTMLElement
   fields: Set<BaseField>
   listenerAttached: boolean
-  pendingDetection: boolean
-  stageId: string | null
+  submitted: boolean
   submitHandler: ((event: Event) => void) | null
 }
 
 const formStates = new WeakMap<HTMLElement, FormCaptureState>()
 const trackedForms = new Set<HTMLElement>()
 const fieldForms = new WeakMap<BaseField, HTMLElement>()
-
-const findEnclosingForm = (el: HTMLElement): HTMLElement | null => {
-  const direct = el.closest('form')
-  if (direct) return direct as HTMLElement
-  let node: HTMLElement | null = el.parentElement
-  let depth = 0
-  while (node && depth < 12) {
-    const role = node.getAttribute('role')
-    if (role === 'form' || role === 'main') return node
-    node = node.parentElement
-    depth++
-  }
-  return null
-}
 
 const buildRecord = (field: BaseField): AnswerCaptureRecord | null => {
   const capture = field.collectCapture(null)
@@ -88,59 +68,17 @@ const collectRecords = (state: FormCaptureState): AnswerCaptureRecord[] => {
   return records
 }
 
-// Everything is read and handed off BEFORE detection runs, not after.
-//
-// Detection waits up to 8 seconds and then reads `location.href`. Both halves of
-// that are wrong on a real submit: a classic full-page POST destroys this content
-// script long before the deadline, taking the buffered fields with it, and an
-// SPA that reaches a confirmation route has already replaced the URL the answers
-// belong to with a `/thank-you` that identifies no job.
-//
-// So submit-time snapshots the page URL and serialises every field, and stages
-// that batch with the background worker — which outlives the page. Detection then
-// only decides whether the staged batch commits or is discarded.
-const onSubmitForState = (state: FormCaptureState) => async () => {
-  if (state.pendingDetection) return
-  state.pendingDetection = true
+const SUBMIT_DEBOUNCE_MS = 1_000
 
-  const applicationUrl = location.href
-  const ats = detectAts()
+const onSubmitForState = (state: FormCaptureState) => () => {
+  if (state.submitted) return
   const records = collectRecords(state)
-
-  if (records.length === 0) {
-    state.pendingDetection = false
-    return
-  }
-
-  let stageId: string
-  try {
-    const staged = await stageCaptureViaBridge({ ats, applicationUrl, records })
-    if (!staged.ok || !staged.stageId) {
-      state.pendingDetection = false
-      return
-    }
-    stageId = staged.stageId
-    state.stageId = stageId
-  } catch {
-    state.pendingDetection = false
-    return
-  }
-
-  try {
-    const outcome = await detectSubmitOutcome(state.form, ats)
-    if (outcome === 'success') {
-      await commitCaptureViaBridge(stageId)
-    } else {
-      // Detection leans toward false positives by design, so `unknown` is not a
-      // silent drop: the background worker still commits a stage that a
-      // top-level navigation cut short, which is the case detection cannot
-      // observe from inside a page that no longer exists.
-      await discardCaptureViaBridge(stageId, outcome)
-    }
-  } finally {
-    state.stageId = null
-    state.pendingDetection = false
-  }
+  if (records.length === 0) return
+  state.submitted = true
+  window.setTimeout(() => {
+    state.submitted = false
+  }, SUBMIT_DEBOUNCE_MS)
+  submitCapture(records)
 }
 
 const attachSubmitListener = (state: FormCaptureState): void => {
@@ -148,23 +86,14 @@ const attachSubmitListener = (state: FormCaptureState): void => {
   state.listenerAttached = true
   const handler = onSubmitForState(state)
   const submitHandler = () => {
-    void handler()
+    handler()
   }
   const buttonHandler = (e: Event) => {
     const target = e.target as HTMLElement | null
     if (!target) return
-    const btn = target.closest<HTMLElement>(
-      'button, input[type="submit"], [role="button"]',
-    )
-    if (!btn) return
-    if (!state.form.contains(btn)) return
-    const type = btn.getAttribute('type')
-    const looksSubmit =
-      type === 'submit' ||
-      /\b(submit|apply|send)\b/i.test(btn.textContent ?? '') ||
-      /\b(submit|apply|send)\b/i.test(btn.getAttribute('aria-label') ?? '')
-    if (!looksSubmit) return
-    void handler()
+    const btn = submitButtonFor(target)
+    if (!btn || !state.form.contains(btn)) return
+    handler()
   }
   state.submitHandler = submitHandler
   state.buttonHandler = buttonHandler
@@ -194,9 +123,8 @@ export const registerFieldForCapture = (field: BaseField): void => {
       fields: new Set(),
       form,
       listenerAttached: false,
-      pendingDetection: false,
-      stageId: null,
       submitHandler: null,
+      submitted: false,
     }
     formStates.set(form, state)
     trackedForms.add(form)

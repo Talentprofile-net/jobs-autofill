@@ -1,5 +1,6 @@
 import { getElement } from '~/core/getElements'
 import { BaseField } from '~/field/baseField'
+import type { WidgetPlacement } from '~/ui/picker/iconMount'
 
 /**
  * Greenhouse Classic label cleanup.
@@ -16,6 +17,10 @@ import { BaseField } from '~/field/baseField'
 const HIDDEN_LABEL_MARKER = 'j\n\na\n\nf'
 
 export abstract class GreenhouseBaseInput extends BaseField {
+  protected override get widgetPlacement(): WidgetPlacement {
+    return 'field'
+  }
+
   override get fieldName(): string {
     return super.fieldName?.replaceAll(HIDDEN_LABEL_MARKER, '') ?? ''
   }

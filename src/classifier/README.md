@@ -7,15 +7,15 @@ its own. The fill and capture paths do not call it.
 
 - Switch: `tp.classifierSuggestions` in `storage.local`, the popup setting
   "Classifier suggestions (beta)". Off unless turned on.
-- Switch off: the content script answers the picker with no row and never
-  messages the background. The background also checks the switch before it
+- Switch off: the picker page shows no row and never messages the
+  background. The background also checks the switch before it
   reads answers, fetches labels or starts the offscreen document. Turning the
   switch off closes the offscreen document. A request still running at that
   moment answers `disabled`, and the document is closed again after it ends.
-- Trigger: opening the field picker sends `classifier.suggest` through the page
-  bridge to the background. Nothing runs during fill.
-- Request check: `readSuggestionRequest` in `suggest.ts` runs in the content
-  script and again in the background. It needs a known `answerKind`, a
+- Trigger: opening the field picker loads `picker.html` in an extension iframe,
+  which sends `classifier.suggest` to the background. Nothing runs during fill.
+- Request check: `readSuggestionRequest` in `suggest.ts` runs in the picker
+  page and again in the background. It needs a known `answerKind`, a
   `fieldType` of 1 to 64 characters, a `questionText` of at most 4,096
   characters (empty is allowed), at most 60 `optionLabels` (the DOM extractor's
   `MAX_OPTIONS`), each at most 4,096 characters, and at most 65,536 option
@@ -47,10 +47,11 @@ its own. The fill and capture paths do not call it.
   fragment-only change keeps it. Subframe navigations are ignored. An
   application flow that moves to another URL therefore loses its context; that
   is intended.
-- Page boundary: only `{ title, value }` of the suggested saved answer crosses
-  into the page (`suggestClient.ts`). Classifier labels, calibrated confidence,
-  abstention reasons, errors and model metadata stay in the extension. `value`
-  is the fill value; a text value keeps its fill flag `confidence: 'guess'`.
+- Page boundary: the row lives in the extension iframe, so the page never sees
+  it. Only the value the user clicks crosses into the page, as one `field.fill`
+  message (`bridge/contentBridge.ts`). Classifier labels, calibrated confidence,
+  abstention reasons, errors and model metadata stay in the extension. A text
+  value keeps its fill flag `confidence: 'guess'`.
 - The popover shows one row, the suggested saved answer, only when a saved
   answer was found. The row is titled by the answer text, else by the value it
   fills. The field is filled only when the user clicks the row.
@@ -76,7 +77,7 @@ its own. The fill and capture paths do not call it.
 | `answerLabels.ts` | stored-answer labels cached per revision, input and runtime |
 | `suggestionService.ts` | switch, request check, then suggestion |
 | `suggestionRuntime.ts` | the browser wiring of the suggestion service |
-| `suggestClient.ts` | content-side request, retry, and the row sent to the page |
+| `suggestClient.ts` | picker-side request, retry, and the row it renders |
 | `messages.ts` | the message contract between background and offscreen |
 | `attestation.ts` | the browser attestation contract shared with the Python trainer |
 
@@ -171,7 +172,8 @@ CHROME_PATH="<chrome for testing binary>" bun run smoke:suggest
 It loads a copy of `.output/chrome-mv3`, so the build tree is never changed, and
 checks that the built model bytes equal the staged ones. All network requests
 are blocked, and every request from every page, the service worker and the
-offscreen document is recorded. A Greenhouse-shaped page and a job page on
+offscreen document is recorded. Requests to `backend.talentprofile.net` are answered
+by a local stub, which the note hydration step uses. A Greenhouse-shaped page and a job page on
 `talentprofile.net` are served by DevTools request interception. The job page
 runs the public website's own `jobCountryForExtension`, read from
 `../public-website` or `PUBLIC_WEBSITE_DIR`.
@@ -179,15 +181,18 @@ runs the public website's own `jobCountryForExtension`, read from
 The signed-in picker runs on test data made inside the script: a JWT with
 `alg: none`, a fake signature and a year-2100 `exp`, a synthetic profile, and
 three saved answers. The extension only decodes the token's claims on this path.
-The script fails if the tokens change or any backend request is made.
+The script fails if the tokens change or any backend request is made before the
+note hydration step.
 
 It checks the switch, request limits, the cold load with the service worker
 stopped, the job countries DE, GB and `_unknown`, a deliberate close, a failed
 model load and its recovery, a request running while the switch turns off, the
-real handoff binding for UK, Germany, no country and a raw `UK`, the page
-bridge, the signed-out and signed-in picker, exact and word-overlap rows without
+real handoff binding for UK, Germany, no country and a raw `UK`, the
+signed-out and signed-in picker, exact and word-overlap rows without
 the model, the classifier row and its fill, abstention and no-answer, the cached
-reopen, and the context clearing on same-tab navigation. It exits 0 only when
+reopen, the context clearing on same-tab navigation, note hydration and
+insertion, page-script forgeries of every privileged bridge message, and the
+popup and form-widget fill. It exits 0 only when
 every check passes and the temporary Chrome profile is removed.
 
 ## Browser attestation

@@ -1,4 +1,6 @@
 import { isInsideRegistered, isVisible } from '~/field/baseField'
+import { isConcealedControl } from '~/core/concealment'
+import { querySelectorAllDeep } from '~/core/shadowDom'
 
 export type DatePart = 'month' | 'day' | 'year'
 
@@ -156,12 +158,14 @@ const buildGroupsFromCandidates = (
 
 export const discoverDateGroups = (root: ParentNode): DateGroup[] => {
   const candidateInputs = Array.from(
-    root.querySelectorAll<HTMLInputElement>(
+    querySelectorAllDeep<HTMLInputElement>(
+      root,
       'input[type="text"], input[type="number"], input:not([type])',
     ),
   ).filter((el) => {
     if (isInsideRegistered(el)) return false
     if (!isVisible(el)) return false
+    if (isConcealedControl(el)) return false
     if (el.hasAttribute('disabled')) return false
     return partKindOf(el) !== null
   })

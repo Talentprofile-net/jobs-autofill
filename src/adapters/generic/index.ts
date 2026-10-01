@@ -7,10 +7,12 @@ import { GenericRadioGroup } from './radioGroup'
 import { GenericDateGroup } from './dateGroup'
 import { GenericContentEditable } from './contentEditable'
 import { isCandidateControl, querySelectorAllInNode } from './dom'
+import { isConcealedControl } from '~/core/concealment'
 import { isInsideRegistered, isVisible } from '~/field/baseField'
 import { discoverRadioGroups, discoverCheckboxGroups } from './groups'
 import { discoverDateGroups } from './dateGroups'
 import { GenericCombobox } from './combobox'
+import { GenericFileInput } from './fileInput'
 
 const ensureRoot = (node: Node): ParentNode => {
   if (node instanceof Element) return node
@@ -37,6 +39,7 @@ const registerComboboxes = (root: ParentNode): void => {
   for (const el of elements) {
     if (isInsideRegistered(el)) continue
     if (!isVisible(el)) continue
+    if (isConcealedControl(el)) continue
     if (!GenericCombobox.qualifies(el)) continue
     new GenericCombobox(el).init()
   }
@@ -78,8 +81,18 @@ const registerContentEditables = (root: ParentNode): void => {
   for (const el of elements) {
     if (isInsideRegistered(el)) continue
     if (!isVisible(el)) continue
+    if (isConcealedControl(el)) continue
     if (!GenericContentEditable.qualifies(el)) continue
     new GenericContentEditable(el).init()
+  }
+}
+
+const registerFileInputs = (root: ParentNode): void => {
+  const elements = querySelectorAllInNode(root as Node, GenericFileInput.SELECTOR)
+  for (const el of elements) {
+    if (isInsideRegistered(el)) continue
+    if (!GenericFileInput.qualifies(el)) continue
+    new GenericFileInput(el).init()
   }
 }
 
@@ -93,4 +106,5 @@ export const RegisterInputs = (node: Node = document): void => {
   registerRadioGroups(root)
   registerCheckboxes(root)
   registerContentEditables(root)
+  registerFileInputs(root)
 }

@@ -24,6 +24,9 @@ const sha256 = async (path) => createHash('sha256').update(await readFile(path))
 
 const SITE = 'https://talentprofile.net'
 const ATS = 'https://job-boards.greenhouse.io'
+const API = 'https://backend.talentprofile.net'
+const WORKDAY = 'https://smoke.wd5.myworkdayjobs.com'
+const CLASSIC = 'https://boards.greenhouse.io'
 const EXTENSION_NAME = 'TalentProfile Autofill'
 const BRIDGE_MAGIC = 'tp:bridge'
 const SWITCH_KEY = 'tp.classifierSuggestions'
@@ -59,6 +62,14 @@ const LINKED_CANDIDATES = ['Legal first name', 'Given name', 'Your first name']
 const LINKED_VALUE = 'Smoke Linked Answer'
 const EXACT_VALUE = 'Smoke Exact Answer'
 const OVERLAP_VALUE = 'Smoke Overlap Answer'
+const NOTE_SENTINEL = 'TP-PRIVATE-NOTE-SENTINEL-9c2f6a'
+const NOTE = {
+  content: NOTE_SENTINEL,
+  createdAt: '2026-09-01T00:00:00.000Z',
+  id: 'smoke-note',
+  lastUsedAt: null,
+  updatedAt: '2026-09-01T00:00:00.000Z',
+}
 
 const base64url = (value) => Buffer.from(JSON.stringify(value)).toString('base64url')
 const TOKENS = {
@@ -190,6 +201,13 @@ const FIELDS = [
   ['f-overlap', 'overlap', OVERLAP_FIELD],
 ]
 
+const NATIVE_COUNTERS = `<script>
+window.__nativeClicks = 0
+window.__submits = 0
+for (const control of document.querySelectorAll('button, input[type=submit]')) control.addEventListener('click', () => { window.__nativeClicks += 1 })
+for (const form of document.querySelectorAll('form')) form.addEventListener('submit', (event) => { event.preventDefault(); window.__submits += 1 })
+</script>`
+
 const ATS_PAGE = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Apply</title>
 <style>body{font:14px sans-serif;margin:24px}.field{position:relative;width:420px;margin:0 0 28px}input{width:360px;padding:6px}</style>
@@ -198,7 +216,66 @@ const ATS_PAGE = `<!doctype html>
   <div jaf-section="personal">
 ${FIELDS.map(([wrapper, input, label]) => `    <div class="field" id="${wrapper}"><div class="text-input-wrapper"><label for="${input}">${label}</label><input id="${input}" type="text"></div></div>`).join('\n')}
   </div>
+  <div class="actions" style="display:flex;gap:8px"><button type="button" id="attach-resume">Attach</button><button type="submit" id="submit-application">Submit application</button></div>
 </div>
+${NATIVE_COUNTERS}
+</body></html>`
+
+const CLASSIC_FIELDS = [
+  ['c-first', 'First Name'],
+  ['c-last', 'Last Name'],
+  ['c-email', 'Email'],
+]
+
+const frameField = (id, label) =>
+  `<div class="field"><div class="text-input-wrapper"><label for="${id}">${label}</label><input id="${id}" type="text"></div></div>`
+
+const FRAMES_PAGE = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title>
+<style>body{font:14px sans-serif;margin:24px}input{width:360px;padding:6px}iframe{display:block;width:600px;height:160px;border:0;margin-top:24px}</style>
+</head><body>
+<div class="application--container"><div jaf-section="personal">
+  ${frameField('top-first', 'First Name')}
+</div></div>
+<iframe id="inner" src="/smoke/inner"></iframe>
+</body></html>`
+
+const INNER_PAGE = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Inner</title><style>body{font:14px sans-serif;margin:8px}input{width:360px;padding:6px}</style></head><body>
+<div class="application--container"><div jaf-section="personal">
+  ${frameField('inner-first', 'Last Name')}
+</div></div>
+</body></html>`
+
+const CLASSIC_PAGE = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title>
+<style>body{font:14px sans-serif;margin:24px}.field{position:relative;width:420px;margin:0 0 28px}input[type=text]{width:360px;padding:6px}</style>
+</head><body>
+<div id="application"><form id="application_form" action="/smoke/submitted" method="post">
+${CLASSIC_FIELDS.map(([input, label]) => `  <div class="field"><label for="${input}">${label}</label><input id="${input}" type="text"></div>`).join('\n')}
+  <div class="actions" style="display:flex;gap:8px"><button type="button" id="attach-resume">Attach</button><input type="submit" id="submit_app" value="Submit Application"></div>
+</form></div>
+${NATIVE_COUNTERS}
+</body></html>`
+
+const WORKDAY_PAGE = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Sign In</title>
+<style>body{font:14px sans-serif;margin:0}main{display:flex;justify-content:center;padding:40px}form{width:376px}input{display:block;width:376px;height:40px;box-sizing:border-box}.wrap{position:relative;display:inline-block;width:376px;height:40px}.filter{position:absolute;inset:0;z-index:3;background:transparent}button{display:inline-block;width:376px;height:40px}</style>
+</head><body>
+<main><div data-automation-id="applyFlowPage">
+<form data-automation-id="signInFormo">
+  <div data-automation-id="formField-email"><label><span>Email Address</span><abbr>*</abbr></label><div><div><input data-automation-id="email" type="text"></div><div></div></div></div>
+  <div><div data-automation-id="formField-password"><label><span>Password</span><abbr>*</abbr></label><div><div><input data-automation-id="password" type="password"></div><div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div data-automation-id="noCaptchaWrapper" class="wrap"><div class="wrap"><div class="wrap"><div data-automation-id="click_filter" role="button" aria-label="Submit" tabindex="0" class="filter"></div><button data-automation-id="signInSubmitButton" type="submit" tabindex="-2">Sign In</button></div></div></div></div></div>
+</form>
+</div></main>
+<script>
+window.__nativeClicks = 0
+window.__submits = 0
+document.querySelector('[data-automation-id=click_filter]').addEventListener('click', () => { window.__nativeClicks += 1 })
+document.querySelector('[data-automation-id=signInSubmitButton]').addEventListener('click', () => { window.__nativeClicks += 1 })
+document.querySelector('form').addEventListener('submit', (event) => { event.preventDefault(); window.__submits += 1 })
+</script>
 </body></html>`
 
 const sitePage = (websiteBundle) => `<!doctype html>
@@ -358,47 +435,79 @@ const BOUND_CONTEXT = (tabId) =>
     return (await chrome.storage.session.get(key))[key] ?? null`)
 const HARNESS_TAB = CALL(`return (await chrome.tabs.getCurrent()).id`)
 
-const PAGE_BRIDGE_REQUEST = (request) =>
-  CALL(`const seen = []
-    const id = crypto.randomUUID()
-    const answered = new Promise((done) => {
-      const listener = (event) => {
-        if (event.data?.magic !== '${BRIDGE_MAGIC}') return
-        seen.push(JSON.stringify(event.data))
-        if (event.data.from === 'content' && event.data.payload?.id === id) {
-          removeEventListener('message', listener)
-          done(event.data.payload)
-        }
-      }
-      addEventListener('message', listener)
-    })
-    postMessage({ magic: '${BRIDGE_MAGIC}', from: 'main', payload: { id, kind: 'classifier.suggest', request: ${JSON.stringify(request)} } }, location.origin)
-    const result = await Promise.race([answered, new Promise((done) => setTimeout(() => done('timeout'), 150000))])
-    return { result, seen }`)
+const FORGE_BRIDGE = (payloads, clicks, waitMs) =>
+  CALL(`const replies = []
+    const listener = (event) => {
+      if (event.data?.magic === '${BRIDGE_MAGIC}' && event.data.from === 'content') replies.push(JSON.stringify(event.data.payload))
+    }
+    addEventListener('message', listener)
+    for (const payload of ${JSON.stringify(payloads)}) {
+      postMessage({ magic: '${BRIDGE_MAGIC}', from: 'main', payload }, location.origin)
+    }
+    const clicked = {}
+    for (const [name, selector] of ${JSON.stringify(clicks)}) {
+      const [host, inner] = selector
+      const button = document.querySelector(host)?.shadowRoot?.querySelector(inner)
+      clicked[name] = Boolean(button)
+      button?.click()
+    }
+    await new Promise((done) => setTimeout(done, ${waitMs}))
+    removeEventListener('message', listener)
+    return { clicked, replies }`)
 
 const RECORD_BRIDGE = CALL(`window.__bridgeSeen = []
-    window.__bridgeResults = 0
     if (!window.__bridgeRecorder) {
       window.__bridgeRecorder = (event) => {
         if (event.data?.magic !== '${BRIDGE_MAGIC}') return
         window.__bridgeSeen.push(JSON.stringify(event.data))
-        if (event.data.payload?.kind === 'classifier.suggestResult') window.__bridgeResults += 1
       }
       addEventListener('message', window.__bridgeRecorder)
     }
     return true`)
 
-const PICKER = `document.querySelector('[data-tp-picker]')?.shadowRoot`
-const PICKER_STATE = CALL(`const shadow = ${PICKER}
-    if (!shadow) return { open: false }
-    const rows = [...shadow.querySelectorAll('[data-tp-suggestion]')]
+const PICKER_HOOK = `if (location.protocol === 'chrome-extension:' && !globalThis.__tpPickerHook) {
+  globalThis.__tpPickerHook = true
+  globalThis.__suggestSends = 0
+  globalThis.__suggestDone = 0
+  const runtime = chrome.runtime
+  const original = runtime.sendMessage.bind(runtime)
+  runtime.sendMessage = (...args) => {
+    const suggest = args[0]?.kind === 'classifier.suggest'
+    if (suggest) globalThis.__suggestSends += 1
+    const result = original(...args)
+    if (suggest) Promise.resolve(result).then(() => {}, () => {}).then(() => { globalThis.__suggestDone += 1 })
+    return result
+  }
+}`
+const RECT = (selector) =>
+  `(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null })()`
+const NOTE_ROW = (id) => RECT(`[data-tp-item-id="${id}"] button.item`)
+const NOTE_LEAF = CALL(`const row = document.querySelector('[data-tp-item-id="nt.${NOTE.id}"]')
+    return row ? { kind: row.getAttribute('data-tp-item-kind'), text: row.textContent } : null`)
+const RECORD_CLASSIFIER_POSTS = CALL(`globalThis.__classifierPosts = []
+    if (!globalThis.__classifierRecorder) {
+      globalThis.__classifierRecorder = true
+      const runtime = chrome.runtime
+      const connect = runtime.connect.bind(runtime)
+      runtime.connect = (...args) => {
+        const port = connect(...args)
+        const post = port.postMessage.bind(port)
+        port.postMessage = (message) => {
+          globalThis.__classifierPosts.push(JSON.stringify(message))
+          return post(message)
+        }
+        return port
+      }
+    }
+    return true`)
+const PICKER_STATE = CALL(`const rows = [...document.querySelectorAll('[data-tp-suggestion]')]
     return {
       open: true,
-      title: shadow.querySelector('.title')?.textContent?.trim() ?? null,
-      signIn: Boolean(shadow.querySelector('.signin')),
-      list: Boolean(shadow.querySelector('.list')),
-      empty: shadow.querySelector('.list .empty')?.textContent?.trim() ?? null,
-      items: shadow.querySelectorAll('.list .item-wrap').length,
+      title: document.querySelector('.title')?.textContent?.trim() ?? null,
+      signIn: Boolean(document.querySelector('.signin')),
+      list: Boolean(document.querySelector('.list')),
+      empty: document.querySelector('.list .empty')?.textContent?.trim() ?? null,
+      items: document.querySelectorAll('.list .item-wrap').length,
       rows: rows.map((row) => ({
         badge: row.querySelector('.value')?.textContent?.trim() ?? null,
         compact: row.textContent.replace(/\\s+/g, ''),
@@ -406,23 +515,9 @@ const PICKER_STATE = CALL(`const shadow = ${PICKER}
         spans: row.querySelectorAll('span').length,
         title: row.querySelector('.label-text')?.textContent?.trim() ?? null,
       })),
-      results: window.__bridgeResults ?? 0,
-      seen: window.__bridgeSeen ?? [],
+      sends: globalThis.__suggestSends ?? -1,
+      done: globalThis.__suggestDone ?? -1,
     }`)
-
-const COUNT_SUGGEST_SENDS = CALL(`if (globalThis.__suggestSends === undefined) {
-      globalThis.__suggestSends = 0
-      const runtimes = new Set([globalThis.chrome?.runtime, globalThis.browser?.runtime].filter(Boolean))
-      for (const runtime of runtimes) {
-        const original = runtime.sendMessage.bind(runtime)
-        runtime.sendMessage = (...args) => {
-          if (args[0]?.kind === 'classifier.suggest') globalThis.__suggestSends += 1
-          return original(...args)
-        }
-      }
-    }
-    globalThis.__suggestSends = 0
-    return true`)
 
 async function waitFor(read, test, timeoutMs, what) {
   const deadline = Date.now() + timeoutMs
@@ -484,11 +579,17 @@ try {
   const sessionTypes = new Map()
   const requests = []
   const intercepted = []
+  const apiCalls = []
+  const apiState = { answers: [], notes: [], profile: null }
   const contexts = new Map()
 
   browser.on(async (message) => {
     if (message.method === 'Network.requestWillBeSent') {
-      requests.push({ type: sessionTypes.get(message.sessionId) ?? 'unknown', url: message.params.request.url })
+      requests.push({
+        postData: message.params.request.postData ?? null,
+        type: sessionTypes.get(message.sessionId) ?? 'unknown',
+        url: message.params.request.url,
+      })
       return
     }
     if (message.method === 'Runtime.executionContextCreated') {
@@ -509,11 +610,57 @@ try {
       contexts.set(message.sessionId, [])
       return
     }
+    if (message.method === 'Fetch.requestPaused' && message.params.request.url.startsWith(API)) {
+      const { requestId, request } = message.params
+      const url = new URL(request.url)
+      apiCalls.push({ method: request.method, postData: request.postData ?? null, url: request.url })
+      const route = `${request.method} ${url.pathname}`
+      const body =
+        route === 'GET /api/v1/talentprofile/first'
+          ? apiState.profile
+          : route === 'GET /api/v1/talentanswer'
+            ? apiState.answers
+            : route === 'GET /api/v1/talentnote'
+              ? apiState.notes
+              : route === 'PUT /api/v1/talentnote'
+                ? { ...apiState.notes[0], lastUsedAt: new Date().toISOString() }
+                : null
+      try {
+        if (body === null) {
+          await browser.send('Fetch.failRequest', { errorReason: 'BlockedByClient', requestId }, message.sessionId)
+        } else {
+          await browser.send(
+            'Fetch.fulfillRequest',
+            {
+              body: Buffer.from(JSON.stringify(body)).toString('base64'),
+              requestId,
+              responseCode: 200,
+              responseHeaders: [{ name: 'Content-Type', value: 'application/json' }],
+            },
+            message.sessionId,
+          )
+        }
+      } catch {}
+      return
+    }
     if (message.method === 'Fetch.requestPaused') {
       const { requestId, request } = message.params
       const url = new URL(request.url)
       intercepted.push(request.url)
-      const page = url.origin === ATS ? ATS_PAGE : url.origin === SITE && url.pathname === '/job' ? sitePage(websiteBundle) : null
+      const page =
+        url.origin === ATS
+          ? url.pathname === '/smoke/frames'
+            ? FRAMES_PAGE
+            : url.pathname === '/smoke/inner'
+              ? INNER_PAGE
+              : ATS_PAGE
+          : url.origin === WORKDAY
+            ? WORKDAY_PAGE
+            : url.origin === CLASSIC
+              ? CLASSIC_PAGE
+            : url.origin === SITE && url.pathname === '/job'
+              ? sitePage(websiteBundle)
+              : null
       try {
         if (page === null) {
           await browser.send('Fetch.failRequest', { errorReason: 'BlockedByClient', requestId }, message.sessionId)
@@ -540,7 +687,14 @@ try {
     try {
       await browser.send('Network.enable', {}, sessionId)
       if (targetInfo.type === 'page') {
-        await browser.send('Fetch.enable', { patterns: [{ urlPattern: `${SITE}/*` }, { urlPattern: `${ATS}/*` }] }, sessionId)
+        await browser.send('Fetch.enable', { patterns: [{ urlPattern: `${SITE}/*` }, { urlPattern: `${ATS}/*` }, { urlPattern: `${WORKDAY}/*` }, { urlPattern: `${CLASSIC}/*` }] }, sessionId)
+      }
+      if (targetInfo.type === 'service_worker') {
+        await browser.send('Fetch.enable', { patterns: [{ urlPattern: `${API}/*` }] }, sessionId)
+      }
+      if (targetInfo.type === 'iframe') {
+        await browser.send('Page.enable', {}, sessionId)
+        await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: PICKER_HOOK }, sessionId)
       }
     } catch {}
     if (waitingForDebugger) await browser.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {})
@@ -740,7 +894,7 @@ try {
 
   const fieldsReady = (atsSession) =>
     waitFor(
-      () => evaluate(browser, atsSession, `document.querySelectorAll('[data-tp-field-widget]').length`, 5_000),
+      () => evaluate(browser, atsSession, `document.querySelectorAll('[data-tp-field]').length`, 5_000),
       (count) => count === FIELDS.length,
       30_000,
       'the adapter to register every field',
@@ -770,6 +924,7 @@ try {
     const atsSession = await attach(target.targetId)
     await browser.send('Page.enable', {}, atsSession)
     await browser.send('Runtime.enable', {}, atsSession)
+    await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, atsSession)
     const atsTabId = await waitFor(
       () => run(CALL(`return (await chrome.tabs.query({ url: ${JSON.stringify(destination)} }))[0]?.id ?? null`)),
       (id) => id !== null,
@@ -792,66 +947,113 @@ try {
   check('the extension refuses a non-ISO country and binds _unknown', rawUk.context?.jobCountry === '_unknown', JSON.stringify(rawUk.context))
   report.push(`handoff bindings: UK->${uk.context?.jobCountry}, Germany->${germany.context?.jobCountry}, none->${missing.context?.jobCountry}, raw UK->${rawUk.context?.jobCountry}`)
 
-  const pageRequest = async (atsSession, request) => {
-    await browser.send('Page.bringToFront', {}, atsSession)
-    return evaluate(browser, atsSession, PAGE_BRIDGE_REQUEST(request), 160_000)
-  }
-
-  const offRow = await pageRequest(uk.atsSession, requestFor(PAGE_ACCEPTED))
-  check('with the switch off the page bridge answers no row', offRow.result?.row === null, JSON.stringify(offRow.result))
-  check('with the switch off a page request never starts the classifier', (await offscreenCount()) === 0)
-
   await run(SET_SWITCH(true))
-  for (const [name, request] of MALFORMED) {
-    const refused = await pageRequest(uk.atsSession, request)
-    check(`the page bridge answers no row for ${name}`, refused.result?.row === null, JSON.stringify(refused.result))
-  }
-  check('malformed page requests never start the classifier', (await offscreenCount()) === 0)
 
-  for (const [name, item] of [
-    ['an accepted label without a saved answer', PAGE_ACCEPTED],
-    ['an abstention', PAGE_ABSTAINED],
-  ]) {
-    await run(BIND(harnessTab, harnessDestination, item.input.jobCountry))
-    const full = JSON.stringify(await run(SUGGEST(requestFor(item))))
-    check(`${name}: the background result holds the details the page must not see`, secretsOf(item).every((secret) => full.includes(secret)), full)
-    await run(BIND(uk.atsTabId, uk.destination, item.input.jobCountry))
-    const answered = await pageRequest(uk.atsSession, requestFor(item))
-    check(`${name} crosses into the page as no row`, answered.result?.row === null, JSON.stringify(answered.result))
-    const visible = exposure(answered.seen, item)
-    check(`${name} puts no classifier detail on the page`, visible.length === 0, visible.join(', '))
-  }
-  check('page requests ran the classifier', (await offscreenCount()) === 1)
-
-  const clickCenter = async (atsSession, expression) => {
-    const box = await evaluate(browser, atsSession, expression, 5_000)
-    if (!box) throw new Error(`nothing to click: ${expression}`)
+  const clickAt = async (atsSession, box, origin = { x: 0, y: 0 }) => {
     for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
       await browser.send(
         'Input.dispatchMouseEvent',
-        { button: 'left', clickCount: 1, type, x: box.x + box.width / 2, y: box.y + box.height / 2 },
+        { button: 'left', clickCount: 1, type, x: origin.x + box.x + box.width / 2, y: origin.y + box.y + box.height / 2 },
         atsSession,
       )
     }
   }
-  const iconBox = (field) =>
-    `(() => { const r = document.querySelector('#${field} [data-tp-field-widget]')?.shadowRoot?.querySelector('button')?.getBoundingClientRect(); return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null })()`
-  const rowBox = `(() => { const r = ${PICKER}?.querySelector('[data-tp-suggestion]')?.getBoundingClientRect(); return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null })()`
-  const pickerState = (atsSession) => evaluate(browser, atsSession, PICKER_STATE, 5_000)
+  const clickCenter = async (atsSession, expression) => {
+    const box = await evaluate(browser, atsSession, expression, 5_000)
+    if (!box) throw new Error(`nothing to click: ${expression}`)
+    await clickAt(atsSession, box)
+  }
+  const pickerTarget = async () =>
+    (await browser.send('Target.getTargets')).targetInfos.find(
+      (info) => info.type === 'iframe' && info.url.startsWith('chrome-extension://') && new URL(info.url).pathname === '/picker.html',
+    ) ?? null
+  const pickerSession = async () => {
+    const target = await pickerTarget()
+    if (!target) return null
+    return autoSessions.get(target.targetId) ?? null
+  }
+  const pickerFrameOrigin = async (atsSession) => {
+    const { root } = await browser.send('DOM.getDocument', { depth: -1, pierce: true }, atsSession)
+    const stack = [root]
+    while (stack.length) {
+      const node = stack.pop()
+      const attributes = node.attributes ?? []
+      const src = attributes[attributes.indexOf('src') + 1]
+      if (node.nodeName === 'IFRAME' && attributes.includes('src') && src.includes('/picker.html')) {
+        const { model } = await browser.send('DOM.getBoxModel', { nodeId: node.nodeId }, atsSession)
+        return { x: model.content[0], y: model.content[1] }
+      }
+      stack.push(...(node.children ?? []), ...(node.shadowRoots ?? []), ...(node.contentDocument ? [node.contentDocument] : []))
+    }
+    throw new Error('the picker frame is not in the page')
+  }
+  const clickInPicker = async (atsSession, selector) => {
+    const session = await pickerSession()
+    const box = session ? await evaluate(browser, session, RECT(selector), 5_000) : null
+    if (!box) throw new Error(`nothing to click in the picker: ${selector}`)
+    await clickAt(atsSession, box, await pickerFrameOrigin(atsSession))
+  }
+  const pickerState = async () => {
+    const session = await pickerSession()
+    if (!session) return { open: false }
+    try {
+      return await evaluate(browser, session, PICKER_STATE, 5_000)
+    } catch {
+      return { open: false }
+    }
+  }
+  const pageBridge = (atsSession) => evaluate(browser, atsSession, 'window.__bridgeSeen ?? []', 5_000)
+  const tabIdOf = async (session) => {
+    const url = await evaluate(browser, session, 'location.href', 5_000)
+    return run(CALL(`return (await chrome.tabs.query({})).find((tab) => tab.url === ${JSON.stringify(url)})?.id ?? null`))
+  }
+  const openPickerByCommand = async (session, inputSelector) => {
+    await browser.send('Page.bringToFront', {}, session)
+    await clickCenter(session, RECT(inputSelector))
+    const tabId = await tabIdOf(session)
+    await run(CALL(`try { await chrome.tabs.sendMessage(${tabId}, { kind: 'cmd.openPicker' }) } catch {}
+      return true`))
+  }
+  const confirmState = async () => {
+    const session = await pickerSession()
+    if (!session) return { open: false }
+    try {
+      return await evaluate(browser, session, `({ open: true, confirm: Boolean(document.querySelector('[data-tp-confirm-fill]')) })`, 5_000)
+    } catch {
+      return { open: false }
+    }
+  }
   const openPicker = async (atsSession, field) => {
     await browser.send('Page.bringToFront', {}, atsSession)
-    if ((await pickerState(atsSession)).open) {
+    if ((await pickerState()).open || (await pickerTarget())) {
       await clickCenter(atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
-      await waitFor(() => pickerState(atsSession), (state) => !state.open, 5_000, 'the previous picker to close')
+      await waitFor(pickerTarget, (target) => !target, 5_000, 'the previous picker to close')
     }
     await evaluate(browser, atsSession, RECORD_BRIDGE, 5_000)
-    await clickCenter(atsSession, iconBox(field))
-    return waitFor(() => pickerState(atsSession), (state) => state.open, 10_000, 'the picker to open')
+    await openPickerByCommand(atsSession, `#${field} input`)
+    return waitFor(
+      async () => {
+        const target = await pickerTarget()
+        return { ...(await pickerState()), target: target?.url ?? null, attached: target ? autoSessions.has(target.targetId) : false }
+      },
+      (state) => state.open && state.list !== undefined,
+      20_000,
+      'the picker to open',
+    )
   }
-  const settled = (atsSession) =>
+  const answered = (state) => state.sends >= 1 && state.done >= state.sends
+  const settledState = async (expectSuggestion) => {
+    const state = await pickerState()
+    if (!state.open || !state.list || state.items === 0) return state
+    if (!expectSuggestion || !answered(state)) return state
+    await wait(600)
+    const later = await pickerState()
+    return later.sends === state.sends && answered(later) ? later : state
+  }
+  const settled = (expectSuggestion = true) =>
     waitFor(
-      () => pickerState(atsSession),
-      (state) => state.list && state.items > 0 && state.results >= 1,
+      () => settledState(expectSuggestion),
+      (state) => state.open && state.list && state.items > 0 && (!expectSuggestion || answered(state)),
       160_000,
       'the signed-in picker and its suggestion answer',
     )
@@ -878,11 +1080,124 @@ try {
   const contentSuggest = (atsSession, request) =>
     inContentScript(atsSession, CALL(`return (await chrome.runtime.sendMessage({ kind: 'classifier.suggest', request: ${JSON.stringify(request)} })).data`))
 
+  const checkCommandPicker = async (name, session, expected) => {
+    await browser.send('Page.bringToFront', {}, session)
+    const registered = await evaluate(
+      browser,
+      session,
+      `({ fields: document.querySelectorAll('[data-tp-field]').length, icons: document.querySelectorAll('[data-tp-field-widget]').length, inputs: [...document.querySelectorAll('[data-tp-field]')].map((field) => '#' + (field.matches('input') ? field : field.querySelector('input')).id) })`,
+      5_000,
+    )
+    check(`${name}: every field is registered`, registered.fields === expected, JSON.stringify(registered))
+    check(`${name}: no field icon is mounted while icons are disabled`, registered.icons === 0, JSON.stringify(registered))
+    for (const selector of registered.inputs) {
+      await openPickerByCommand(session, selector)
+      const opened = await waitFor(pickerState, (state) => state.open && state.list !== undefined, 20_000, `the picker for ${selector}`)
+      check(`${name}: focusing ${selector} and sending the picker command opens the picker`, opened.open)
+      await clickCenter(session, `({ x: 1, y: 1, width: 2, height: 2 })`)
+      await waitFor(pickerTarget, (target) => !target, 5_000, `the picker for ${selector} to close`)
+    }
+    const native = await evaluate(browser, session, `({ clicks: window.__nativeClicks, submits: window.__submits })`, 5_000)
+    check(`${name}: opening the picker never reaches the native controls`, native.clicks === 0 && native.submits === 0, JSON.stringify(native))
+  }
+  await checkCommandPicker('Greenhouse', uk.atsSession, FIELDS.length)
+  const classicTab = await browser.send('Target.createTarget', { url: 'about:blank' })
+  const classicSession = await attach(classicTab.targetId)
+  await browser.send('Page.enable', {}, classicSession)
+  await browser.send('Runtime.enable', {}, classicSession)
+  await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, classicSession)
+  await browser.send('Page.navigate', { url: `${CLASSIC}/smoke/jobs/1` }, classicSession)
+  await waitFor(
+    () => evaluate(browser, classicSession, `document.querySelectorAll('[data-tp-field]').length`, 5_000),
+    (count) => count === CLASSIC_FIELDS.length,
+    30_000,
+    'the Greenhouse Classic adapter to register every field',
+  )
+  await checkCommandPicker('Greenhouse Classic', classicSession, CLASSIC_FIELDS.length)
+  await browser.send('Target.closeTarget', { targetId: classicTab.targetId })
+  await browser.send('Page.bringToFront', {}, uk.atsSession)
+
   const signedOut = await openPicker(uk.atsSession, 'f-first')
-  const signIn = await waitFor(() => pickerState(uk.atsSession), (state) => state.signIn, 10_000, 'the signed-out picker')
-  check('the real picker opens from the field icon', signedOut.open)
+  const signIn = await waitFor(pickerState, (state) => state.signIn, 10_000, 'the signed-out picker')
+  check('the real picker opens from the picker command in an extension frame', signedOut.open)
   check('a signed-out picker offers no suggestion row', signIn.rows.length === 0, JSON.stringify(signIn.rows))
-  check('a signed-out picker never asks for a suggestion', signIn.results === 0, String(signIn.results))
+  check('a signed-out picker never asks for a suggestion', signIn.sends === 0, String(signIn.sends))
+
+  await clickCenter(uk.atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
+  await waitFor(pickerTarget, (target) => !target, 5_000, 'the picker to close before the Workday checks')
+
+  const workdayTab = await browser.send('Target.createTarget', { url: 'about:blank' })
+  const workdaySession = await attach(workdayTab.targetId)
+  await browser.send('Page.enable', {}, workdaySession)
+  await browser.send('Runtime.enable', {}, workdaySession)
+  await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, workdaySession)
+  await browser.send('Page.navigate', { url: `${WORKDAY}/Smoke/job/apply/applyManually` }, workdaySession)
+  await browser.send('Page.bringToFront', {}, workdaySession)
+  const workdayRegistered = await waitFor(
+    () =>
+      evaluate(
+        browser,
+        workdaySession,
+        `({ fields: document.querySelectorAll('[data-tp-field]').length, email: Boolean(document.querySelector('[data-automation-id="formField-email"] [data-tp-field], [data-automation-id="formField-email"][data-tp-field]')), icons: document.querySelectorAll('[data-tp-field-widget]').length })`,
+        5_000,
+      ),
+    (state) => state.email,
+    30_000,
+    'the Workday adapter to register the email field',
+  )
+  check('Workday: no field icon is mounted while icons are disabled', workdayRegistered.icons === 0, JSON.stringify(workdayRegistered))
+  await openPickerByCommand(workdaySession, '[data-automation-id="formField-email"] input')
+  const workdayPicker = await waitFor(pickerState, (state) => state.open && state.list !== undefined, 20_000, 'the Workday picker to open')
+  const workdayNative = await evaluate(browser, workdaySession, `({ clicks: window.__nativeClicks, submits: window.__submits })`, 5_000)
+  check('focusing the Workday email field and sending the picker command opens the picker', workdayPicker.open, JSON.stringify(workdayPicker))
+  check('opening the Workday picker never reaches the native submit controls', workdayNative.clicks === 0 && workdayNative.submits === 0, JSON.stringify(workdayNative))
+  await clickCenter(workdaySession, `({ x: 1, y: 1, width: 2, height: 2 })`)
+  await waitFor(pickerTarget, (target) => !target, 5_000, 'the Workday picker to close')
+  await browser.send('Target.closeTarget', { targetId: workdayTab.targetId })
+
+  const framesTab = await browser.send('Target.createTarget', { url: 'about:blank' })
+  const framesSession = await attach(framesTab.targetId)
+  await browser.send('Page.enable', {}, framesSession)
+  await browser.send('Runtime.enable', {}, framesSession)
+  await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, framesSession)
+  await browser.send('Page.navigate', { url: `${ATS}/smoke/frames` }, framesSession)
+  await browser.send('Page.bringToFront', {}, framesSession)
+  const FRAME_MARKERS = `(() => { const inner = document.getElementById('inner')?.contentDocument; return { top: document.querySelectorAll('[data-tp-field]').length, inner: inner ? inner.querySelectorAll('[data-tp-field]').length : -1 } })()`
+  await waitFor(() => evaluate(browser, framesSession, FRAME_MARKERS, 5_000), (markers) => markers.top === 1 && markers.inner === 1, 30_000, 'both frames to register their field')
+  const innerBox = await evaluate(
+    browser,
+    framesSession,
+    `(() => { const frame = document.getElementById('inner'); const f = frame.getBoundingClientRect(); const r = frame.contentDocument.getElementById('inner-first').getBoundingClientRect(); return { x: f.x + r.x, y: f.y + r.y, width: r.width, height: r.height } })()`,
+    5_000,
+  )
+  const PICKER_HOSTS = `(() => { const count = (doc) => [...doc.documentElement.children].filter((el) => el.tagName === 'DIV').length; return { top: count(document), inner: count(document.getElementById('inner').contentDocument) } })()`
+  const pickerFrames = async () =>
+    (await browser.send('Target.getTargets')).targetInfos.filter(
+      (info) => info.type === 'iframe' && info.url.startsWith('chrome-extension://') && new URL(info.url).pathname === '/picker.html',
+    ).length
+  const framesTabId = await tabIdOf(framesSession)
+  const sendPickerCommand = () =>
+    run(CALL(`try { await chrome.tabs.sendMessage(${framesTabId}, { kind: 'cmd.openPicker' }) } catch {}
+      return true`))
+
+  await clickAt(framesSession, innerBox)
+  await clickCenter(framesSession, RECT('#top-first'))
+  await sendPickerCommand()
+  await waitFor(pickerFrames, (count) => count >= 1, 20_000, 'the picker for the focused top frame')
+  await wait(1_500)
+  const topOnly = { frames: await pickerFrames(), hosts: await evaluate(browser, framesSession, PICKER_HOSTS, 5_000) }
+  check('the picker command opens one picker, in the focused top frame only', topOnly.frames === 1 && topOnly.hosts.top === 1 && topOnly.hosts.inner === 0, JSON.stringify(topOnly))
+  await clickCenter(framesSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
+  await waitFor(pickerFrames, (count) => count === 0, 5_000, 'the top-frame picker to close')
+
+  await clickAt(framesSession, innerBox)
+  await sendPickerCommand()
+  await waitFor(pickerFrames, (count) => count >= 1, 20_000, 'the picker for the focused inner frame')
+  await wait(1_500)
+  const innerOnly = { frames: await pickerFrames(), hosts: await evaluate(browser, framesSession, PICKER_HOSTS, 5_000) }
+  check('the picker command opens one picker, in the focused inner frame only', innerOnly.frames === 1 && innerOnly.hosts.top === 0 && innerOnly.hosts.inner === 1, JSON.stringify(innerOnly))
+  await browser.send('Target.closeTarget', { targetId: framesTab.targetId })
+  await browser.send('Page.bringToFront', {}, uk.atsSession)
 
   const linkedLabel = PAGE_ACCEPTED.decision.labelEnumId
   let linkedQuestion = null
@@ -934,12 +1249,13 @@ try {
   await waitFor(offscreenCount, (count) => count === 0, 10_000, 'the offscreen document to close')
   await seed()
   await run(BIND(uk.atsTabId, uk.destination, PAGE_ACCEPTED.input.jobCountry))
-  await inContentScript(uk.atsSession, COUNT_SUGGEST_SENDS)
   const signedOffFrom = requests.length
   await openPicker(uk.atsSession, 'f-first')
-  const signedInOff = await settled(uk.atsSession)
+  await settled(false)
+  await wait(1000)
+  const signedInOff = await pickerState()
   check('signed in with the switch off: no row', signedInOff.rows.length === 0, JSON.stringify(signedInOff.rows))
-  check('signed in with the switch off: no background suggestion request', (await inContentScript(uk.atsSession, 'globalThis.__suggestSends')) === 0)
+  check('signed in with the switch off: no background suggestion request', signedInOff.sends === 0, String(signedInOff.sends))
   check('signed in with the switch off: no model process', (await offscreenCount()) === 0)
   check('signed in with the switch off: no classifier asset fetch', classifierFetches(signedOffFrom).length === 0, JSON.stringify(classifierFetches(signedOffFrom)))
 
@@ -951,22 +1267,21 @@ try {
     await seed()
     const from = requests.length
     await openPicker(uk.atsSession, field)
-    const state = await settled(uk.atsSession)
+    const state = await settled()
     check(`${name} shows its saved answer`, state.rows.length === 1 && state.rows[0].title === value, JSON.stringify(state.rows))
     check(`${name} never starts the model`, (await offscreenCount()) === 0)
     check(`${name} fetches no classifier asset`, classifierFetches(from).length === 0, JSON.stringify(classifierFetches(from)))
   }
 
   await seed()
-  await inContentScript(uk.atsSession, COUNT_SUGGEST_SENDS)
   const coldStarted = Date.now()
   await openPicker(uk.atsSession, 'f-first')
-  await waitFor(() => inContentScript(uk.atsSession, 'globalThis.__suggestSends'), (sends) => sends >= 1, 20_000, 'the picker suggestion request')
-  await wait(300)
+  await waitFor(pickerState, (state) => state.sends >= 1, 20_000, 'the picker suggestion request')
+  await waitFor(offscreenCount, (count) => count === 1, 20_000, 'the model process to start for the picker request')
   const pickerStopped = await stopWorker()
-  const shown = await settled(uk.atsSession)
-  const pickerSends = await inContentScript(uk.atsSession, 'globalThis.__suggestSends')
-  report.push(`picker cold suggestion, service worker stopped 300 ms after the request (${pickerStopped}): ${Date.now() - coldStarted} ms, ${pickerSends} sends`)
+  const shown = await settled()
+  const pickerSends = shown.sends
+  report.push(`picker cold suggestion, service worker stopped while the model loaded (${pickerStopped}): ${Date.now() - coldStarted} ms, ${pickerSends} sends`)
   check('the service worker was stopped during the picker cold load', pickerStopped !== 'no worker running', pickerStopped)
   check('the picker request was retried exactly once', pickerSends === 2, `sends ${pickerSends}`)
   check('an accepted label with a saved answer shows exactly one row', shown.rows.length === 1, JSON.stringify(shown.rows))
@@ -978,11 +1293,13 @@ try {
       shown.rows[0]?.compact === `${LINKED_VALUE}Suggested answer`.replace(/\s+/g, ''),
     JSON.stringify(shown.rows[0]),
   )
+  const shownBridge = await pageBridge(uk.atsSession)
   const rowLeaks = secretsOf(PAGE_ACCEPTED)
     .filter((secret) => (shown.rows[0]?.html ?? '').includes(secret))
-    .concat(exposure(shown.seen, PAGE_ACCEPTED))
-  check('the row and the page bridge carry no classifier detail', rowLeaks.length === 0, rowLeaks.join(', '))
-  await clickCenter(uk.atsSession, rowBox)
+    .concat(exposure(shownBridge, PAGE_ACCEPTED))
+    .concat(shownBridge.filter((message) => message.includes(LINKED_VALUE) || message.includes('classifier.')))
+  check('the row, and the page bridge before the click, carry no suggestion or classifier detail', rowLeaks.length === 0, rowLeaks.join(', '))
+  await clickInPicker(uk.atsSession, '[data-tp-suggestion]')
   const filled = await waitFor(
     () => evaluate(browser, uk.atsSession, `document.querySelector('#first').value`, 5_000),
     (value) => value === LINKED_VALUE,
@@ -990,8 +1307,14 @@ try {
     'the field to fill',
   )
   check('clicking the row fills the real field', filled === LINKED_VALUE, filled)
-  const closedAfterFill = await waitFor(() => pickerState(uk.atsSession), (state) => !state.open, 10_000, 'the picker to close after the fill')
-  check('clicking the row closes the picker', !closedAfterFill.open)
+  const fillBridge = (await pageBridge(uk.atsSession)).filter((message) => message.includes(LINKED_VALUE))
+  check(
+    'only the one selected value crosses into the page, as a single field fill',
+    fillBridge.length === 1 && JSON.parse(fillBridge[0]).payload.kind === 'field.fill',
+    JSON.stringify(fillBridge),
+  )
+  const closedAfterFill = await waitFor(pickerTarget, (target) => !target, 10_000, 'the picker to close after the fill')
+  check('clicking the row closes the picker', !closedAfterFill)
 
   for (const [name, field, item] of [
     ['an abstention', 'f-links', PAGE_ABSTAINED],
@@ -1000,9 +1323,9 @@ try {
     await seed()
     await run(BIND(uk.atsTabId, uk.destination, item.input.jobCountry))
     await openPicker(uk.atsSession, field)
-    const state = await settled(uk.atsSession)
+    const state = await settled()
     check(`signed in, ${name} shows no row`, state.rows.length === 0, JSON.stringify(state.rows))
-    const visible = exposure(state.seen, item)
+    const visible = exposure(await pageBridge(uk.atsSession), item)
     check(`signed in, ${name} puts no classifier detail on the page`, visible.length === 0, visible.join(', '))
   }
 
@@ -1024,7 +1347,7 @@ try {
     }
     return true`))
   await openPicker(uk.atsSession, 'f-first')
-  const reopened = await settled(uk.atsSession)
+  const reopened = await settled()
   check('reopening the picker shows the row again', reopened.rows.length === 1 && reopened.rows[0].title === LINKED_VALUE, JSON.stringify(reopened.rows))
   check('reopening reuses the stored-answer labels without reclassifying', (await run('window.__labelWrites')) === 0)
 
@@ -1064,10 +1387,249 @@ try {
     'the network recorder captures page requests',
     requests.some((request) => request.url.startsWith(ATS)) && requests.some((request) => request.url.startsWith(SITE)),
   )
-  const external = requests.filter((request) => /^https?:/.test(request.url) && !request.url.startsWith(SITE) && !request.url.startsWith(ATS))
+  const served = (url) => [SITE, ATS, WORKDAY, CLASSIC].some((origin) => url.startsWith(origin))
+  const external = requests.filter((request) => /^https?:/.test(request.url) && !served(request.url))
   check('no request left the served test pages during the whole run', external.length === 0, JSON.stringify(external))
-  check('every served page request was answered locally', intercepted.every((url) => url.startsWith(SITE) || url.startsWith(ATS)), intercepted.join(', '))
+  check('every served page request was answered locally', intercepted.every(served), intercepted.join(', '))
   report.push(`network: ${requests.length} requests recorded, ${intercepted.length} page requests served locally, ${external.length} external`)
+
+  await run(SET_SWITCH(false))
+  await waitFor(offscreenCount, (count) => count === 0, 10_000, 'the offscreen document to close')
+  const noteWorker = autoSessions.get((await serviceWorker()).targetId)
+  await evaluate(browser, noteWorker, RECORD_CLASSIFIER_POSTS, 10_000)
+  await run(CALL(`await chrome.storage.session.remove(['${ANSWER_LABELS_KEY}', '${PROFILE_KEY}'])`))
+  const { talentAnswers: _answers, talentNotes: _notes, ...firstProfile } = PROFILE
+  apiState.profile = firstProfile
+  apiState.answers = answers
+  apiState.notes = [NOTE]
+  await run(SET_SWITCH(true))
+  await run(CALL(`await chrome.storage.local.set({ '${TOKENS_KEY}': ${JSON.stringify(TOKENS)} })`))
+  await run(BIND(uk.atsTabId, secondJob, PAGE_ACCEPTED.input.jobCountry))
+  const noteFrom = requests.length
+  const apiFrom = apiCalls.length
+  await openPicker(uk.atsSession, 'f-first')
+  const withNote = await settled()
+  const hydration = apiCalls.slice(apiFrom).map((call) => `${call.method} ${new URL(call.url).pathname}`)
+  check(
+    'the background hydrates profile, saved answers and notes from their own routes',
+    ['GET /api/v1/talentprofile/first', 'GET /api/v1/talentanswer', 'GET /api/v1/talentnote'].every((route) => hydration.includes(route)),
+    JSON.stringify(hydration),
+  )
+  const hydrated = await run(CALL(`return (await chrome.storage.session.get('${PROFILE_KEY}'))['${PROFILE_KEY}']?.data?.talentNotes ?? null`))
+  check('the hydrated profile cache holds the note from the note route', JSON.stringify(hydrated) === JSON.stringify([NOTE]), JSON.stringify(hydrated))
+  check('with a private note saved, the picker still shows the linked suggestion', withNote.rows.length === 1 && withNote.rows[0].title === LINKED_VALUE, JSON.stringify(withNote.rows))
+  const classifierPosts = await evaluate(browser, noteWorker, 'globalThis.__classifierPosts', 10_000)
+  check(
+    'the field and every stored answer were sent to the classifier',
+    classifierPosts.filter((post) => JSON.parse(post).kind === 'classify').length >= 2,
+    `${classifierPosts.length} posts`,
+  )
+  check('no classifier request carries the private note', classifierPosts.every((post) => !post.includes(NOTE_SENTINEL)))
+  const labelCache = await run(CALL(`return JSON.stringify(await chrome.storage.session.get('${ANSWER_LABELS_KEY}'))`))
+  check('the stored-answer label cache holds no private note', labelCache.includes('smoke-linked') && !labelCache.includes(NOTE_SENTINEL))
+
+  await clickInPicker(uk.atsSession, '[data-tp-item-id="notes"] button.item')
+  const noteLeaf = await waitFor(
+    async () => {
+      const session = await pickerSession()
+      return session ? evaluate(browser, session, NOTE_LEAF, 5_000) : null
+    },
+    Boolean,
+    10_000,
+    'the note in the Notes group',
+  )
+  check('the picker still lists the note in the Notes group', noteLeaf.kind === 'note-leaf' && noteLeaf.text.includes(NOTE_SENTINEL), JSON.stringify(noteLeaf))
+  const noteBridge = await pageBridge(uk.atsSession)
+  check('the page bridge never carries the note while it is listed', noteBridge.length > 0 && noteBridge.every((message) => !message.includes(NOTE_SENTINEL)), `${noteBridge.length} messages`)
+  await clickInPicker(uk.atsSession, `[data-tp-item-id="nt.${NOTE.id}"] button.item`)
+  const inserted = await waitFor(
+    () => evaluate(browser, uk.atsSession, `document.querySelector('#first').value`, 5_000),
+    (value) => value === NOTE_SENTINEL,
+    10_000,
+    'the note to be inserted',
+  )
+  check('clicking the note inserts it into the field', inserted === NOTE_SENTINEL, inserted)
+  const insertBridge = (await pageBridge(uk.atsSession)).filter((message) => message.includes(NOTE_SENTINEL))
+  check('the inserted note never travels over the page bridge', insertBridge.length === 0, JSON.stringify(insertBridge))
+  const touch = await waitFor(
+    () => apiCalls.slice(apiFrom).filter((call) => call.method === 'PUT' && call.url.endsWith('/api/v1/talentnote')),
+    (found) => found.length === 1,
+    10_000,
+    'the note usage update',
+  )
+  check('the note usage update sends the note id, not its content', touch[0].postData?.includes(NOTE.id) && !touch[0].postData.includes(NOTE_SENTINEL), JSON.stringify(touch))
+  const noteNetwork = requests.slice(noteFrom).filter((request) => `${request.url}${request.postData ?? ''}`.includes(NOTE_SENTINEL))
+  check('no network request carries the private note', noteNetwork.length === 0, JSON.stringify(noteNetwork))
+  const noteExternal = requests
+    .slice(noteFrom)
+    .filter((request) => /^https?:/.test(request.url) && !served(request.url) && !request.url.startsWith(API))
+  check('nothing but the API left the test pages', noteExternal.length === 0, JSON.stringify(noteExternal))
+  report.push(`private note: hydrated via ${hydration.join(', ')}; ${classifierPosts.length} classifier posts; usage update ${touch[0].method} ${touch[0].url}`)
+
+  await clickCenter(uk.atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
+  await waitFor(pickerTarget, (target) => !target, 5_000, 'the picker to close before the forgery run')
+  const secrets = [PROFILE.profileName, PROFILE.jobTitle, PROFILE.user.email, NOTE_SENTINEL, LINKED_VALUE, EXACT_VALUE, OVERLAP_VALUE, linkedQuestion]
+  const forgedRecord = {
+    answerKind: 'text',
+    answerText: 'forged answer',
+    answerValue: { confidence: 'exact', kind: 'string', value: 'forged answer' },
+    fieldType: 'TextInput',
+    labelEnumId: null,
+    normalizedQuestion: 'forged-question',
+    profileField: null,
+    questionText: 'Forged question',
+    resolverOutcome: 'filled',
+    section: '',
+    source: 'manual',
+    sourceAnswerId: null,
+  }
+  const fieldAsk = (name) => ({ fieldName: name, fieldType: 'TextInput', requestId: `forged-${name}`, section: '' })
+  const FORGED = [
+    { kind: 'auth.getProfile' },
+    { kind: 'auth.getSummary' },
+    { kind: 'auth.getStatus' },
+    { kind: 'auth.requestSignIn' },
+    { kind: 'auth.openDashboard' },
+    { kind: 'profile.get' },
+    { content: 'forged note', kind: 'note.create' },
+    { content: 'forged note', kind: 'note.update', noteId: NOTE.id },
+    { kind: 'note.delete', noteId: NOTE.id },
+    { kind: 'note.touch', noteId: NOTE.id },
+    { fieldName: 'Email', fieldType: 'TextInput', kind: 'resolveFieldValue', section: '' },
+    { fields: ['Email', 'Full name', 'Current title'].map(fieldAsk), kind: 'resolveFieldValues' },
+    { fields: [EXACT_QUESTION, linkedQuestion].map(fieldAsk), kind: 'resolveLearnedAnswers' },
+    { answerId: 'smoke-linked', kind: 'learnedAnswer.delete' },
+    { kind: 'classifier.suggest', request: requestFor(PAGE_ACCEPTED) },
+    { kind: 'answers.stage', payload: { applicationUrl: secondJob, ats: 'greenhouseReact', records: [forgedRecord] } },
+    { kind: 'answers.commit', stageId: 'forged-stage' },
+    { kind: 'answers.discard', outcome: 'unknown', stageId: 'forged-stage' },
+    { kind: 'fill.request' },
+    { kind: 'widget.openDashboard' },
+    { kind: 'capture.submit', records: [forgedRecord] },
+    { batchId: 'forged-batch', fields: ['Email', 'Full name', EXACT_QUESTION].map(fieldAsk), kind: 'fill.fields' },
+  ].map((payload) => ({ id: crypto.randomUUID(), ...payload }))
+  const CLICKS = [['form widget', ['[data-tp-form-widget]', 'button.primary']]]
+  const storageSnapshot = () =>
+    run(CALL(`return JSON.stringify([await chrome.storage.local.get(null), await chrome.storage.session.get(null)])`))
+  const pages = async () => (await browser.send('Target.getTargets')).targetInfos.filter((info) => info.type === 'page').length
+  const storageBefore = await storageSnapshot()
+  const pagesBefore = await pages()
+  const forgeryFrom = requests.length
+  const forgeryApiFrom = apiCalls.length
+  const fieldsBefore = await evaluate(browser, uk.atsSession, `[...document.querySelectorAll('input')].map((input) => input.value)`, 5_000)
+  await browser.send('Page.bringToFront', {}, uk.atsSession)
+  await wait(2_500)
+  const forgery = await evaluate(browser, uk.atsSession, FORGE_BRIDGE(FORGED, CLICKS, 5_000), 30_000)
+  await wait(1_000)
+  report.push(`forgery: ${FORGED.length} privileged messages, programmatic clicks ${JSON.stringify(forgery.clicked)}, ${forgery.replies.length} content replies`)
+  check('the page script reached the form widget it tried to click', forgery.clicked['form widget'] === true, JSON.stringify(forgery.clicked))
+  const replyKinds = [...new Set(forgery.replies.map((reply) => JSON.parse(reply).kind))]
+  check('forged messages get nothing back but a fill refusal', replyKinds.every((kind) => kind === 'fill.denied'), JSON.stringify(forgery.replies).slice(0, 400))
+  check(
+    'every forged fill request is refused as untrusted',
+    forgery.replies.every((reply) => JSON.parse(reply).reason === 'untrusted'),
+    JSON.stringify(forgery.replies).slice(0, 400),
+  )
+  const leaked = secrets.filter((secret) => forgery.replies.some((reply) => reply.includes(secret)))
+  check('no forged message returns profile, note or saved-answer data', leaked.length === 0, leaked.join(', '))
+  const forgeryRequests = requests.slice(forgeryFrom).filter((request) => /^https?:/.test(request.url) && !request.url.startsWith(ATS))
+  check('no forged message causes an API or network call', forgeryRequests.length === 0 && apiCalls.length === forgeryApiFrom, JSON.stringify(forgeryRequests.concat(apiCalls.slice(forgeryApiFrom))))
+  check('no forged message loads the classifier', classifierFetches(forgeryFrom).length === 0, JSON.stringify(classifierFetches(forgeryFrom)))
+  check('no forged message mutates extension storage', (await storageSnapshot()) === storageBefore)
+  check('no forged message opens a tab', (await pages()) === pagesBefore)
+  check('no forged message or synthetic click opens the picker', (await pickerTarget()) === null)
+  const fieldsAfter = await evaluate(browser, uk.atsSession, `[...document.querySelectorAll('input')].map((input) => input.value)`, 5_000)
+  check('no forged message fills a field', JSON.stringify(fieldsAfter) === JSON.stringify(fieldsBefore), JSON.stringify(fieldsAfter))
+
+  await evaluate(
+    browser,
+    uk.atsSession,
+    `(() => { const el = document.createElement('div'); el.id = 'forged-widget'; el.setAttribute('data-tp-form-widget', 'true'); el.style.cssText = 'position:fixed;left:24px;bottom:24px;width:140px;height:40px;background:#111;z-index:2147483646'; document.body.appendChild(el); return true })()`,
+    5_000,
+  )
+  await evaluate(browser, uk.atsSession, RECORD_BRIDGE, 5_000)
+  const forgedWidgetApiFrom = apiCalls.length
+  await clickCenter(uk.atsSession, RECT('#forged-widget'))
+  await evaluate(
+    browser,
+    uk.atsSession,
+    FORGE_BRIDGE(
+      [
+        { id: crypto.randomUUID(), kind: 'fill.request' },
+        { batchId: 'forged-batch', fields: ['Email', 'Full name', 'Resume/CV'].map(fieldAsk), id: crypto.randomUUID(), kind: 'fill.fields' },
+      ],
+      [],
+      1_500,
+    ),
+    10_000,
+  )
+  const forgedConfirm = await waitFor(confirmState, (state) => state.open, 10_000, 'the extension-origin fill confirmation')
+  check('a real click on a page-forged widget only opens the extension-origin confirmation', forgedConfirm.confirm === true, JSON.stringify(forgedConfirm))
+  await browser.send('Input.dispatchKeyEvent', { code: 'Escape', key: 'Escape', type: 'keyDown', windowsVirtualKeyCode: 27 }, uk.atsSession)
+  await browser.send('Input.dispatchKeyEvent', { code: 'Escape', key: 'Escape', type: 'keyUp', windowsVirtualKeyCode: 27 }, uk.atsSession)
+  await waitFor(pickerTarget, (target) => !target, 5_000, 'the forged confirmation to close')
+  await wait(500)
+  const forgedWidgetBridge = (await pageBridge(uk.atsSession)).map((message) => JSON.parse(message).payload)
+  const forgedWidgetReplies = forgedWidgetBridge.filter((payload) => ['fill.denied', 'fill.run', 'fill.values'].includes(payload?.kind))
+  check(
+    'dismissing the confirmation refuses the forged fill and returns no values',
+    forgedWidgetReplies.length > 0 && forgedWidgetReplies.every((payload) => payload.kind === 'fill.denied') && forgedWidgetReplies.some((payload) => payload.reason === 'dismissed'),
+    JSON.stringify(forgedWidgetReplies),
+  )
+  check('the forged widget fill leaks no profile data', !secrets.some((secret) => forgedWidgetBridge.some((payload) => JSON.stringify(payload).includes(secret))))
+  check('the forged widget fill reaches no API', apiCalls.length === forgedWidgetApiFrom, JSON.stringify(apiCalls.slice(forgedWidgetApiFrom)))
+  check('the forged widget fill changes no field', JSON.stringify(await evaluate(browser, uk.atsSession, `[...document.querySelectorAll('input')].map((input) => input.value)`, 5_000)) === JSON.stringify(fieldsBefore))
+  await evaluate(browser, uk.atsSession, `document.getElementById('forged-widget')?.remove(); true`, 5_000)
+
+  const inputValues = () =>
+    evaluate(browser, uk.atsSession, `Object.fromEntries([...document.querySelectorAll('input')].map((input) => [input.id, input.value]).sort())`, 5_000)
+  const PORTFOLIO_VALUE = 'https://portfolio.example.invalid/smoke'
+  const portfolioAnswer = await answer('smoke-portfolio', PAGE_NO_ANSWER.input.questionText, PORTFOLIO_VALUE)
+  await run(
+    CALL(`const key = '${PROFILE_KEY}'
+      const cached = (await chrome.storage.session.get(key))[key]
+      cached.data.talentAnswers = [...cached.data.talentAnswers, ${JSON.stringify(portfolioAnswer)}]
+      cached.fetchedAt = Date.now()
+      await chrome.storage.session.set({ [key]: cached })
+      return true`),
+  )
+  const expectedFill = Object.fromEntries(
+    Object.entries({ exact: '', first: PROFILE.profileName.split(' ')[0], links: '', overlap: '', portfolio: PORTFOLIO_VALUE }).sort(),
+  )
+  const freshApplication = async (name) => {
+    await browser.send('Page.navigate', { url: `${ATS}/smoke/jobs/${name}?source=talentprofile` }, uk.atsSession)
+    await fieldsReady(uk.atsSession)
+  }
+  await freshApplication('popup-fill')
+  const popupFill = await run(
+    CALL(`return await new Promise((done) => {
+      const port = chrome.runtime.connect({ name: 'fill-progress' })
+      port.onMessage.addListener((message) => {
+        if (message.kind === 'fill.done' || message.kind === 'fill.error') {
+          port.disconnect()
+          done(message)
+        }
+      })
+      port.postMessage({ kind: 'fill.start', tabId: ${uk.atsTabId} })
+    })`),
+  )
+  const popupValues = await inputValues()
+  check('the popup fill completes', popupFill.kind === 'fill.done' && popupFill.result.counts.filled === 2, JSON.stringify([popupFill, popupValues]))
+  check('the popup fill writes the profile first name and the exact-match saved answer', JSON.stringify(popupValues) === JSON.stringify(expectedFill), JSON.stringify(popupValues))
+
+  await freshApplication('widget-fill')
+  await browser.send('Page.bringToFront', {}, uk.atsSession)
+  await clickCenter(
+    uk.atsSession,
+    `(() => { const r = document.querySelector('[data-tp-form-widget]')?.shadowRoot?.querySelector('button.primary')?.getBoundingClientRect(); return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null })()`,
+  )
+  const widgetConfirm = await waitFor(confirmState, (state) => state.open && state.confirm, 10_000, 'the widget fill confirmation')
+  check('a real click on the form widget asks for confirmation in an extension frame', widgetConfirm.confirm === true, JSON.stringify(widgetConfirm))
+  check('the widget click alone fills nothing', JSON.stringify(await inputValues()) !== JSON.stringify(expectedFill))
+  await clickInPicker(uk.atsSession, '[data-tp-confirm-fill]')
+  const widgetValues = await waitFor(inputValues, (values) => values.first !== '', 20_000, 'the confirmed widget fill')
+  await wait(1_000)
+  check('confirming in the extension frame fills the same values', JSON.stringify(await inputValues()) === JSON.stringify(expectedFill), JSON.stringify(widgetValues))
   browser.close()
 } catch (error) {
   failure = error

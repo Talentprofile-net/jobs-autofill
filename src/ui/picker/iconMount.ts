@@ -1,7 +1,6 @@
 import { mount, unmount } from 'svelte'
 import PickerIcon from './PickerIcon.svelte'
-import { openPicker } from './pickerController'
-import type { PickerMode } from '~/field/types'
+import { FIELD_WIDGET_UUID_ATTR, findHostAnchor } from './fieldAnchor'
 import {
   applyAppearanceVars,
   findIconDonor,
@@ -9,13 +8,12 @@ import {
 } from '~/ui/donorStyle'
 import { scoreSendButton } from '~/ui/sendButtonScoring'
 
+export type WidgetPlacement = 'auto' | 'field'
+
 type MountOptions = {
   field: HTMLElement
   fieldUuid: string
-  fieldName: string
-  fieldType: string
-  section: string
-  pickerMode: PickerMode
+  placement: WidgetPlacement
 }
 
 const TARGET_GAP_PX = 6
@@ -103,15 +101,6 @@ const applyStyles = (shadow: ShadowRoot, text: string): void => {
   const styleEl = document.createElement('style')
   styleEl.textContent = text
   shadow.appendChild(styleEl)
-}
-
-const INPUT_SELECTOR =
-  'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]):not([type="file"]):not([type="password"]),' +
-  'textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]'
-
-const findHostAnchor = (field: HTMLElement): HTMLElement | null => {
-  if (field.matches(INPUT_SELECTOR)) return field
-  return field.querySelector<HTMLElement>(INPUT_SELECTOR)
 }
 
 const MAX_COMPOSER_DEPTH = 8
@@ -331,15 +320,33 @@ const applyInlineSpacing = (host: HTMLElement, row: HTMLElement): void => {
   host.style.marginRight = `${extra}px`
 }
 
+const ABSOLUTE_INSET_PX = 4
+
+const alignToAnchor = (host: HTMLElement, anchor: HTMLElement, parent: HTMLElement): void => {
+  const a = anchor.getBoundingClientRect()
+  if (a.width === 0 || a.height === 0) return
+  const p = parent.getBoundingClientRect()
+  const paddingTop = p.top + parent.clientTop
+  const paddingRight = p.left + parent.clientLeft + parent.clientWidth
+  host.style.top = `${a.top - paddingTop + parent.scrollTop + a.height / 2}px`
+  host.style.right = `${paddingRight - a.right + ABSOLUTE_INSET_PX}px`
+}
+
 const mountAbsoluteInParent = (
   host: HTMLElement,
   anchor: HTMLElement,
   shadow: ShadowRoot,
-): void => {
+): (() => void) => {
   applyStyles(shadow, STYLE_ABSOLUTE)
   const parent = anchor.parentElement ?? anchor
   ensurePositioned(parent)
   parent.appendChild(host)
+  const align = () => alignToAnchor(host, anchor, parent)
+  align()
+  const observer = new ResizeObserver(align)
+  observer.observe(anchor)
+  observer.observe(parent)
+  return () => observer.disconnect()
 }
 
 export const mountPickerIcon = (
@@ -350,12 +357,13 @@ export const mountPickerIcon = (
 
   const host = document.createElement('div')
   host.setAttribute('data-tp-field-widget', 'true')
+  host.setAttribute(FIELD_WIDGET_UUID_ATTR, opts.fieldUuid)
   const shadow = host.attachShadow({ mode: 'open' })
 
   const mountTarget = document.createElement('div')
   shadow.appendChild(mountTarget)
 
-  const composer = findComposerRoot(anchor)
+  const composer = opts.placement === 'auto' ? findComposerRoot(anchor) : null
   const sendButton = composer ? findSendButton(composer, anchor) : null
   const insertion =
     composer && sendButton ? findActionRowInsertion(sendButton, composer) : null
@@ -400,32 +408,15 @@ export const mountPickerIcon = (
     }
   }
 
-  if (!mounted) {
-    mountAbsoluteInParent(host, anchor, shadow)
-  }
-
-  const handleOpen = () => {
-    openPicker({
-      anchor,
-      triggerElement: host,
-      field: opts.field,
-      fieldUuid: opts.fieldUuid,
-      fieldName: opts.fieldName,
-      fieldType: opts.fieldType,
-      section: opts.section,
-      pickerMode: opts.pickerMode,
-    })
-  }
+  const stopAligning = mounted ? null : mountAbsoluteInParent(host, anchor, shadow)
 
   const component = mount(PickerIcon, {
     target: mountTarget,
-    props: {
-      onOpen: handleOpen,
-    },
   })
 
   return {
     destroy: () => {
+      stopAligning?.()
       unmount(component)
       host.remove()
     },
