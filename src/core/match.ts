@@ -63,6 +63,37 @@ export const findOption = <T>(
   return options.find((o) => optionMatchesRelaxed(getText(o), candidate)) ?? null
 }
 
+const SAFE_OPTION_VALUE = /^[A-Za-z][A-Za-z .'&()-]*$/
+
+const isSafeOptionValue = (value: string): boolean => SAFE_OPTION_VALUE.test(value.trim())
+
+const single = <T>(hits: T[]): T | null | 'ambiguous' => {
+  if (hits.length === 1) return hits[0]
+  return hits.length > 1 ? 'ambiguous' : null
+}
+
+export const findUniqueOption = <T>(
+  options: T[],
+  getText: (option: T) => string,
+  candidate: string,
+  getValue?: (option: T) => string,
+): T | null => {
+  if (!normalizeOption(candidate)) return null
+  const exact = single(options.filter((o) => optionMatches(getText(o), candidate)))
+  if (exact !== null) return exact === 'ambiguous' ? null : exact
+  if (getValue) {
+    const byValue = single(
+      options.filter((o) => {
+        const value = getValue(o)
+        return isSafeOptionValue(value) && optionMatches(value, candidate)
+      }),
+    )
+    if (byValue !== null) return byValue === 'ambiguous' ? null : byValue
+  }
+  const relaxed = single(options.filter((o) => optionMatchesRelaxed(getText(o), candidate)))
+  return relaxed === 'ambiguous' ? null : relaxed
+}
+
 export const xpathLiteral = (value: string): string => {
   if (!value.includes("'")) return `'${value}'`
   if (!value.includes('"')) return `"${value}"`
@@ -102,7 +133,7 @@ const PLACEHOLDER_PREFIXES = [
 const ONLY_DASHES_OR_DOTS = /^[\s\-_—–.]+$/
 
 export const isPlaceholderText = (value: string): boolean => {
-  const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase()
+  const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase().replace(/\s*[.\u2026:]+$/, '')
   if (EXACT_PLACEHOLDERS.has(normalized)) return true
   if (ONLY_DASHES_OR_DOTS.test(normalized)) return true
   for (const prefix of PLACEHOLDER_PREFIXES) {
@@ -112,4 +143,28 @@ export const isPlaceholderText = (value: string): boolean => {
     return true
   }
   return false
+}
+const DIAL_CODE = /(^|[\s(])\+\d{1,4}\b/
+const DIAL_CODE_ONLY = /^\+\d{1,4}$/
+
+export const isDialCodeOptionSet = (texts: string[], dialAttrs = 0): boolean => {
+  const real = texts.map((t) => t.trim()).filter((t) => t && !isPlaceholderText(t))
+  if (real.length < 5) return false
+  const coded = real.filter((t) => DIAL_CODE.test(t)).length + dialAttrs
+  return coded / real.length >= 0.8
+}
+
+export const isDialCodeValue = (value: string): boolean => DIAL_CODE_ONLY.test(value.trim())
+
+export const findUniqueDialCodeOption = <T>(
+  options: T[],
+  getText: (option: T) => string,
+  code: string,
+  getDialAttr: (option: T) => string | null = () => null,
+): T | null => {
+  if (!isDialCodeValue(code)) return null
+  const digits = code.trim().slice(1)
+  const token = new RegExp(`(^|[\\s(])\\+${digits}(?!\\d)`)
+  const hits = options.filter((o) => getDialAttr(o) === digits || token.test(getText(o)))
+  return hits.length === 1 ? hits[0] : null
 }

@@ -1,160 +1,97 @@
-import { isInsideRegistered, isVisible } from '~/field/baseField'
-import { hasConcealingAncestor } from '~/core/concealment'
+import { FIELD_MARKER_ATTR } from '~/config'
+import { fieldByUuid } from '~/field/registry'
+import { isInsideRegistered } from '~/field/baseField'
 import { querySelectorAllDeep } from '~/core/shadowDom'
+import {
+  claimParts,
+  dropStalePart,
+  explicitGroup,
+  groupKeyOf,
+  isEligibleOption,
+  isGroupPart,
+  sameKeyOptions,
+  type ChoiceInput,
+} from './groupParts'
 
-export type RadioGroup = {
-  anchor: HTMLInputElement
-  inputs: HTMLInputElement[]
-  name: string
+export type ChoiceGroup = {
+  anchor: ChoiceInput
 }
 
-export type CheckboxGroup = {
-  anchor: HTMLInputElement
-  inputs: HTMLInputElement[]
-  groupKey: string
-}
+type Discovery = { singles: ChoiceInput[]; groups: ChoiceGroup[] }
 
-const groupingContainer = (input: HTMLElement): HTMLElement => {
-  const fieldset = input.closest('fieldset') as HTMLElement | null
-  if (fieldset) return fieldset
-  const role = input.closest('[role="group"]') as HTMLElement | null
-  if (role) return role
-  const form = input.closest('form') as HTMLElement | null
-  if (form) return form
-  return input.parentElement ?? document.body
-}
+const ownedByOtherField = (el: ChoiceInput): boolean =>
+  !el.hasAttribute(FIELD_MARKER_ATTR) && !isGroupPart(el) && isInsideRegistered(el)
 
-const containerKeySuffixCache = new WeakMap<HTMLElement, string>()
+const registeredAnchor = (options: ChoiceInput[]): ChoiceInput | null =>
+  options.find((o) => o.hasAttribute(FIELD_MARKER_ATTR) && o.isConnected) ?? null
 
-const containerKeySuffix = (container: HTMLElement): string => {
-  const cached = containerKeySuffixCache.get(container)
-  if (cached !== undefined) return cached
-  const siblingIndex = Array.from(container.parentNode?.children ?? []).indexOf(
-    container,
-  )
-  const suffix = `${container.tagName}::${container.id || ''}::${siblingIndex}`
-  containerKeySuffixCache.set(container, suffix)
-  return suffix
-}
-
-export const discoverRadioGroups = (root: ParentNode): RadioGroup[] => {
-  const radios = Array.from(
-    querySelectorAllDeep<HTMLInputElement>(root, 'input[type="radio"]'),
-  ).filter((el) => {
-    if (isInsideRegistered(el)) return false
-    if (!isVisible(el)) return false
-    if (hasConcealingAncestor(el)) return false
-    if (el.hasAttribute('disabled')) return false
-    return true
-  })
-
-  const grouped = new Map<
-    string,
-    { container: HTMLElement; name: string; inputs: HTMLInputElement[] }
-  >()
-
-  for (const radio of radios) {
-    const name = radio.name
-    if (!name) continue
-    const container = groupingContainer(radio)
-    const key = `${name}::${containerKeySuffix(container)}`
-    const existing = grouped.get(key)
-    if (existing) {
-      existing.inputs.push(radio)
-    } else {
-      grouped.set(key, { container, name, inputs: [radio] })
+const reconcile = (seed: ChoiceInput, out: Discovery): void => {
+  const options = sameKeyOptions(seed)
+  for (const option of options) dropStalePart(option)
+  const eligible = options.filter((o) => isEligibleOption(o) && !ownedByOtherField(o))
+  const anchor = registeredAnchor(options)
+  if (anchor) {
+    const uuid = anchor.getAttribute(FIELD_MARKER_ATTR)!
+    const field = fieldByUuid(uuid)
+    const isGroupField = field?.fieldType === 'MultiCheckbox' || field?.fieldType === 'RadioGroup'
+    if (isGroupField) {
+      claimParts(anchor, uuid)
+      return
     }
+    if (field && seed.type === 'checkbox' && eligible.length > 1) {
+      field.destroy()
+      out.groups.push({ anchor: eligible[0] })
+    }
+    return
   }
-
-  const groups: RadioGroup[] = []
-  for (const { name, inputs } of grouped.values()) {
-    if (inputs.length < 2) continue
-    groups.push({
-      anchor: inputs[0],
-      inputs,
-      name,
-    })
+  const free = eligible.filter((o) => !isGroupPart(o))
+  if (free.length > 1) {
+    out.groups.push({ anchor: free[0] })
+  } else if (free.length === 1 && seed.type === 'checkbox') {
+    out.singles.push(free[0])
   }
-  return groups
 }
 
-export const discoverCheckboxGroups = (
-  root: ParentNode,
-): { singles: HTMLInputElement[]; groups: CheckboxGroup[] } => {
-  const checkboxes = Array.from(
-    querySelectorAllDeep<HTMLInputElement>(root, 'input[type="checkbox"]'),
-  ).filter((el) => {
-    if (isInsideRegistered(el)) return false
-    if (!isVisible(el)) return false
-    if (hasConcealingAncestor(el)) return false
-    if (el.hasAttribute('disabled')) return false
-    return true
-  })
-
-  const byContainer = new Map<HTMLElement, HTMLInputElement[]>()
-  for (const cb of checkboxes) {
-    const container = groupingContainer(cb)
-    const list = byContainer.get(container) ?? []
-    list.push(cb)
-    byContainer.set(container, list)
+const discoverNamed = (root: ParentNode, type: 'checkbox' | 'radio', out: Discovery): void => {
+  const seen = new Set<string>()
+  for (const option of querySelectorAllDeep<ChoiceInput>(root as Node, `input[type="${type}"]`)) {
+    if (!option.name) continue
+    dropStalePart(option)
+    if (!isEligibleOption(option) || ownedByOtherField(option)) continue
+    const key = groupKeyOf(option)
+    if (seen.has(key)) continue
+    seen.add(key)
+    reconcile(option, out)
   }
+}
 
-  const singles: HTMLInputElement[] = []
-  const groups: CheckboxGroup[] = []
+export const discoverRadioGroups = (root: ParentNode): ChoiceGroup[] => {
+  const out: Discovery = { groups: [], singles: [] }
+  discoverNamed(root, 'radio', out)
+  return out.groups
+}
 
-  for (const [container, inputs] of byContainer) {
-    if (inputs.length === 1) {
-      singles.push(inputs[0])
+export const discoverCheckboxGroups = (root: ParentNode): Discovery => {
+  const out: Discovery = { groups: [], singles: [] }
+  discoverNamed(root, 'checkbox', out)
+  const unnamedByContainer = new Map<HTMLElement, ChoiceInput[]>()
+  for (const cb of querySelectorAllDeep<ChoiceInput>(root as Node, 'input[type="checkbox"]')) {
+    if (cb.name) continue
+    dropStalePart(cb)
+    if (isInsideRegistered(cb) || isGroupPart(cb) || !isEligibleOption(cb)) continue
+    const container = explicitGroup(cb)
+    if (!container) {
+      out.singles.push(cb)
       continue
     }
-
-    const tag = container.tagName.toLowerCase()
-    const isExplicitGroup = tag === 'fieldset' || container.getAttribute('role') === 'group'
-
-    const byName = new Map<string, HTMLInputElement[]>()
-    const noName: HTMLInputElement[] = []
-    for (const cb of inputs) {
-      if (cb.name) {
-        const list = byName.get(cb.name) ?? []
-        list.push(cb)
-        byName.set(cb.name, list)
-      } else {
-        noName.push(cb)
-      }
-    }
-
-    for (const [name, namedInputs] of byName) {
-      if (namedInputs.length === 1) {
-        singles.push(namedInputs[0])
-      } else {
-        const containerToken =
-          container.id ||
-          container.getAttribute('aria-labelledby') ||
-          containerKeySuffix(container)
-        groups.push({
-          anchor: namedInputs[0],
-          inputs: namedInputs,
-          groupKey: `${name}@${containerToken}`,
-        })
-      }
-    }
-
-    if (noName.length > 0) {
-      if (isExplicitGroup && byName.size === 0) {
-        const containerToken =
-          container.id ||
-          container.getAttribute('aria-labelledby') ||
-          containerKeySuffix(container)
-        groups.push({
-          anchor: noName[0],
-          inputs: noName,
-          groupKey: `cb@${containerToken}`,
-        })
-      } else {
-        for (const cb of noName) singles.push(cb)
-      }
-    }
+    const list = unnamedByContainer.get(container) ?? []
+    list.push(cb)
+    unnamedByContainer.set(container, list)
   }
-
-  return { singles, groups }
+  for (const [container, inputs] of unnamedByContainer) {
+    const hasNamed = Array.from(container.querySelectorAll<ChoiceInput>('input[type="checkbox"]')).some((el) => el.name)
+    if (inputs.length > 1 && !hasNamed) out.groups.push({ anchor: inputs[0] })
+    else out.singles.push(...inputs)
+  }
+  return out
 }

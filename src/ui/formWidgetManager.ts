@@ -1,5 +1,6 @@
 import { mountFormFillButton } from './formWidgetMount'
-import { detectFormContainer, fillFormContainer } from '~/field/registry'
+import { allFields, detectFormContainer, fillFormContainer } from '~/field/registry'
+import { applicationContainerFor, applicationEvidenceElements } from './applicationContainer'
 import { requestFillGrant, requestOpenDashboard } from '~/bridge/mainBridge'
 import { isVisible } from '~/field/baseField'
 import type { ResolvedOriginMode } from '~/bridge/types'
@@ -115,7 +116,20 @@ const discoverContainers = (): HTMLElement[] => {
     )
     if (!hasDescendantCandidate) result.push(c)
   }
-  return result.filter((container) => countVisibleFields(container) >= 3)
+  const qualified = result.filter((container) => countVisibleFields(container) >= 3)
+  if (qualified.length > 0) return qualified
+  const fallback = applicationContainerFor(
+    applicationEvidenceElements(
+      allFields().map((field) => ({
+        attached: isAttached(field.element),
+        displayed: field.isDisplayed(),
+        element: field.element,
+        fieldName: field.fieldName,
+        fieldType: field.fieldType,
+      })),
+    ),
+  )
+  return fallback ? [fallback] : []
 }
 
 export const refreshFormWidgets = (): void => {
@@ -125,6 +139,11 @@ export const refreshFormWidgets = (): void => {
   }
   sweepStaleWidgets()
   const containers = discoverContainers()
+  for (const [container, entry] of mountedWidgets) {
+    if (containers.includes(container)) continue
+    entry.destroy()
+    mountedWidgets.delete(container)
+  }
   for (const container of containers) {
     mountForContainer(container)
   }

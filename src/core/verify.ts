@@ -37,3 +37,28 @@ export const verifySelection = async (
   if (optionMatches(current, candidate)) return true
   return optionMatchesRelaxed(current, candidate)
 }
+export const holdsFor = async (
+  check: () => boolean,
+  durationMs: number,
+  pollMs: number,
+): Promise<boolean> => {
+  const deadline = Date.now() + durationMs
+  while (Date.now() < deadline) {
+    if (!check()) return false
+    await sleep(pollMs)
+  }
+  return check()
+}
+
+export const waitUntil = async (
+  check: () => boolean,
+  timeoutMs: number,
+  pollMs: number,
+): Promise<boolean> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (check()) return true
+    await sleep(pollMs)
+  }
+  return check()
+}

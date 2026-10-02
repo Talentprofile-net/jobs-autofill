@@ -1,6 +1,7 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { waitForElement } from '~/core/getElements'
-import { findOption, optionMatchesRelaxed, optionMatches } from '~/core/match'
+import { findUniqueDialCodeOption, findUniqueOption, isDialCodeOptionSet, isDialCodeValue, optionMatchesRelaxed, optionMatches } from '~/core/match'
+import { UnsupportedFillError } from '~/field/unsupportedFill'
 import { setNativeInputValue } from '~/core/reactProps'
 import { createKeyboardEvent } from '~/core/events'
 import { sleep } from '~/core/verify'
@@ -167,6 +168,15 @@ const findInternalInput = (combobox: HTMLElement): HTMLInputElement | null => {
   return combobox.querySelector('input') as HTMLInputElement | null
 }
 
+const isSelectOnly = (el: HTMLElement): boolean =>
+  el.getAttribute('aria-haspopup') === 'listbox' || el.hasAttribute('aria-controls') || el.hasAttribute('aria-owns')
+
+const isDialCodeListbox = (options: HTMLElement[]): boolean =>
+  isDialCodeOptionSet(
+    options.map((o) => o.innerText ?? o.textContent ?? ''),
+    options.filter((o) => o.hasAttribute('data-dial-code')).length,
+  )
+
 const readCommittedValue = (combobox: HTMLElement): string => {
   const controls = combobox.getAttribute('aria-controls')
   if (controls) {
@@ -195,8 +205,8 @@ export class GenericCombobox extends GenericBaseField {
   static qualifies(el: HTMLElement): boolean {
     if (el.getAttribute('aria-disabled') === 'true') return false
     if (el.hasAttribute('disabled')) return false
-    if (el.hasAttribute('readonly')) return false
     if (el.getAttribute('aria-readonly') === 'true') return false
+    if (el.hasAttribute('readonly') && !isSelectOnly(el)) return false
     return true
   }
 
@@ -214,7 +224,7 @@ export class GenericCombobox extends GenericBaseField {
 
   private async typeIntoCombobox(text: string): Promise<void> {
     const input = findInternalInput(this.element)
-    if (!input) return
+    if (!input || input.readOnly) return
     input.focus()
     setNativeInputValue(input, text)
     input.dispatchEvent(new InputEvent('input', { bubbles: true }))
@@ -244,7 +254,11 @@ export class GenericCombobox extends GenericBaseField {
     if (value.kind !== 'choice') return false
     const candidates = [value.preferred, ...value.fallbacks]
 
-    return fieldFillerQueue.enqueue(async () => {
+    const typedInput = findInternalInput(this.element)
+    const original = typedInput?.value ?? ''
+    let selected = false
+    let dialCodeMismatch = false
+    const done = await fieldFillerQueue.enqueue(async () => {
       try {
         for (const candidate of candidates) {
           if (this.isMatched(candidate)) return true
@@ -260,19 +274,35 @@ export class GenericCombobox extends GenericBaseField {
 
           const options = await waitForOptions(liveListbox, OPTION_WAIT_MS)
           if (options.length === 0) continue
+          const dialCodes = isDialCodeListbox(options)
+          if (dialCodes && !isDialCodeValue(candidate)) {
+            dialCodeMismatch = true
+            continue
+          }
 
-          const match = findOption(options, (o) => o.innerText, candidate)
+          const match = dialCodes
+            ? findUniqueDialCodeOption(options, (o) => o.innerText ?? '', candidate, (o) => o.getAttribute('data-dial-code'))
+            : findUniqueOption(options, (o) => o.innerText, candidate)
           if (!match) continue
 
           match.click()
           await sleep(SELECTION_SETTLE_MS)
 
-          if (this.isMatched(candidate)) return true
+          if (this.isMatched(candidate)) {
+            selected = true
+            return true
+          }
         }
         return false
       } finally {
         await this.closeMenu()
+        if (!selected && typedInput && typedInput.value !== original) {
+          setNativeInputValue(typedInput, original)
+          typedInput.dispatchEvent(new InputEvent('input', { bubbles: true }))
+        }
       }
     })
+    if (!done && dialCodeMismatch) throw new UnsupportedFillError('dial-code selector needs a dial code')
+    return done
   }
 }

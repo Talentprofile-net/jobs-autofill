@@ -1,5 +1,10 @@
 import fieldFillerQueue from '~/core/asyncQueue'
-import { findOption } from '~/core/match'
+import { findUniqueDialCodeOption, findUniqueOption, isDialCodeOptionSet, isDialCodeValue, isPlaceholderText } from '~/core/match'
+import { UnsupportedFillError } from '~/field/unsupportedFill'
+import { holdsFor } from '~/core/verify'
+
+const SELECT_SETTLE_MS = 300
+const SELECT_POLL_MS = 25
 import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { GenericBaseField } from './GenericBaseField'
 import type { ProfileValue } from '~/field/types'
@@ -31,21 +36,39 @@ export class GenericSelect extends GenericBaseField {
   private async fillSingle(value: ProfileValue): Promise<boolean> {
     if (value.kind !== 'choice') return false
     const select = this.selectElement
-    const candidates = [value.preferred, ...value.fallbacks]
-    const options = Array.from(select.options)
-    return fieldFillerQueue.enqueue(async () => {
-      for (const candidate of candidates) {
-        const option = findOption(options, (o) => o.text, candidate)
-        if (option) {
-          if (select.selectedIndex === option.index) return true
-          select.selectedIndex = option.index
-          select.dispatchEvent(new Event('input', { bubbles: true }))
-          select.dispatchEvent(new Event('change', { bubbles: true }))
-          return select.selectedIndex === option.index
-        }
+    const dialCodes = isDialCodeOptionSet(Array.from(select.options).map((o) => o.text))
+    const candidates = [value.preferred, ...value.fallbacks].filter((c) => !dialCodes || isDialCodeValue(c))
+    const options = Array.from(select.options).filter(
+      (o) => !o.disabled && !(o.value === '' && isPlaceholderText(o.text)),
+    )
+    const option =
+      candidates
+        .map((candidate) =>
+          dialCodes
+            ? findUniqueDialCodeOption(options, (o) => o.text, candidate)
+            : findUniqueOption(options, (o) => o.text, candidate, (o) => o.value),
+        )
+        .find((o) => o !== null) ?? null
+    if (!option) throw new UnsupportedFillError('no unique safe option')
+    const selected = await fieldFillerQueue.enqueue(async () => {
+      if (select.selectedIndex === option.index && select.value === option.value) return true
+      const originalIndex = select.selectedIndex
+      const accepted = () => select.selectedIndex === option.index && select.value === option.value
+      select.focus()
+      select.selectedIndex = option.index
+      select.dispatchEvent(new Event('input', { bubbles: true }))
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      select.blur()
+      if (await holdsFor(accepted, SELECT_SETTLE_MS, SELECT_POLL_MS)) return true
+      if (select.selectedIndex !== originalIndex) {
+        select.selectedIndex = originalIndex
+        select.dispatchEvent(new Event('input', { bubbles: true }))
+        select.dispatchEvent(new Event('change', { bubbles: true }))
       }
       return false
     })
+    if (!selected) throw new UnsupportedFillError('page rejected the selection')
+    return true
   }
 
   private async fillMulti(value: ProfileValue): Promise<boolean> {

@@ -3,7 +3,8 @@ import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
 import { resolveOptionLabel } from './labelResolver'
-import { groupLabel } from './groupLabel'
+import { groupHeading } from './groupLabel'
+import { activateOption, claimParts, formOwner, isOperableOption, liveMembers, ownsMemberEvent, releaseParts } from './groupParts'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 100
@@ -26,15 +27,34 @@ export class GenericCheckboxMulti extends GenericBaseField {
   override fieldType = 'MultiCheckbox'
   override destructiveByDefault = false
 
-  private inputs: HTMLInputElement[]
-
-  constructor(anchor: HTMLInputElement, inputs: HTMLInputElement[]) {
+  constructor(anchor: HTMLInputElement) {
     super(anchor)
-    this.inputs = inputs
+    claimParts(anchor, this.uuid)
+  }
+
+  private get inputs(): HTMLInputElement[] {
+    return liveMembers(this.element as HTMLInputElement)
+  }
+
+  override destroy(): void {
+    releaseParts(this.uuid)
+    super.destroy()
+  }
+
+  protected override interactionRoot(): EventTarget {
+    return formOwner(this.element as HTMLInputElement)
+  }
+
+  protected override ownsInteraction(target: Element): boolean {
+    return ownsMemberEvent(this.element as HTMLInputElement, target)
+  }
+
+  override isDisplayed(): boolean {
+    return this.inputs.some(isOperableOption)
   }
 
   override get fieldName(): string {
-    return groupLabel(this.element as HTMLInputElement) || super.fieldName
+    return groupHeading(this.inputs) || super.fieldName
   }
 
   private get choices(): Choice[] {
@@ -64,14 +84,14 @@ export class GenericCheckboxMulti extends GenericBaseField {
       if (shouldDeselect) {
         for (const choice of plan.toDeselect) {
           if (choice.input.checked) {
-            choice.input.click()
+            activateOption(choice.input)
             await sleep(0)
           }
         }
       }
       for (const choice of plan.toSelect) {
         if (!choice.input.checked) {
-          choice.input.click()
+          activateOption(choice.input)
           await sleep(0)
         }
       }

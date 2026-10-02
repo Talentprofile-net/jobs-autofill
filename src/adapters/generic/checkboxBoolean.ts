@@ -1,6 +1,7 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
+import { activateOption, isOperableOption } from './groupParts'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 100
@@ -14,6 +15,10 @@ export class GenericCheckboxBoolean extends GenericBaseField {
     return this.element as HTMLInputElement
   }
 
+  override isDisplayed(): boolean {
+    return isOperableOption(this.inputElement)
+  }
+
   currentValue(): boolean {
     return this.inputElement.checked
   }
@@ -23,7 +28,7 @@ export class GenericCheckboxBoolean extends GenericBaseField {
     const input = this.inputElement
     if (input.checked === value.value) return true
     return fieldFillerQueue.enqueue(async () => {
-      input.click()
+      activateOption(input)
       await sleep(VERIFY_SETTLE_MS)
       return input.checked === value.value
     })

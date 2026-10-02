@@ -10,6 +10,7 @@ import type {
   ResolvedOriginMode,
 } from './types'
 import type { AnswerCaptureRecord } from './types'
+import { whenDocumentVisible } from '~/core/visibility'
 
 type Envelope<T> = {
   magic: typeof BRIDGE_MAGIC
@@ -119,6 +120,7 @@ export const onBridgeMessage = (handler: Handler): (() => void) => {
 }
 
 export const getOriginMode = async (): Promise<ResolvedOriginMode> => {
+  await whenDocumentVisible()
   const id = crypto.randomUUID()
   const reply = await awaitReply(id, MODE_REQUEST_TIMEOUT_MS, () =>
     sendFromMain({ id, kind: 'mode.get' }),

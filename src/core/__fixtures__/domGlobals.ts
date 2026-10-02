@@ -16,3 +16,20 @@ export const setRect = (el: Element, rect: { x: number; y: number; width: number
 }
 
 export const flushMutations = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+const XPATH_AS_CSS: Record<string, string> = {
+  ".//form | .//div[@role='form']": 'form, div[role="form"]',
+  './/*[@placeholder]': '[placeholder]',
+}
+
+export const shimXPath = (): void => {
+  Object.assign(globalThis, { XPathResult: { FIRST_ORDERED_NODE_TYPE: 9, ORDERED_NODE_SNAPSHOT_TYPE: 7 } })
+  Object.assign(document, {
+    evaluate: (xpath: string, context: ParentNode) => {
+      const css = XPATH_AS_CSS[xpath]
+      if (!css) throw new Error(`unshimmed xpath ${xpath}`)
+      const nodes = Array.from(context.querySelectorAll(css))
+      return { singleNodeValue: nodes[0] ?? null, snapshotItem: (i: number) => nodes[i] ?? null, snapshotLength: nodes.length }
+    },
+  })
+}

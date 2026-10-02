@@ -10,6 +10,7 @@ beforeEach(() => {
     <input id="first" data-tp-field="uuid-first">
     <input id="plain">
     <spl-input id="host" data-tp-field="uuid-host"></spl-input>
+    <input id="option-b" type="checkbox" data-tp-field-part="uuid-group">
   </body></html>`)
   focused = true
   Object.assign(document, { hasFocus: () => focused })
@@ -36,6 +37,12 @@ describe('focusedFieldTarget (picker command in one frame of many)', () => {
     expect(focusedFieldTarget(document)).toBeNull()
     focus(document.body)
     expect(focusedFieldTarget(document)).toBeNull()
+  })
+
+  it('opens for the group that owns a focused non-anchor option', () => {
+    const option = document.getElementById('option-b')!
+    focus(option)
+    expect(focusedFieldTarget(document)).toEqual({ fieldUuid: 'uuid-group', focused: option })
   })
 
   it('reaches a focused control inside an open shadow root', () => {

@@ -1,3 +1,9 @@
+import {
+  countFillableControlsInPage,
+  isApplicationFrameSurface,
+  measureIframesInPage,
+  type FrameGeometry,
+} from "~/auth/frameSurface";
 import { defineBackground } from "wxt/utils/define-background";
 import { apiFetch, ApiError, AuthError, NetworkError } from "~/api/client";
 import { fetchMyProfile } from "~/api/profile";
@@ -424,6 +430,58 @@ export default defineBackground(() => {
     }
   };
 
+  const measureTopFrameIframes = async (
+    tabId: number,
+  ): Promise<Array<{ src: string; width: number; height: number; visible: boolean }> | null> => {
+    try {
+      const [res] = await browser.scripting.executeScript({
+        func: measureIframesInPage,
+        target: { frameIds: [0], tabId },
+      });
+      return Array.isArray(res?.result) ? res.result : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const countFrameControls = async (tabId: number, frameId: number): Promise<number | null> => {
+    try {
+      const [res] = await browser.scripting.executeScript({
+        func: countFillableControlsInPage,
+        target: { frameIds: [frameId], tabId },
+      });
+      return typeof res?.result === "number" ? res.result : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const geometryForFrame = (
+    measured: Array<{ src: string; width: number; height: number; visible: boolean }>,
+    frameUrl: string,
+  ): FrameGeometry | null => {
+    const key = (url: string): string => {
+      try {
+        const u = new URL(url);
+        return `${u.origin}${u.pathname}`;
+      } catch {
+        return url;
+      }
+    };
+    const exact = measured.filter((m) => key(m.src) === key(frameUrl));
+    const sameOrigin = measured.filter((m) => {
+      try {
+        return new URL(m.src).origin === new URL(frameUrl).origin;
+      } catch {
+        return false;
+      }
+    });
+    const pick = exact.length > 0 ? exact : sameOrigin.length === 1 ? sameOrigin : [];
+    if (pick.length === 0) return null;
+    const best = pick.reduce((a, b) => (a.width * a.height >= b.width * b.height ? a : b));
+    return { height: best.height, visible: best.visible, width: best.width };
+  };
+
   const buildTabOriginInfo = async (
     tabId: number,
   ): Promise<TabOriginInfo | null> => {
@@ -446,6 +504,7 @@ export default defineBackground(() => {
     const granted = await browser.permissions.getAll();
     const grantedSet = new Set(granted.origins ?? []);
 
+    const geometries = await measureTopFrameIframes(tabId);
     const iframeMap = new Map<string, { pattern: string; origin: string }>();
     for (const frame of frames) {
       if (frame.frameId === 0) continue;
@@ -455,7 +514,12 @@ export default defineBackground(() => {
       if (!pattern) continue;
       if (pattern === topPattern) continue;
       if (iframeMap.has(pattern)) continue;
-      if (isUnrelatedFrameUrl(frame.url) && !enabledMap.has(pattern)) continue;
+      if (!enabledMap.has(pattern)) {
+        if (isUnrelatedFrameUrl(frame.url)) continue;
+        const controls = await countFrameControls(tabId, frame.frameId);
+        const geometry = geometries ? geometryForFrame(geometries, frame.url) : null;
+        if (!isApplicationFrameSurface({ controls, geometry, url: frame.url })) continue;
+      }
       const origin = originFromPattern(pattern) ?? "";
       iframeMap.set(pattern, { pattern, origin });
     }
@@ -1781,17 +1845,19 @@ export default defineBackground(() => {
         const frameId = sender.frameId;
         if (typeof tabId === "number" && typeof frameId === "number") {
           const key = frameKey(tabId, frameId);
+          const previous = frameAutoModeCache.get(key)?.mode;
+          const mode = previous === "application" ? "application" : message.mode;
           frameAutoModeCache.set(key, {
-            mode: message.mode,
+            mode,
             resolvedAt: Date.now(),
           });
           const pending = pendingAutoModeRequests.get(key);
           if (pending) {
             clearTimeout(pending.timer);
             pendingAutoModeRequests.delete(key);
-            pending.resolve(message.mode);
+            pending.resolve(mode);
           }
-          notifyFrameOfResolvedMode(tabId, frameId, message.mode);
+          if (previous !== mode) notifyFrameOfResolvedMode(tabId, frameId, mode);
         }
         return { ok: true };
       }

@@ -1,3 +1,4 @@
+import { createFileAttachLedger, type FileAttachLedger } from './logicalIdentity'
 import type { AtsName, FillOutcome, ProfileValue } from './types'
 import type { FieldDescriptor, FillValueResult, ResolvedOriginMode } from '~/bridge/types'
 import { FIELD_MARKER_ATTR } from '~/config'
@@ -233,10 +234,14 @@ type SinglePassOutcome = {
   counts: FillCounts
 }
 
+const liveFieldPeers = (): BaseField[] =>
+  Array.from(fieldRegistry.values()).filter((peer) => isAttached(peer.element) && peer.isDisplayed())
+
 const runSinglePass = async (
   batchId: string,
   fields: BaseField[],
   emitter: ReturnType<typeof createProgressEmitter> | null,
+  attachedFiles: FileAttachLedger,
 ): Promise<SinglePassOutcome> => {
   const counts: FillCounts = {
     failed: 0,
@@ -283,8 +288,18 @@ const runSinglePass = async (
     const profileField: string | null = result.profileField
     const matchedAnswerId: string | null = result.matchedAnswerId
 
+    const isFile = value.kind === 'file'
+    if (isFile && attachedFiles.claimed(field)) {
+      counts.skipped++
+      emitter?.add({ failed: 0, filled: 0, skipped: 1, unsupported: 0 })
+      field.recordResolverOutcome('skipped', profileField)
+      passedUuids.add(field.uuid)
+      continue
+    }
+
     try {
       const outcome: FillOutcome = await field.fillFromResolved(value, false)
+      if (isFile && outcome.status === 'filled') attachedFiles.record(field, liveFieldPeers())
       if (outcome.status === 'filled') {
         counts.filled++
         emitter?.add({ failed: 0, filled: 1, skipped: 0, unsupported: 0 })
@@ -368,6 +383,7 @@ const fillAll = async (
     unsupported: 0,
   }
   const everPassed = new Set<string>()
+  const attachedFiles = createFileAttachLedger()
 
   let passes = 0
   let currentBatch = initialFields
@@ -376,7 +392,7 @@ const fillAll = async (
     while (passes < MAX_FILL_PASSES && currentBatch.length > 0) {
       passes++
       currentPass = passes
-      const outcome = await runSinglePass(batchId, currentBatch, emitter)
+      const outcome = await runSinglePass(batchId, currentBatch, emitter, attachedFiles)
       totalCounts.filled += outcome.counts.filled
       totalCounts.skipped += outcome.counts.skipped
       totalCounts.failed += outcome.counts.failed
@@ -473,7 +489,14 @@ const OBSERVER_OPTIONS: MutationObserverInit = {
   subtree: true,
 }
 
-export const startObserver = (): (() => void) => {
+type ObserverBridge = {
+  getOriginMode: typeof getOriginMode
+  onBridgeMessage: typeof onBridgeMessage
+}
+
+export const startObserver = (
+  bridge: ObserverBridge = { getOriginMode, onBridgeMessage },
+): (() => void) => {
   let discoverTimer: number | null = null
   let discoverMaxTimer: number | null = null
   let sweepTimer: number | null = null
@@ -488,7 +511,7 @@ export const startObserver = (): (() => void) => {
   }, OBSERVER_OPTIONS)
 
   void (async () => {
-    currentMode = await getOriginMode()
+    currentMode = await bridge.getOriginMode()
     setFormWidgetMode(currentMode)
     if (currentMode === 'application') {
       refreshFormWidgets()
@@ -620,7 +643,7 @@ export const startObserver = (): (() => void) => {
   window.addEventListener('focus', onWindowFocus)
   document.addEventListener('visibilitychange', onVisibilityChange)
 
-  const unsubscribe = onBridgeMessage((msg) => {
+  const unsubscribe = bridge.onBridgeMessage((msg) => {
     if (msg.kind === 'fill.run' && msg.requestId === null) {
       handleFillAllRequest(msg.batchId, msg.emit)
     }
@@ -636,7 +659,7 @@ export const startObserver = (): (() => void) => {
       if (currentMode === 'notesOnly') {
         destroyAllFormWidgets()
       } else {
-        refreshFormWidgets()
+        runDiscoverCycle()
       }
     }
   })

@@ -7,7 +7,7 @@ export const MAX_CV_BYTES = 10 * 1024 * 1024
 export type CvFileValue = Extract<ProfileValue, { kind: 'file' }>
 
 const RESUME_LABEL = /\b(resume|cv|curriculum vitae|lebenslauf)\b/i
-const NOT_RESUME_LABEL = /\b(cover|motivation|transcript|portfolio|certificate|reference|photo|picture|avatar)\b/i
+const NOT_RESUME_LABEL = /\b(cover|motivation|transcript|portfolio|certificate|reference|photo|picture|avatar)\b|\bletter\s+of\s+(interest|intent)\b/i
 
 export const isResumeFieldLabel = (label: string): boolean => {
   const text = label

@@ -589,6 +589,12 @@
     detectedAts === "generic" && tabOriginInfo?.topEnabled === true,
   );
 
+  const MODE_OPTIONS: { mode: OriginMode; label: string }[] = [
+    { label: "Autofill this page", mode: "application" },
+    { label: "Notes only", mode: "notesOnly" },
+    { label: "Auto detect", mode: "auto" },
+  ];
+
   const modeLabel = (mode: OriginMode | null): string => {
     if (mode === "application") return "Autofill + Picker";
     if (mode === "notesOnly") return "Picker only";
@@ -596,6 +602,45 @@
     return "Unknown";
   };
 </script>
+
+{#snippet siteControls()}
+  {#if tabOriginInfo}
+    <div class="mode-controls-row" data-tp-site-controls="true">
+      <span class="mode-label">Mode:</span>
+      {#each MODE_OPTIONS as option (option.mode)}
+        <button
+          type="button"
+          class="mode-pill"
+          class:mode-pill-active={topMode === option.mode}
+          data-mode={option.mode}
+          disabled={busy}
+          onclick={() =>
+            tabOriginInfo &&
+            handleSetMode(
+              {
+                mode: topMode ?? "application",
+                origin: tabOriginInfo.topOrigin,
+                pattern: tabOriginInfo.topPattern,
+              },
+              option.mode,
+            )}>{option.label}</button
+        >
+      {/each}
+    </div>
+    <button
+      type="button"
+      class="link inline"
+      data-tp-site-disable="true"
+      onclick={() =>
+        tabOriginInfo &&
+        handleDisableOrigin({
+          mode: topMode ?? "application",
+          origin: tabOriginInfo.topOrigin,
+          pattern: tabOriginInfo.topPattern,
+        })}>Disable on this site</button
+    >
+  {/if}
+{/snippet}
 
 <div class="wrap">
   {#if status.authenticated}
@@ -688,56 +733,11 @@
     {:else if isMinimalMode}
       <section class="minimal">
         <div class="site-row">
-          {#if topIsNotesOnly}
+          {#if showModeControls}
             <div class="enabled-line">
-              <span class="badge badge-ok"
-                >Picker enabled on {tabOriginInfo?.topOrigin}</span
-              >
-              <button
-                type="button"
-                class="link inline"
-                onclick={() =>
-                  tabOriginInfo &&
-                  handleDisableOrigin({
-                    mode: "notesOnly",
-                    origin: tabOriginInfo.topOrigin,
-                    pattern: tabOriginInfo.topPattern,
-                  })}>Disable</button
-              >
+              <span class="badge badge-ok">{siteLabel}</span>
             </div>
-            <div class="mode-controls-row">
-              <span class="mode-label">Mode:</span>
-              <button
-                type="button"
-                class="mode-pill mode-pill-active"
-                disabled={busy}
-                onclick={() =>
-                  tabOriginInfo &&
-                  handleSetMode(
-                    {
-                      mode: "notesOnly",
-                      origin: tabOriginInfo.topOrigin,
-                      pattern: tabOriginInfo.topPattern,
-                    },
-                    "notesOnly",
-                  )}>Picker only</button
-              >
-              <button
-                type="button"
-                class="mode-pill"
-                disabled={busy}
-                onclick={() =>
-                  tabOriginInfo &&
-                  handleSetMode(
-                    {
-                      mode: "notesOnly",
-                      origin: tabOriginInfo.topOrigin,
-                      pattern: tabOriginInfo.topPattern,
-                    },
-                    "application",
-                  )}>Autofill</button
-              >
-            </div>
+            {@render siteControls()}
           {:else if showEnablePrompt}
             <div class="enable-block">
               <p class="enable-text">
@@ -842,55 +842,8 @@
             </div>
           {/if}
 
-          {#if showModeControls && tabOriginInfo}
-            <div class="mode-controls-row">
-              <span class="mode-label">Mode:</span>
-              <button
-                type="button"
-                class="mode-pill"
-                class:mode-pill-active={topMode === "application"}
-                disabled={busy}
-                onclick={() =>
-                  handleSetMode(
-                    {
-                      mode: topMode ?? "application",
-                      origin: tabOriginInfo!.topOrigin,
-                      pattern: tabOriginInfo!.topPattern,
-                    },
-                    "application",
-                  )}>Autofill</button
-              >
-              <button
-                type="button"
-                class="mode-pill"
-                class:mode-pill-active={topMode === "notesOnly"}
-                disabled={busy}
-                onclick={() =>
-                  handleSetMode(
-                    {
-                      mode: topMode ?? "application",
-                      origin: tabOriginInfo!.topOrigin,
-                      pattern: tabOriginInfo!.topPattern,
-                    },
-                    "notesOnly",
-                  )}>Picker only</button
-              >
-              <button
-                type="button"
-                class="mode-pill"
-                class:mode-pill-active={topMode === "auto"}
-                disabled={busy}
-                onclick={() =>
-                  handleSetMode(
-                    {
-                      mode: topMode ?? "application",
-                      origin: tabOriginInfo!.topOrigin,
-                      pattern: tabOriginInfo!.topPattern,
-                    },
-                    "auto",
-                  )}>Auto</button
-              >
-            </div>
+          {#if showModeControls}
+            {@render siteControls()}
           {/if}
 
           {#if hasEnabledIframe && iframeOrigins.length > enabledIframes.length}

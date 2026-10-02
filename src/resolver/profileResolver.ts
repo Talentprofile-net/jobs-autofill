@@ -10,6 +10,7 @@ import { parseDate, type ParsedDate } from './parseDate'
 import { parseSection, type ParsedSection } from './sectionParser'
 
 const TEXT_FIELD_TYPES = new Set(['TextInput', 'ContentEditable'])
+const FILE_FIELD_TYPES = new Set(['FileUpload', 'SingleFileUpload', 'MultiFileUpload'])
 
 export type ResolveResult = {
   value: ProfileValue
@@ -142,16 +143,19 @@ const re = {
   city: /\b(city|town)\b/i,
   region: /\b(state|province|region)\b/i,
   postalCode: /\b(zip|postal)\s*code\b/i,
-  location: /\b(location|where.*based|current.*residence|address)\b/i,
+  location: /\b(location|where.*based|current.*residence)\b/i,
+  streetAddress: /\baddress\b/i,
   locationExclusions: /\b(code|prefix|dialing|line\s*\d|street|apt|apartment|suite)\b/i,
   relocate: /\brelocat(e|ion)\b/i,
   availability: /\b(availab(le|ility)|open\s*to\s*work)\b/i,
   availabilityExclusions: /\b(date|start|when|day|month|year|time)\b/i,
-  summaryProfile: /\b(summary|bio|about\s*you|about\s*me|about\s*yourself|cover\s*letter|tell\s*us\s*about|self[\s-]*description)\b/i,
+  summaryProfile: /\b(summary|bio|about\s*you|about\s*me|about\s*yourself|self[\s-]*description)\b/i,
+  coverLetter: /\b(cover|motivation(al)?)\s*letter\b|\bletter\s+of\s+(interest|intent|motivation)\b/i,
   hourlyRate: /\bhourly\s*rate\b/i,
   monthlyRate: /\bmonthly\s*rate\b/i,
   currency: /\b(currency|preferred\s*currency)\b/i,
   skills: /\b(skills?|technologies|tech\s*stack|expertise)\b/i,
+  selfAssessment: /\b(how\s+(would|do)\s+you\s+(describe|rate|assess)|rate\s+your|level\s+of|proficiency|how\s+(good|strong|experienced))\b/i,
   languages: /\b(languages?|spoken\s*languages?)\b/i,
   school: /\b(school|university|college|institution)\b/i,
   degree: /\b(degree|qualification)\b/i,
@@ -174,6 +178,17 @@ const isLocationField = (n: string): boolean =>
 
 const isCountryField = (n: string): boolean =>
   re.country.test(n) && !re.locationExclusions.test(n)
+
+const isStreetAddressField = (n: string): boolean =>
+  re.streetAddress.test(n) && !re.city.test(n) && !re.country.test(n)
+
+const explicitDialCode = (phone: string): string | null => {
+  const match = /^\s*\+(\d{1,4})[\s\-.(]/.exec(phone)
+  return match ? `+${match[1]}` : null
+}
+
+const isPlaceField = (n: string): boolean =>
+  isLocationField(n) || isCountryField(n) || re.city.test(n) || re.region.test(n)
 
 const isNationalityField = (n: string): boolean =>
   re.nationality.test(n)
@@ -224,9 +239,10 @@ const rawLocationToValue = (
   const raw = profile.location ?? ''
   if (!raw) return { kind: 'unsupported' }
   if (TEXT_FIELD_TYPES.has(fieldType)) return str(raw)
-  const parsed = parseLocation(raw)
-  if (!parsed?.country) return { kind: 'unsupported' }
-  return countryToValue(parsed, fieldType)
+  const country = countryToValue(parseLocation(raw), fieldType)
+  if (country.kind !== 'choice') return choice(raw, [])
+  const fallbacks = [country.preferred, ...country.fallbacks].filter((v) => v !== raw)
+  return choice(raw, fallbacks)
 }
 
 const resolveCountryGeneric = (
@@ -318,14 +334,17 @@ const resolveGeneric = (
       'profileName',
     )
   }
-  if (re.preferredName.test(fieldName)) {
+  if (re.preferredName.test(fieldName) && !isPlaceField(fieldName)) {
     return withField(str(splitName(profile.profileName).first, 'guess'), 'profileName')
   }
   if (re.email.test(fieldName)) {
     return withField(str(profile.user?.email ?? ''), 'user.email')
   }
   if (isPhoneField(fieldName)) {
-    return withField(str(profile.user?.phoneNumber ?? ''), 'user.phoneNumber')
+    const phone = profile.user?.phoneNumber ?? ''
+    if (TEXT_FIELD_TYPES.has(fieldType)) return withField(str(phone), 'user.phoneNumber')
+    const dialCode = explicitDialCode(phone)
+    return dialCode ? withField(choice(dialCode, []), 'user.phoneNumber') : withField({ kind: 'unsupported' }, null)
   }
   if (re.linkedin.test(fieldName)) {
     return withField(str(findLink(profile.links, 'linkedin')), 'links.linkedin')
@@ -366,6 +385,9 @@ const resolveGeneric = (
   if (re.region.test(fieldName)) {
     return withField(resolveRegionGeneric(profile, fieldType), 'location')
   }
+  if (isStreetAddressField(fieldName)) {
+    return withField({ kind: 'unsupported' }, null)
+  }
   if (isLocationField(fieldName)) {
     return withField(rawLocationToValue(profile, fieldType), 'location')
   }
@@ -386,6 +408,9 @@ const resolveGeneric = (
   }
   if (re.summaryProfile.test(fieldName)) {
     return withField(str(profile.description ?? ''), 'description')
+  }
+  if (re.selfAssessment.test(fieldName) && (re.skills.test(fieldName) || re.languages.test(fieldName))) {
+    return withField({ kind: 'unsupported' }, null)
   }
   if (re.skills.test(fieldName)) {
     const skills = profile.skills ?? []
@@ -510,6 +535,8 @@ export const resolveField = (
 ): ResolveResult => {
   const trimmed = (fieldName ?? '').trim()
   if (!trimmed) return unsupported()
+  if (FILE_FIELD_TYPES.has(fieldType)) return unsupported()
+  if (re.coverLetter.test(trimmed)) return unsupported()
 
   const parsedSection = parseSection(section)
 

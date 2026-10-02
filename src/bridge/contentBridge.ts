@@ -1,5 +1,6 @@
 import { BRIDGE_MAGIC, FIELD_MARKER_ATTR, PROFILE_SCORE_EMPTY_BELOW } from "~/config";
 import { resolveAutoModeFromDom } from "~/auth/autoModeHeuristic";
+import { createAutoModeWatcher, createDocumentTreeObserver, type AutoModeWatcher } from "~/auth/autoModeWatcher";
 import type {
   AnswerCaptureRecord,
   AuthStatus,
@@ -35,6 +36,7 @@ import {
 import type { PickerRelay } from "~/ui/picker/protocol";
 import { browser } from "wxt/browser";
 import { focusedFieldTarget } from "~/ui/picker/focusTarget";
+import { whenDocumentVisible } from "~/core/visibility";
 
 type Envelope<T> = {
   magic: typeof BRIDGE_MAGIC;
@@ -147,23 +149,45 @@ const createMainWorldGate = (): MainWorldGate => {
 
 let bridgeStarted = false;
 
-const computeAutoModeAfterPaint = (): Promise<ResolvedOriginMode> =>
-  new Promise((resolve) => {
-    const compute = () => {
-      try {
-        resolve(resolveAutoModeFromDom());
-      } catch {
-        resolve("notesOnly");
-      }
-    };
+const AUTO_MODE_DEBOUNCE_MS = 400;
+const AUTO_MODE_SHADOW_POLL_MS = 2_000;
+
+const afterPaint = async (): Promise<void> => {
+  await whenDocumentVisible();
+  return new Promise((resolve) => {
     if (document.readyState === "complete") {
-      requestAnimationFrame(compute);
+      requestAnimationFrame(() => resolve());
     } else {
-      window.addEventListener("load", () => requestAnimationFrame(compute), {
+      window.addEventListener("load", () => requestAnimationFrame(() => resolve()), {
         once: true,
       });
     }
   });
+};
+
+let autoModeWatcher: AutoModeWatcher | null = null;
+
+const autoModeVerdict = async (): Promise<ResolvedOriginMode> => {
+  await afterPaint();
+  if (!autoModeWatcher) {
+    const tree = createDocumentTreeObserver(document, AUTO_MODE_SHADOW_POLL_MS);
+    autoModeWatcher = createAutoModeWatcher({
+      debounceMs: AUTO_MODE_DEBOUNCE_MS,
+      evaluate: () => {
+        try {
+          return resolveAutoModeFromDom();
+        } catch {
+          return "notesOnly";
+        }
+      },
+      observe: tree.observe,
+      onUpgrade: () => {
+        void sendToBackground({ kind: "mode.frameResolved", mode: "application" }).catch(() => {});
+      },
+    });
+  }
+  return autoModeWatcher.verdict();
+};
 
 const resolveFillValues = async (fields: FieldRequest[]) => {
   const profileRes = await sendToBackground<FieldResolveResult[]>({
@@ -445,7 +469,7 @@ export const startContentBridge = (ats: AtsName): void => {
     }
     if (m.kind === "mode.resolveAuto") {
       void (async () => {
-        const mode = await computeAutoModeAfterPaint();
+        const mode = await autoModeVerdict();
         await sendToBackground({
           kind: "mode.frameResolved",
           mode,
@@ -459,6 +483,8 @@ export const startContentBridge = (ats: AtsName): void => {
   browser.runtime.onMessage.addListener(runtimeListener);
 
   window.addEventListener("pagehide", () => {
+    autoModeWatcher?.stop();
+    autoModeWatcher = null;
     gate.destroy();
     gestures.destroy();
     closePicker();

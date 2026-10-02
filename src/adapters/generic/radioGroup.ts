@@ -3,7 +3,8 @@ import { findOption } from '~/core/match'
 import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
 import { resolveOptionLabel } from './labelResolver'
-import { groupLabel } from './groupLabel'
+import { groupHeading } from './groupLabel'
+import { activateOption, claimParts, formOwner, isOperableOption, liveMembers, ownsMemberEvent, releaseParts } from './groupParts'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 100
@@ -18,15 +19,34 @@ const radioLabel = (radio: HTMLInputElement): string => {
 export class GenericRadioGroup extends GenericBaseField {
   override fieldType = 'RadioGroup'
 
-  private radios: HTMLInputElement[]
-
-  constructor(anchor: HTMLInputElement, radios: HTMLInputElement[]) {
+  constructor(anchor: HTMLInputElement) {
     super(anchor)
-    this.radios = radios
+    claimParts(anchor, this.uuid)
+  }
+
+  private get radios(): HTMLInputElement[] {
+    return liveMembers(this.element as HTMLInputElement)
+  }
+
+  override destroy(): void {
+    releaseParts(this.uuid)
+    super.destroy()
+  }
+
+  protected override interactionRoot(): EventTarget {
+    return formOwner(this.element as HTMLInputElement)
+  }
+
+  protected override ownsInteraction(target: Element): boolean {
+    return ownsMemberEvent(this.element as HTMLInputElement, target)
+  }
+
+  override isDisplayed(): boolean {
+    return this.radios.some(isOperableOption)
   }
 
   override get fieldName(): string {
-    return groupLabel(this.element as HTMLInputElement) || super.fieldName
+    return groupHeading(this.radios) || super.fieldName
   }
 
   currentValue(): string {
@@ -48,7 +68,7 @@ export class GenericRadioGroup extends GenericBaseField {
         const match = findOption(options, (o) => o.text, candidate)
         if (!match) continue
         if (match.input.checked) return true
-        match.input.click()
+        activateOption(match.input)
         await sleep(VERIFY_SETTLE_MS)
         if (match.input.checked) return true
       }

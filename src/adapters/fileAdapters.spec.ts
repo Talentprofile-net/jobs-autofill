@@ -1,17 +1,23 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 
 import { installDom, setRect } from '~/core/__fixtures__/domGlobals'
 import type { ProfileValue } from '~/field/types'
 
-mock.module('../field/registry', () => ({ registerField: () => {}, unregisterField: () => {} }))
-mock.module('../capture/captureBuffer', () => ({
-  registerFieldForCapture: () => {},
-  unregisterFieldFromCapture: () => {},
-}))
+mock.module('../ui/formWidgetMount', () => ({ mountFormFillButton: () => ({ destroy: () => {} }) }))
 mock.module('../ui/picker/iconMount', () => ({ mountPickerIcon: () => null }))
 
 type Adapter = { fill: (value: ProfileValue) => Promise<boolean> }
 type AdapterCtor = new (el: HTMLElement) => Adapter
+
+const { allFields } = await import('../field/registry')
+const { teardownAllCaptureForms } = await import('../capture/captureBuffer')
+
+const resetFields = () => {
+  for (const field of allFields()) field.destroy()
+  teardownAllCaptureForms()
+}
+
+afterEach(resetFields)
 
 const { GenericFileInput } = await import('./generic/fileInput')
 const { File: ReactFile } = await import('./greenhouseReact/file')
@@ -44,6 +50,7 @@ class FakeDataTransfer {
 }
 
 const mountCase = (markup: string, wrapper: string) => {
+  resetFields()
   const dom = installDom(`<html><body><form>
     <div id="case-plain">${markup.replaceAll('ID', 'plain')}</div>
     <div id="case-aria" aria-hidden="true">${markup.replaceAll('ID', 'aria')}</div>

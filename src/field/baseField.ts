@@ -9,6 +9,7 @@ import { isPlaceholderText } from '~/core/match'
 import type { PickerMode, ProfileValue, FillOutcome } from './types'
 import { mountPickerIcon, type WidgetPlacement } from '~/ui/picker/iconMount'
 import { isAttached } from '~/core/shadowDom'
+import { UnsupportedFillError } from './unsupportedFill'
 
 export const isRegistered = (el: HTMLElement): boolean =>
   el.hasAttribute(FIELD_MARKER_ATTR)
@@ -260,6 +261,18 @@ export abstract class BaseField {
     return this.element
   }
 
+  protected get hasUserInteracted(): boolean {
+    return this.userInteracted
+  }
+
+  protected interactionRoot(): EventTarget {
+    return this.element
+  }
+
+  protected ownsInteraction(target: Element): boolean {
+    return target === this.element || this.element.contains(target)
+  }
+
   private attachInteractionListeners(): void {
     if (this.interactionListenersAttached) return
     this.interactionListenersAttached = true
@@ -267,21 +280,17 @@ export abstract class BaseField {
       this.userInteracted = true
       this.ensureFillSnapshot()
     }
+    const root = this.interactionRoot()
     const handler = (e: Event) => {
-      const target = e.target as HTMLElement | null
-      if (!target) return
-      if (!this.element.contains(target) && target !== this.element) return
+      const target = e.target
+      if (!(target instanceof Element)) return
+      if (!this.ownsInteraction(target)) return
       markInteracted()
     }
-    this.element.addEventListener('input', handler, true)
-    this.element.addEventListener('change', handler, true)
-    this.element.addEventListener('click', handler, true)
-    this.element.addEventListener('keydown', handler, true)
+    const types = ['input', 'change', 'click', 'keydown']
+    for (const type of types) root.addEventListener(type, handler, true)
     this.interactionCleanup.push(() => {
-      this.element.removeEventListener('input', handler, true)
-      this.element.removeEventListener('change', handler, true)
-      this.element.removeEventListener('click', handler, true)
-      this.element.removeEventListener('keydown', handler, true)
+      for (const type of types) root.removeEventListener(type, handler, true)
     })
   }
 
@@ -356,6 +365,7 @@ export abstract class BaseField {
       }
       return { status: 'filled' }
     } catch (e) {
+      if (e instanceof UnsupportedFillError) return { status: 'unsupported' }
       return { status: 'failed', error: (e as Error).message }
     }
   }
