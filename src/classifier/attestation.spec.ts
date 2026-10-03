@@ -5,21 +5,31 @@ import { join } from 'node:path'
 
 import {
   ATTESTATION_SCHEMA_VERSION,
+  RECOGNITION_SPEC,
   REQUIRED_BUILD_FILES,
   REQUIRED_CHROME_SMOKE_CHECKS,
   REQUIRED_MODEL_PARITY_TESTS,
   REQUIRED_STRICT_PARITY_TESTS,
+  REQUIRED_SUGGEST_SMOKE_CHECKS,
   STAGED_FILES,
+  SUCCESSOR_ATTESTATION_SCHEMA_VERSION,
+  SUCCESSOR_STAGED_FILES,
   buildAttestation,
+  buildSuccessorAttestation,
   buildTreeSha256,
   hashTree,
+  parseSmokeOutput,
   parseSpecOutput,
   readCandidate,
+  readSuccessor,
   sourceProblems,
   treeChanges,
   type AttestationInput,
   type Candidate,
   type FileHashes,
+  type Successor,
+  type SuccessorAttestationInput,
+  type SuccessorHashes,
   type TreeHashes,
 } from '~/classifier/attestation'
 
@@ -327,4 +337,284 @@ describe('browser candidate manifest', () => {
       expect(failure(() => readCandidate(raw))).toContain('browser candidate manifest')
     })
   }
+})
+
+const successorHashes = (digit: string): SuccessorHashes =>
+  Object.fromEntries(
+    SUCCESSOR_STAGED_FILES.map((name, index) => [name, `${digit}${index}`.padEnd(64, digit)]),
+  ) as SuccessorHashes
+
+const successor: Successor = {
+  successorSchemaVersion: 'browser-runtime-successor.v1',
+  runId: candidate.runId,
+  modelVersion: candidate.modelVersion,
+  createdAt: '2026-10-02T15:00:00.000Z',
+  variant: 'fp32',
+  sourceModelFile: 'model.onnx',
+  runtimeBundleSha256: '1'.repeat(64),
+  selectionSha256: '2'.repeat(64),
+  artifactManifestSha256: '6'.repeat(64),
+  artifactManifestSchemaVersion: 'autofill-classifier-manifest.v8',
+  approvalBlockers: ['browser_runtime_unverified'],
+  finalTest: {
+    ledgerFile: `${'7'.repeat(64)}.json`,
+    ledgerSha256: '8'.repeat(64),
+    ledgerSchemaVersion: 'final-test-ledger.v2',
+    testSetSha256: '7'.repeat(64),
+    index: 0,
+    status: 'final',
+    preregistrationSha256: '5'.repeat(64),
+    governanceVerified: true,
+  },
+  extensionCommit: COMMIT,
+  files: successorHashes('a'),
+}
+
+const successorBuild = (): TreeHashes => ({
+  ...Object.fromEntries(REQUIRED_BUILD_FILES.map((path) => [path, 'b'.repeat(64)])),
+  ...Object.fromEntries(SUCCESSOR_STAGED_FILES.map((name) => [`classifier/${name}`, successor.files[name]])),
+  'chunks/offscreen-Ci2ki7D0.js': 'c'.repeat(64),
+})
+
+const smokeRun = (names: readonly string[], command: string) => ({
+  command,
+  exitCode: 0,
+  chromeVersion: 'HeadlessChrome/143.0.7499.40',
+  checks: names.map((name) => ({ name, ok: true })),
+})
+
+const validSuccessor = (): SuccessorAttestationInput => ({
+  successor,
+  successorSha256: '3'.repeat(64),
+  stagedFiles: successorHashes('a'),
+  fixture: { modelVersion: successor.modelVersion, sha256: '4'.repeat(64) },
+  strictParity: { command: 'bun test', exitCode: 0, tests: passing(REQUIRED_STRICT_PARITY_TESTS) },
+  modelParity: { command: 'bun test', exitCode: 0, tests: passing(REQUIRED_MODEL_PARITY_TESTS) },
+  recognition: {
+    command: `bun test ./${RECOGNITION_SPEC}`,
+    exitCode: 0,
+    tests: passing(['recognizes a field']),
+  },
+  chromeSmoke: smokeRun(REQUIRED_CHROME_SMOKE_CHECKS, 'node scripts/chrome-smoke.mjs'),
+  suggestSmoke: smokeRun(
+    ['the switch is off by default', ...REQUIRED_SUGGEST_SMOKE_CHECKS],
+    'node scripts/chrome-suggest-smoke.mjs',
+  ),
+  extension: { commitBefore: COMMIT, commitAfter: COMMIT, clean: true },
+  build: successorBuild(),
+  buildAfterSmoke: successorBuild(),
+  attestor: { 'scripts/attest-runtime-successor.mjs': '9'.repeat(64) },
+  createdAt: '2026-10-02T16:00:00.000Z',
+})
+
+describe('runtime successor attestation', () => {
+  it('records the exact successor, all six classifier files, both smokes and the build', () => {
+    const attestation = buildSuccessorAttestation(validSuccessor())
+    expect(attestation.attestationSchemaVersion).toBe(SUCCESSOR_ATTESTATION_SCHEMA_VERSION)
+    expect(attestation.artifact.manifestFile).toBe('browser_successor.json')
+    expect(attestation.artifact.artifactManifestSha256).toBe(successor.artifactManifestSha256)
+    expect(Object.keys(attestation.artifact.stagedFiles)).toEqual([...SUCCESSOR_STAGED_FILES])
+    expect(attestation.chromeVersion).toBe('HeadlessChrome/143.0.7499.40')
+    expect(attestation.chromeSmoke.checks).toHaveLength(17)
+    expect(attestation.suggestSmoke.checks).toHaveLength(4)
+    expect(attestation.build.treeSha256).toBe(buildTreeSha256(successorBuild()))
+    expect(attestation.attestor.files).toEqual(validSuccessor().attestor)
+  })
+
+  const cases: [string, (input: SuccessorAttestationInput) => SuccessorAttestationInput, string][] = [
+    ['the tree is dirty', (i) => ({ ...i, extension: { ...i.extension, clean: false } }), 'uncommitted changes'],
+    [
+      'the commit is not the successor commit',
+      (i) => ({ ...i, extension: { commitBefore: OTHER, commitAfter: OTHER, clean: true } }),
+      `not the runtime successor ${COMMIT}`,
+    ],
+    [
+      'the commit changes during the run',
+      (i) => ({ ...i, extension: { ...i.extension, commitAfter: OTHER } }),
+      'commit changed during the run',
+    ],
+    ...SUCCESSOR_STAGED_FILES.map(
+      (name): [string, (input: SuccessorAttestationInput) => SuccessorAttestationInput, string] => [
+        `staged ${name} differs`,
+        (i) => ({ ...i, stagedFiles: { ...i.stagedFiles, [name]: 'f'.repeat(64) } }),
+        `staged ${name} does not match the runtime successor`,
+      ],
+    ),
+    [
+      'the build carries another model version file',
+      (i) => ({
+        ...i,
+        build: { ...i.build, 'classifier/model-version.json': 'f'.repeat(64) },
+        buildAfterSmoke: {
+          ...i.buildAfterSmoke,
+          'classifier/model-version.json': 'f'.repeat(64),
+        },
+      }),
+      'stale build: classifier/model-version.json does not match the runtime successor',
+    ],
+    [
+      'a build file changes during the run',
+      (i) => ({
+        ...i,
+        buildAfterSmoke: { ...i.buildAfterSmoke, 'background.js': 'e'.repeat(64) },
+      }),
+      'build file changed during the run: background.js',
+    ],
+    [
+      'strict parity skipped a test',
+      (i) => ({
+        ...i,
+        strictParity: {
+          ...i.strictParity,
+          tests: [
+            ...passing(REQUIRED_STRICT_PARITY_TESTS.slice(1)),
+            { name: REQUIRED_STRICT_PARITY_TESTS[0], status: 'skip' },
+          ],
+        },
+      }),
+      'strict parity skip',
+    ],
+    [
+      'model parity was skipped',
+      (i) => ({
+        ...i,
+        modelParity: {
+          ...i.modelParity,
+          tests: [{ name: REQUIRED_MODEL_PARITY_TESTS[0], status: 'skip' }],
+        },
+      }),
+      'model parity skip',
+    ],
+    [
+      'recognition ran another spec',
+      (i) => ({
+        ...i,
+        recognition: { ...i.recognition, command: 'bun test ./src/core/match.spec.ts' },
+      }),
+      `did not run ${RECOGNITION_SPEC}`,
+    ],
+    [
+      'recognition skipped a test',
+      (i) => ({
+        ...i,
+        recognition: {
+          ...i.recognition,
+          tests: [{ name: 'recognizes a field', status: 'skip' }],
+        },
+      }),
+      'generic recognition skip',
+    ],
+    [
+      'the chrome smoke exited non-zero',
+      (i) => ({ ...i, chromeSmoke: { ...i.chromeSmoke, exitCode: 1 } }),
+      'chrome smoke exited with 1',
+    ],
+    [
+      'the chrome smoke stopped early',
+      (i) => ({
+        ...i,
+        chromeSmoke: { ...i.chromeSmoke, checks: i.chromeSmoke.checks.slice(0, 12) },
+      }),
+      'ran 12 checks',
+    ],
+    [
+      'a suggestion check failed',
+      (i) => ({
+        ...i,
+        suggestSmoke: {
+          ...i.suggestSmoke,
+          checks: i.suggestSmoke.checks.map((check) => ({ ...check, ok: false })),
+        },
+      }),
+      'suggestion smoke failed: the switch is off by default',
+    ],
+    [
+      'the service worker restart check is missing',
+      (i) => ({
+        ...i,
+        suggestSmoke: { ...i.suggestSmoke, checks: i.suggestSmoke.checks.slice(0, 2) },
+      }),
+      `suggestion smoke is missing ${REQUIRED_SUGGEST_SMOKE_CHECKS[1]}`,
+    ],
+    [
+      'the suggestion smoke exited non-zero',
+      (i) => ({ ...i, suggestSmoke: { ...i.suggestSmoke, exitCode: 1 } }),
+      'suggestion smoke exited with 1',
+    ],
+    [
+      'the smokes ran in different Chrome versions',
+      (i) => ({
+        ...i,
+        suggestSmoke: { ...i.suggestSmoke, chromeVersion: 'HeadlessChrome/144.0.0.1' },
+      }),
+      'different Chrome versions',
+    ],
+    [
+      'the chrome version is unknown',
+      (i) => ({
+        ...i,
+        chromeSmoke: { ...i.chromeSmoke, chromeVersion: 'unknown' },
+        suggestSmoke: { ...i.suggestSmoke, chromeVersion: 'unknown' },
+      }),
+      'unexpected chrome version',
+    ],
+    ['the attestor is unrecorded', (i) => ({ ...i, attestor: {} }), 'attestor files'],
+  ]
+
+  for (const [name, change, message] of cases) {
+    it(`writes nothing when ${name}`, () => {
+      expect(failure(() => buildSuccessorAttestation(change(validSuccessor())))).toContain(message)
+    })
+  }
+
+  it('keeps the preregistered candidate wording and schema', () => {
+    expect(buildAttestation(valid()).attestationSchemaVersion).toBe(ATTESTATION_SCHEMA_VERSION)
+    expect(sourceProblems(candidate, { commitBefore: OTHER, commitAfter: OTHER, clean: true })).toEqual([
+      `the extension is at ${OTHER}, not the preregistered ${COMMIT}`,
+    ])
+  })
+})
+
+describe('runtime successor manifest', () => {
+  it('accepts a complete successor', () => {
+    expect(readSuccessor(JSON.parse(JSON.stringify(successor)))).toEqual(successor)
+  })
+
+  const broken: [string, unknown][] = [
+    ['a browser candidate', candidate],
+    ['five staged files', { ...successor, files: { ...successor.files, 'model-version.json': undefined } }],
+    ['an exploratory final test', { ...successor, finalTest: { ...successor.finalTest, status: 'exploratory' } }],
+    ['unverified governance', { ...successor, finalTest: { ...successor.finalTest, governanceVerified: false } }],
+    ['an unknown ledger', { ...successor, finalTest: { ...successor.finalTest, ledgerSchemaVersion: 'v9' } }],
+    ['no artifact manifest digest', { ...successor, artifactManifestSha256: 'x' }],
+    ['a short commit', { ...successor, extensionCommit: 'fffae63' }],
+    ['a malformed time', { ...successor, createdAt: '2026-10-02' }],
+  ]
+
+  for (const [name, raw] of broken) {
+    it(`rejects ${name}`, () => {
+      expect(failure(() => readSuccessor(raw))).toContain('runtime successor manifest')
+    })
+  }
+})
+
+describe('smoke output parsing', () => {
+  it('reads check lines and the chrome version', () => {
+    const output = [
+      'chrome HeadlessChrome/143.0.7499.40',
+      'extension abc',
+      'ok   the cold call answers every request',
+      'FAIL the warm call repeats the same decisions',
+      'ok  not a check line',
+      'chrome smoke passed: 2 checks',
+    ].join('\n')
+    expect(parseSmokeOutput(output)).toEqual({
+      chromeVersion: 'HeadlessChrome/143.0.7499.40',
+      checks: [
+        { name: 'the cold call answers every request', ok: true },
+        { name: 'the warm call repeats the same decisions', ok: false },
+      ],
+    })
+    expect(parseSmokeOutput('nothing').chromeVersion).toBe('unknown')
+  })
 })

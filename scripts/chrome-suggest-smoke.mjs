@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { createWriteStream, existsSync } from 'node:fs'
 import { cp, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -357,12 +357,13 @@ class Session {
 }
 
 async function evaluate(session, sessionId, expression, timeoutMs = TIMEOUT_MS, extra = {}) {
+  let timer
   const result = await Promise.race([
     session.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, ...extra }, sessionId),
-    wait(timeoutMs).then(() => {
-      throw new Error(`evaluation timed out after ${timeoutMs} ms`)
+    new Promise((_, fail) => {
+      timer = setTimeout(() => fail(new Error(`evaluation timed out after ${timeoutMs} ms`)), timeoutMs)
     }),
-  ])
+  ]).finally(() => clearTimeout(timer))
   if (result.exceptionDetails) {
     throw new Error(result.exceptionDetails.exception?.description ?? 'evaluation failed')
   }
@@ -469,13 +470,26 @@ const PICKER_HOOK = `if (location.protocol === 'chrome-extension:' && !globalThi
   globalThis.__tpPickerHook = true
   globalThis.__suggestSends = 0
   globalThis.__suggestDone = 0
+  globalThis.__suggestGeneration = 0
+  const watchActivation = () =>
+    new MutationObserver(() => {
+      if (document.documentElement.getAttribute('data-tp-active') === 'true') return
+      globalThis.__suggestGeneration += 1
+      globalThis.__suggestSends = 0
+      globalThis.__suggestDone = 0
+    }).observe(document.documentElement, { attributeFilter: ['data-tp-active'], attributes: true })
+  if (document.documentElement) watchActivation()
+  else document.addEventListener('DOMContentLoaded', watchActivation, { once: true })
   const runtime = chrome.runtime
   const original = runtime.sendMessage.bind(runtime)
   runtime.sendMessage = (...args) => {
     const suggest = args[0]?.kind === 'classifier.suggest'
+    const generation = globalThis.__suggestGeneration
     if (suggest) globalThis.__suggestSends += 1
     const result = original(...args)
-    if (suggest) Promise.resolve(result).then(() => {}, () => {}).then(() => { globalThis.__suggestDone += 1 })
+    if (suggest) Promise.resolve(result).then(() => {}, () => {}).then(() => {
+      if (generation === globalThis.__suggestGeneration) globalThis.__suggestDone += 1
+    })
     return result
   }
 }`
@@ -502,6 +516,9 @@ const RECORD_CLASSIFIER_POSTS = CALL(`globalThis.__classifierPosts = []
     return true`)
 const PICKER_STATE = CALL(`const rows = [...document.querySelectorAll('[data-tp-suggestion]')]
     return {
+      sends: globalThis.__suggestSends ?? -1,
+      done: globalThis.__suggestDone ?? -1,
+      generation: globalThis.__suggestGeneration ?? -1,
       open: true,
       title: document.querySelector('.title')?.textContent?.trim() ?? null,
       signIn: Boolean(document.querySelector('.signin')),
@@ -515,8 +532,6 @@ const PICKER_STATE = CALL(`const rows = [...document.querySelectorAll('[data-tp-
         spans: row.querySelectorAll('span').length,
         title: row.querySelector('.label-text')?.textContent?.trim() ?? null,
       })),
-      sends: globalThis.__suggestSends ?? -1,
-      done: globalThis.__suggestDone ?? -1,
     }`)
 
 async function waitFor(read, test, timeoutMs, what) {
@@ -554,13 +569,17 @@ const chrome = spawn(
     '--no-first-run',
     '--no-default-browser-check',
     '--headless=new',
+    ...(process.env.CHROME_SMOKE_LOG ? ['--enable-logging=stderr'] : []),
     'about:blank',
   ],
-  { stdio: 'ignore' },
+  { stdio: ['ignore', 'ignore', process.env.CHROME_SMOKE_LOG ? 'pipe' : 'ignore'] },
 )
+if (process.env.CHROME_SMOKE_LOG) chrome.stderr.pipe(createWriteStream(process.env.CHROME_SMOKE_LOG))
 
 const report = []
 let failure = null
+const crashed = []
+const collateralCrashes = (from = 0) => crashed.slice(from).filter((entry) => entry.type !== 'service_worker')
 let stopResuming = () => {}
 try {
   check(
@@ -576,14 +595,26 @@ try {
   report.push(`chrome ${version.Browser}`)
 
   const autoSessions = new Map()
+  const pickerParents = new Map()
   const sessionTypes = new Map()
   const requests = []
   const intercepted = []
   const apiCalls = []
   const apiState = { answers: [], notes: [], profile: null }
   const contexts = new Map()
+  const workerStates = []
 
   browser.on(async (message) => {
+    if (message.method === 'Inspector.targetCrashed') {
+      crashed.push({ session: message.sessionId ?? 'root', type: sessionTypes.get(message.sessionId) ?? 'unknown' })
+      return
+    }
+    if (message.method === 'ServiceWorker.workerVersionUpdated') {
+      for (const version of message.params.versions) {
+        if (version.scriptURL.endsWith('/background.js')) workerStates.push({ id: version.versionId, status: version.runningStatus })
+      }
+      return
+    }
     if (message.method === 'Network.requestWillBeSent') {
       requests.push({
         postData: message.params.request.postData ?? null,
@@ -683,6 +714,7 @@ try {
     const { sessionId, targetInfo, waitingForDebugger } = message.params
     if (autoSessions.has(targetInfo.targetId)) return
     autoSessions.set(targetInfo.targetId, sessionId)
+    if (targetInfo.type === 'iframe') pickerParents.set(targetInfo.targetId, message.sessionId ?? null)
     sessionTypes.set(sessionId, targetInfo.type)
     try {
       await browser.send('Network.enable', {}, sessionId)
@@ -727,19 +759,23 @@ try {
   }, 200)
   stopResuming = () => clearInterval(resumeWorkers)
 
+  const runningWorker = async () =>
+    (await browser.send('Target.getTargets')).targetInfos.find(
+      (target) => target.type === 'service_worker' && target.url.endsWith('/background.js'),
+    ) ?? null
   const stopWorker = async () => {
-    try {
-      await browser.send('ServiceWorker.enable')
-      await browser.send('ServiceWorker.stopAllWorkers')
-      return 'ServiceWorker.stopAllWorkers'
-    } catch {
-      const current = (await browser.send('Target.getTargets')).targetInfos.find(
-        (target) => target.type === 'service_worker' && target.url.endsWith('/background.js'),
-      )
-      if (!current) return 'no worker running'
-      await browser.send('Target.closeTarget', { targetId: current.targetId })
-      return 'Target.closeTarget'
+    if (!(await runningWorker())) return 'no worker running'
+    const crashesBefore = crashed.length
+    await browser.send('ServiceWorker.enable', {}, sessionId)
+    const statesBefore = workerStates.length
+    await browser.send('ServiceWorker.stopAllWorkers', {}, sessionId)
+    const stoppedRunning = () => {
+      const ran = new Set(workerStates.filter((state) => state.status === 'running').map((state) => state.id))
+      return workerStates.slice(statesBefore).some((state) => state.status === 'stopped' && ran.has(state.id))
     }
+    await waitFor(stoppedRunning, Boolean, 10_000, 'the service worker to stop')
+    check('stopping the service worker crashes no page, frame or extension document', collateralCrashes(crashesBefore).length === 0, JSON.stringify(collateralCrashes(crashesBefore)))
+    return 'ServiceWorker.stopAllWorkers'
   }
 
   const worker = await serviceWorker()
@@ -963,10 +999,24 @@ try {
     if (!box) throw new Error(`nothing to click: ${expression}`)
     await clickAt(atsSession, box)
   }
-  const pickerTarget = async () =>
-    (await browser.send('Target.getTargets')).targetInfos.find(
+  const pickerTargets = async () =>
+    (await browser.send('Target.getTargets')).targetInfos.filter(
       (info) => info.type === 'iframe' && info.url.startsWith('chrome-extension://') && new URL(info.url).pathname === '/picker.html',
-    ) ?? null
+    )
+  const isActivePicker = async (target) => {
+    const session = autoSessions.get(target.targetId)
+    if (!session) return false
+    return evaluate(browser, session, `document.documentElement.getAttribute('data-tp-active') === 'true'`, 2_000).catch(() => false)
+  }
+  const activePickers = async () => {
+    const targets = await pickerTargets()
+    const active = await Promise.all(targets.map(isActivePicker))
+    return targets.filter((_, index) => active[index])
+  }
+  const pickerTarget = async () => (await activePickers())[0] ?? null
+  const pickerClosed = (_session, timeoutMs, what) => waitFor(pickerTarget, (target) => !target, timeoutMs, what)
+  const pickerFramesIn = async (session) =>
+    (await pickerTargets()).filter((target) => pickerParents.get(target.targetId) === session).length
   const pickerSession = async () => {
     const target = await pickerTarget()
     if (!target) return null
@@ -987,6 +1037,30 @@ try {
     }
     throw new Error('the picker frame is not in the page')
   }
+  const pickerFrameRect = async (session) => {
+    const { root } = await browser.send('DOM.getDocument', { depth: -1, pierce: true }, session)
+    const stack = [root]
+    while (stack.length) {
+      const node = stack.pop()
+      const attributes = node.attributes ?? []
+      const src = attributes[attributes.indexOf('src') + 1] ?? ''
+      if (node.nodeName === 'IFRAME' && src.includes('/picker.html')) {
+        if (!attributes.includes('data-tp-ready')) return null
+        const { model } = await browser.send('DOM.getBoxModel', { nodeId: node.nodeId }, session)
+        const [x1, y1, , , x3, y3] = model.border
+        return { x: x1, y: y1, width: x3 - x1, height: y3 - y1 }
+      }
+      stack.push(...(node.children ?? []), ...(node.shadowRoots ?? []))
+    }
+    return null
+  }
+  const PAGE_DOWNS = `(() => {
+    if (!window.__tpPageDowns) {
+      window.__tpPageDowns = { count: 0 }
+      document.addEventListener('mousedown', (event) => { if (event.isTrusted) window.__tpPageDowns.count += 1 }, true)
+    }
+    return window.__tpPageDowns.count
+  })()`
   const clickInPicker = async (atsSession, selector) => {
     const session = await pickerSession()
     const box = session ? await evaluate(browser, session, RECT(selector), 5_000) : null
@@ -1027,7 +1101,7 @@ try {
     await browser.send('Page.bringToFront', {}, atsSession)
     if ((await pickerState()).open || (await pickerTarget())) {
       await clickCenter(atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
-      await waitFor(pickerTarget, (target) => !target, 5_000, 'the previous picker to close')
+      await pickerClosed(atsSession, 5_000, 'the previous picker to close')
     }
     await evaluate(browser, atsSession, RECORD_BRIDGE, 5_000)
     await openPickerByCommand(atsSession, `#${field} input`)
@@ -1095,12 +1169,34 @@ try {
       const opened = await waitFor(pickerState, (state) => state.open && state.list !== undefined, 20_000, `the picker for ${selector}`)
       check(`${name}: focusing ${selector} and sending the picker command opens the picker`, opened.open)
       await clickCenter(session, `({ x: 1, y: 1, width: 2, height: 2 })`)
-      await waitFor(pickerTarget, (target) => !target, 5_000, `the picker for ${selector} to close`)
+      await pickerClosed(session, 5_000, `the picker for ${selector} to close`)
     }
     const native = await evaluate(browser, session, `({ clicks: window.__nativeClicks, submits: window.__submits })`, 5_000)
     check(`${name}: opening the picker never reaches the native controls`, native.clicks === 0 && native.submits === 0, JSON.stringify(native))
   }
   await checkCommandPicker('Greenhouse', uk.atsSession, FIELDS.length)
+  check('every Greenhouse picker open reuses one picker frame', (await pickerFramesIn(uk.atsSession)) === 1, String(await pickerFramesIn(uk.atsSession)))
+  for (const delay of [0, 20]) {
+    const results = []
+    for (const field of ['f-first', 'f-links', 'f-exact']) {
+      await openPicker(uk.atsSession, field)
+      const rect = await waitFor(() => pickerFrameRect(uk.atsSession), Boolean, 10_000, `the ${field} picker frame to show`)
+      const before = await evaluate(browser, uk.atsSession, PAGE_DOWNS, 5_000)
+      await clickCenter(uk.atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
+      if (delay) await wait(delay)
+      const started = Date.now()
+      await clickAt(uk.atsSession, rect)
+      const ms = Date.now() - started
+      const after = await evaluate(browser, uk.atsSession, PAGE_DOWNS, 5_000)
+      results.push({ delivered: after === before + 2, ms })
+      await pickerClosed(uk.atsSession, 5_000, `the ${field} picker to close`)
+    }
+    check(
+      `a click ${delay} ms after closing reaches the page where the picker was, without a stall`,
+      results.every((result) => result.delivered && result.ms < 1_000),
+      JSON.stringify(results),
+    )
+  }
   const classicTab = await browser.send('Target.createTarget', { url: 'about:blank' })
   const classicSession = await attach(classicTab.targetId)
   await browser.send('Page.enable', {}, classicSession)
@@ -1124,7 +1220,7 @@ try {
   check('a signed-out picker never asks for a suggestion', signIn.sends === 0, String(signIn.sends))
 
   await clickCenter(uk.atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
-  await waitFor(pickerTarget, (target) => !target, 5_000, 'the picker to close before the Workday checks')
+  await pickerClosed(uk.atsSession, 5_000, 'the picker to close before the Workday checks')
 
   const workdayTab = await browser.send('Target.createTarget', { url: 'about:blank' })
   const workdaySession = await attach(workdayTab.targetId)
@@ -1152,7 +1248,7 @@ try {
   check('focusing the Workday email field and sending the picker command opens the picker', workdayPicker.open, JSON.stringify(workdayPicker))
   check('opening the Workday picker never reaches the native submit controls', workdayNative.clicks === 0 && workdayNative.submits === 0, JSON.stringify(workdayNative))
   await clickCenter(workdaySession, `({ x: 1, y: 1, width: 2, height: 2 })`)
-  await waitFor(pickerTarget, (target) => !target, 5_000, 'the Workday picker to close')
+  await pickerClosed(workdaySession, 5_000, 'the Workday picker to close')
   await browser.send('Target.closeTarget', { targetId: workdayTab.targetId })
 
   const framesTab = await browser.send('Target.createTarget', { url: 'about:blank' })
@@ -1170,11 +1266,8 @@ try {
     `(() => { const frame = document.getElementById('inner'); const f = frame.getBoundingClientRect(); const r = frame.contentDocument.getElementById('inner-first').getBoundingClientRect(); return { x: f.x + r.x, y: f.y + r.y, width: r.width, height: r.height } })()`,
     5_000,
   )
-  const PICKER_HOSTS = `(() => { const count = (doc) => [...doc.documentElement.children].filter((el) => el.tagName === 'DIV').length; return { top: count(document), inner: count(document.getElementById('inner').contentDocument) } })()`
-  const pickerFrames = async () =>
-    (await browser.send('Target.getTargets')).targetInfos.filter(
-      (info) => info.type === 'iframe' && info.url.startsWith('chrome-extension://') && new URL(info.url).pathname === '/picker.html',
-    ).length
+  const PICKER_HOSTS = `(() => { const count = (doc) => [...doc.documentElement.children].filter((el) => el.getAttribute('data-tp-open') === 'true').length; return { top: count(document), inner: count(document.getElementById('inner').contentDocument) } })()`
+  const pickerFrames = async () => (await activePickers()).length
   const framesTabId = await tabIdOf(framesSession)
   const sendPickerCommand = () =>
     run(CALL(`try { await chrome.tabs.sendMessage(${framesTabId}, { kind: 'cmd.openPicker' }) } catch {}
@@ -1313,7 +1406,7 @@ try {
     fillBridge.length === 1 && JSON.parse(fillBridge[0]).payload.kind === 'field.fill',
     JSON.stringify(fillBridge),
   )
-  const closedAfterFill = await waitFor(pickerTarget, (target) => !target, 10_000, 'the picker to close after the fill')
+  const closedAfterFill = await pickerClosed(uk.atsSession, 10_000, 'the picker to close after the fill')
   check('clicking the row closes the picker', !closedAfterFill)
 
   for (const [name, field, item] of [
@@ -1467,7 +1560,7 @@ try {
   report.push(`private note: hydrated via ${hydration.join(', ')}; ${classifierPosts.length} classifier posts; usage update ${touch[0].method} ${touch[0].url}`)
 
   await clickCenter(uk.atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
-  await waitFor(pickerTarget, (target) => !target, 5_000, 'the picker to close before the forgery run')
+  await pickerClosed(uk.atsSession, 5_000, 'the picker to close before the forgery run')
   const secrets = [PROFILE.profileName, PROFILE.jobTitle, PROFILE.user.email, NOTE_SENTINEL, LINKED_VALUE, EXACT_VALUE, OVERLAP_VALUE, linkedQuestion]
   const forgedRecord = {
     answerKind: 'text',
@@ -1567,7 +1660,7 @@ try {
   check('a real click on a page-forged widget only opens the extension-origin confirmation', forgedConfirm.confirm === true, JSON.stringify(forgedConfirm))
   await browser.send('Input.dispatchKeyEvent', { code: 'Escape', key: 'Escape', type: 'keyDown', windowsVirtualKeyCode: 27 }, uk.atsSession)
   await browser.send('Input.dispatchKeyEvent', { code: 'Escape', key: 'Escape', type: 'keyUp', windowsVirtualKeyCode: 27 }, uk.atsSession)
-  await waitFor(pickerTarget, (target) => !target, 5_000, 'the forged confirmation to close')
+  await pickerClosed(uk.atsSession, 5_000, 'the forged confirmation to close')
   await wait(500)
   const forgedWidgetBridge = (await pageBridge(uk.atsSession)).map((message) => JSON.parse(message).payload)
   const forgedWidgetReplies = forgedWidgetBridge.filter((payload) => ['fill.denied', 'fill.run', 'fill.values'].includes(payload?.kind))
@@ -1630,9 +1723,22 @@ try {
   const widgetValues = await waitFor(inputValues, (values) => values.first !== '', 20_000, 'the confirmed widget fill')
   await wait(1_000)
   check('confirming in the extension frame fills the same values', JSON.stringify(await inputValues()) === JSON.stringify(expectedFill), JSON.stringify(widgetValues))
+  await freshApplication('disable')
+  const disableOpen = await openPicker(uk.atsSession, 'f-first')
+  check('the picker is open before the site is disabled', disableOpen.open)
+  const disabledFrame = (await pickerTargets()).find((target) => pickerParents.get(target.targetId) === uk.atsSession)
+  await run(CALL(`await chrome.runtime.sendMessage({ kind: 'origin.disable', pattern: '${ATS}/*' }).catch(() => null)
+    return true`))
+  await pickerClosed(uk.atsSession, 10_000, 'the disabled site to close the picker')
+  const disabledUi = disabledFrame
+    ? await evaluate(browser, autoSessions.get(disabledFrame.targetId), `({ text: document.getElementById('app')?.textContent ?? '', children: document.getElementById('app')?.children.length ?? -1, active: document.documentElement.getAttribute('data-tp-active') })`, 5_000)
+    : null
+  check('disabling the site closes the picker and clears its answers', disabledUi?.children === 0 && disabledUi.text === '' && disabledUi.active === null, JSON.stringify(disabledUi))
+  check('no page, frame or extension document crashed during the smoke', collateralCrashes().length === 0, JSON.stringify(collateralCrashes()))
   browser.close()
 } catch (error) {
   failure = error
+  if (collateralCrashes().length > 0) report.push(`crashed targets: ${JSON.stringify(collateralCrashes())}`)
 } finally {
   stopResuming()
   chrome.kill('SIGKILL')

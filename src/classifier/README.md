@@ -12,8 +12,23 @@ its own. The fill and capture paths do not call it.
   reads answers, fetches labels or starts the offscreen document. Turning the
   switch off closes the offscreen document. A request still running at that
   moment answers `disabled`, and the document is closed again after it ends.
-- Trigger: opening the field picker loads `picker.html` in an extension iframe,
+- Trigger: opening the field picker activates `picker.html` in an extension iframe,
   which sends `classifier.suggest` to the background. Nothing runs during fill.
+- Picker frame: each content document creates one picker host and iframe on first
+  use and keeps it. Creating and removing a picker iframe on every open let Chrome
+  143 kill the extension renderer for a bad IPC message. Closing first makes the
+  host and iframe inert, hidden, `aria-hidden`, pointer-disabled, zero height and
+  parked off-screen, then clears the activation, its UI and listeners, and restores
+  focus once. A new activation stays that way until it reports its first non-zero
+  size; only then is the frame shown and interactive. The iframe keeps
+  `clip-path: inset(0 round 1px)`: without a non-rectangular clip Chrome routes a
+  click made within two frames of closing to the hidden frame's former area, where
+  it is lost or stalls for 5 seconds. The title is `Insert from TalentProfile` or
+  `Fill this form with TalentProfile`.
+  Each open is a new activation id. The picker page announces `ready`, the content
+  script sends `picker.activate` and `picker.deactivate`, and every relay carries
+  the host id and activation, so actions from an earlier activation are refused.
+  Disabling a site sends `origin.disabled` to its frames, which closes the picker.
 - Request check: `readSuggestionRequest` in `suggest.ts` runs in the picker
   page and again in the background. It needs a known `answerKind`, a
   `fieldType` of 1 to 64 characters, a `questionText` of at most 4,096
@@ -195,6 +210,11 @@ insertion, page-script forgeries of every privileged bridge message, and the
 popup and form-widget fill. It exits 0 only when
 every check passes and the temporary Chrome profile is removed.
 
+It stops the service worker with `ServiceWorker.stopAllWorkers` on the driver page and waits
+for a `stopped` version event. It never closes the worker target: Chrome can host the worker in
+the same process as the extension pages, and closing the target then kills the picker with it.
+The smoke fails when any page, frame or extension document crashes during the run.
+
 ## Browser attestation
 
 A final training run clears `browser_runtime_unverified` only with a browser attestation of
@@ -224,6 +244,54 @@ The tree digest is SHA-256 over `<path>\0<file sha256>\n` lines sorted by path; 
 recomputes it. The required check names and build files live in `attestation.ts` and in the
 trainer's `browser_attestation.py`; changing them needs a new attestation schema version on
 both sides.
+
+## Runtime successor attestation
+
+A runtime successor ships an already finalized training artifact from a new extension commit.
+The trainer's `browser-successor` command writes `browser_successor.json` into a release
+directory outside the artifact. Then:
+
+```sh
+CHROME_PATH="<chrome for testing binary>" CHROME_SMOKE_PORT=9337 \
+  node scripts/attest-runtime-successor.mjs [--extension-dir <checkout>] <release-dir>
+```
+
+`--extension-dir` names the checkout to attest; it defaults to this one. The attested checkout
+must be clean, so attesting a commit while this tooling has uncommitted changes needs a
+separate clean checkout of that commit. The script, in order:
+
+1. Deletes `browser_attestation.json`, `release.json`, every `talentprofile-autofill-*-chrome.zip`
+   and every `*.partial-*` file in the release directory before any other step, and refuses a
+   directory that holds `manifest.json`, `browser_candidate.json` or `run.json`.
+2. Refuses when the checkout is not a git top level, has uncommitted or untracked files,
+   `HEAD` is not the successor's `extensionCommit`, or any of the six staged files in
+   `public/classifier/` differs from the successor.
+3. Deletes `.output/chrome-mv3`, runs `bun run build` and hashes the tree.
+4. In the checkout, runs strict parity, model parity and
+   `src/adapters/genericRecognition.spec.ts`, then `scripts/chrome-smoke.mjs` and
+   `scripts/chrome-suggest-smoke.mjs` as shipped at that commit, and parses their check lines
+   and Chrome version.
+5. Re-hashes the staged files and the build tree, and re-reads the commit and tree state.
+6. Writes `browser_attestation.json` (`browser-runtime-successor-attestation.v1`) only when
+   every gate passes. It also records the digests of this script and `attestation.ts`.
+
+Then the trainer's `verify-browser-successor` must pass. Package the release from the same
+checkout:
+
+```sh
+node scripts/release-package.mjs [--extension-dir <checkout>] <release-dir>
+```
+
+It first deletes `release.json`, release zips and partial files in the release directory. It
+refuses when the attestation does not cover the successor and its clean commit, the checkout
+is dirty or at another commit, or `.output/chrome-mv3` differs from the attested build in any
+file. It zips exactly the attested files into a partial file, unpacks it and refuses (and deletes it)
+when its files differ from the attested build, or when it has a non-MV3 manifest,
+a manifest `key`, a local host or plain `http` entry, a development permission, a missing
+icon, required file or WASM, a classifier file other than the six attested ones, a source map
+or source map reference, a test or fixture file, a scratch, log or env file, or a known secret
+pattern. Only then is it renamed to `<release-dir>/talentprofile-autofill-<version>-chrome.zip`
+and `release.json` written with the zip digest and size.
 
 ## Transport
 

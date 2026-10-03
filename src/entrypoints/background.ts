@@ -658,9 +658,25 @@ export default defineBackground(() => {
     sender.id === browser.runtime.id &&
     sender.url === browser.runtime.getURL("/popup.html");
 
+  const notifyOriginDisabled = async (pattern: string): Promise<void> => {
+    const tabs = await browser.tabs.query({}).catch(() => []);
+    for (const tab of tabs) {
+      if (typeof tab.id !== "number") continue;
+      const frames =
+        (await browser.webNavigation.getAllFrames({ tabId: tab.id }).catch(() => null)) ?? [];
+      for (const frame of frames) {
+        if (!urlMatchesPatternOrigin(frame.url ?? "", pattern)) continue;
+        browser.tabs
+          .sendMessage(tab.id, { kind: "origin.disabled" }, { frameId: frame.frameId })
+          .catch(() => {});
+      }
+    }
+  };
+
   const revokeAndDisableOrigin = async (
     pattern: string,
   ): Promise<{ ok: boolean; error?: string }> => {
+    await notifyOriginDisabled(pattern);
     await removeEnabledOrigin(pattern);
     cachedBroadcastFilter = null;
     await unregisterDynamicScripts(pattern);
@@ -1628,7 +1644,12 @@ export default defineBackground(() => {
       return { ok: false, error: "Invalid picker sender" };
     }
     const owner = await pickerFrameOwner(tabId, frameId);
-    const relayed = { action: message.action, kind: "picker.relay", sessionId: message.sessionId };
+    const relayed: PickerRelay = {
+      action: message.action,
+      activation: message.activation,
+      hostId: message.hostId,
+      kind: "picker.relay",
+    };
     try {
       const response = (await (owner === null || owner < 0
         ? browser.tabs.sendMessage(tabId, relayed)

@@ -447,7 +447,7 @@ export const startContentBridge = (ats: AtsName): void => {
     };
     if (m.kind === "picker.relay") {
       const relay = message as PickerRelay;
-      const response = handlePickerAction(relay.sessionId, relay.action, fillField);
+      const response = handlePickerAction(relay.hostId, relay.activation, relay.action, fillField);
       if (response !== null) sendResponse(response);
       return undefined;
     }
@@ -459,6 +459,9 @@ export const startContentBridge = (ats: AtsName): void => {
     }
     if (m.kind === "cmd.openPicker") {
       openPickerFromFocus();
+    }
+    if (m.kind === "origin.disabled") {
+      closePicker();
     }
     if (m.kind === "mode.changed" && m.mode) {
       gate.send({

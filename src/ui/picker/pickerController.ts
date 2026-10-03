@@ -18,7 +18,7 @@ import {
   type PickerConfirmContext,
   type PickerContextData,
   type PickerFieldContext,
-  type PickerLayout,
+  type PickerSignal,
 } from "./protocol";
 
 export type PickerTarget = {
@@ -33,20 +33,27 @@ type FrameAnchor = {
   trigger: HTMLElement | null;
 };
 
+type PickerHost = {
+  id: string;
+  host: HTMLElement;
+  frame: HTMLIFrameElement;
+  backdrop: HTMLElement;
+  ready: boolean;
+};
+
 type ActivePicker = {
-  sessionId: string;
+  activation: string;
+  mobile: boolean;
   target: PickerTarget | null;
-  anchor: FrameAnchor;
   onConfirm: (() => void) | null;
   onDismiss: (() => void) | null;
   context: PickerContextData;
-  host: HTMLElement;
-  frame: HTMLIFrameElement;
   maxHeight: number;
   cleanup: () => void;
   previousFocus: HTMLElement | null;
 };
 
+let pickerHost: PickerHost | null = null;
 let active: ActivePicker | null = null;
 
 const MIN_POPOVER_WIDTH = 280;
@@ -55,6 +62,7 @@ const POPOVER_OFFSET = 6;
 const MIN_POPOVER_MAX_HEIGHT = 320;
 const MAX_POPOVER_MAX_HEIGHT = 520;
 const MOBILE_MAX_HEIGHT_RATIO = 0.7;
+const PARKED = "-10000px";
 
 const HOST_STYLE = `
 :host {
@@ -73,6 +81,7 @@ iframe {
   background: transparent;
   color-scheme: normal;
   visibility: hidden;
+  clip-path: inset(0 round 1px);
 }
 iframe[data-tp-ready="true"] { visibility: visible; }
 iframe[data-tp-mobile="true"] {
@@ -120,9 +129,52 @@ const restoreFocus = (el: HTMLElement | null): void => {
   } catch {}
 };
 
-const announceLayout = (sessionId: string, maxHeight: number): void => {
-  const layout: PickerLayout = { kind: "picker.layout", maxHeight, sessionId };
-  browser.runtime.sendMessage(layout).catch(() => {});
+const signal = (message: PickerSignal): void => {
+  browser.runtime.sendMessage(message).catch(() => {});
+};
+
+const activate = (host: PickerHost, activation: string): void =>
+  signal({ activation, hostId: host.id, kind: "picker.activate" });
+
+const ensureHost = (): PickerHost => {
+  if (pickerHost?.host.isConnected && pickerHost.host.ownerDocument === document) return pickerHost;
+  const id = crypto.randomUUID();
+  const host = document.createElement("div");
+  const shadow = host.attachShadow({ mode: "closed" });
+  const style = document.createElement("style");
+  style.textContent = HOST_STYLE;
+  const backdrop = document.createElement("div");
+  backdrop.className = "backdrop";
+  backdrop.style.display = "none";
+  backdrop.addEventListener("click", () => closePicker());
+  const frame = document.createElement("iframe");
+  frame.src = `${browser.runtime.getURL(PICKER_PAGE)}#${id}`;
+  shadow.append(style, backdrop, frame);
+  pickerHost = { backdrop, frame, host, id, ready: false };
+  disableHost(pickerHost);
+  document.documentElement.appendChild(host);
+  return pickerHost;
+};
+
+const disableHost = ({ backdrop, frame, host }: PickerHost): void => {
+  host.inert = true;
+  backdrop.style.display = "none";
+  frame.inert = true;
+  frame.setAttribute("aria-hidden", "true");
+  frame.removeAttribute("data-tp-ready");
+  frame.style.pointerEvents = "none";
+  frame.style.height = "0px";
+  frame.style.left = PARKED;
+  frame.style.top = PARKED;
+};
+
+const enableHost = ({ backdrop, frame, host }: PickerHost, mobile: boolean): void => {
+  host.inert = false;
+  backdrop.style.display = mobile ? "" : "none";
+  frame.inert = false;
+  frame.removeAttribute("aria-hidden");
+  frame.style.pointerEvents = "";
+  frame.setAttribute("data-tp-ready", "true");
 };
 
 export const isPickerOpen = (): boolean => active !== null;
@@ -130,9 +182,15 @@ export const isPickerOpen = (): boolean => active !== null;
 export const closePicker = (): void => {
   if (!active) return;
   const current = active;
+  if (pickerHost) {
+    disableHost(pickerHost);
+    pickerHost.host.removeAttribute("data-tp-open");
+  }
   active = null;
   current.cleanup();
-  current.host.remove();
+  if (pickerHost) {
+    signal({ activation: current.activation, hostId: pickerHost.id, kind: "picker.deactivate" });
+  }
   restoreFocus(current.previousFocus);
   current.onDismiss?.();
 };
@@ -159,14 +217,7 @@ export const openPicker = (target: PickerTarget): void => {
     optionLabels: readOptionLabels(target.field),
     storageKey: storageKeyFor(),
   };
-  mountFrame({
-    anchor: target,
-    context,
-    onConfirm: null,
-    onDismiss: null,
-    target,
-    title: "Insert from TalentProfile",
-  });
+  showFrame({ anchor: target, context, onConfirm: null, onDismiss: null, target, title: "Insert from TalentProfile" });
 };
 
 export const openFillConfirm = (options: {
@@ -177,7 +228,7 @@ export const openFillConfirm = (options: {
   closePicker();
   const anchor: FrameAnchor = { anchor: options.anchor, trigger: null };
   const context: PickerConfirmContext = { ...frameLayout(anchor), kind: "confirmFill" };
-  mountFrame({
+  showFrame({
     anchor,
     context,
     onConfirm: options.onConfirm,
@@ -187,7 +238,7 @@ export const openFillConfirm = (options: {
   });
 };
 
-const mountFrame = (options: {
+const showFrame = (options: {
   anchor: FrameAnchor;
   context: PickerContextData;
   onConfirm: (() => void) | null;
@@ -197,31 +248,17 @@ const mountFrame = (options: {
 }): void => {
   const { anchor: target, context } = options;
   const { maxHeight, mobile } = context;
-  const sessionId = crypto.randomUUID();
+  const activation = crypto.randomUUID();
+  const picker = ensureHost();
+  const { frame, host } = picker;
 
-  const host = document.createElement("div");
-  const shadow = host.attachShadow({ mode: "closed" });
-  const style = document.createElement("style");
-  style.textContent = HOST_STYLE;
-  shadow.appendChild(style);
-
-  let onBackdrop: (() => void) | null = null;
-  if (mobile) {
-    const backdrop = document.createElement("div");
-    backdrop.className = "backdrop";
-    onBackdrop = () => closePicker();
-    backdrop.addEventListener("click", onBackdrop);
-    shadow.appendChild(backdrop);
-  }
-
-  const frame = document.createElement("iframe");
+  disableHost(picker);
   frame.setAttribute("title", options.title);
   frame.setAttribute("data-tp-mobile", mobile ? "true" : "false");
-  frame.style.height = "0px";
-  if (!mobile) frame.style.width = `${clampWidth(target.anchor)}px`;
-  frame.src = `${browser.runtime.getURL(PICKER_PAGE)}#${sessionId}`;
-  shadow.appendChild(frame);
-  document.documentElement.appendChild(host);
+  frame.style.width = mobile ? "" : `${clampWidth(target.anchor)}px`;
+  frame.style.left = "";
+  frame.style.top = "";
+  host.setAttribute("data-tp-open", "true");
 
   const previousFocus = (document.activeElement as HTMLElement | null) ?? null;
 
@@ -241,9 +278,9 @@ const mountFrame = (options: {
                 MIN_POPOVER_MAX_HEIGHT,
                 Math.min(MAX_POPOVER_MAX_HEIGHT, Math.round(availableHeight)),
               );
-              if (active && active.frame === frame && active.maxHeight !== cap) {
+              if (active?.activation === activation && active.maxHeight !== cap) {
                 active.maxHeight = cap;
-                announceLayout(sessionId, cap);
+                signal({ activation, hostId: picker.id, kind: "picker.layout", maxHeight: cap });
               }
             },
           }),
@@ -251,6 +288,7 @@ const mountFrame = (options: {
         placement: "top-end",
         strategy: "fixed",
       });
+      if (active?.activation !== activation) return;
       frame.style.left = `${x}px`;
       frame.style.top = `${y}px`;
     };
@@ -271,30 +309,36 @@ const mountFrame = (options: {
   document.addEventListener("keydown", handleEscape, true);
 
   active = {
-    anchor: target,
+    activation,
     cleanup: () => {
       document.removeEventListener("mousedown", handleOutsideMouseDown, true);
       document.removeEventListener("keydown", handleEscape, true);
       cleanupFloating?.();
     },
     context,
-    frame,
-    host,
     maxHeight,
+    mobile,
     onConfirm: options.onConfirm,
     onDismiss: options.onDismiss,
     previousFocus,
-    sessionId,
     target: options.target,
   };
+  if (picker.ready) activate(picker, activation);
 };
 
 export const handlePickerAction = (
-  sessionId: string,
+  hostId: string,
+  activation: string | null,
   action: PickerAction,
   fillField: (fieldUuid: string, value: ProfileValue) => void,
 ): unknown => {
-  if (!active || active.sessionId !== sessionId) return null;
+  if (!pickerHost || pickerHost.id !== hostId) return null;
+  if (action.type === "ready") {
+    pickerHost.ready = true;
+    if (active) activate(pickerHost, active.activation);
+    return { ok: true };
+  }
+  if (!active || active.activation !== activation) return null;
   const current = active;
   if (action.type === "context") return { ok: true, data: current.context };
   if (action.type === "insert") {
@@ -309,6 +353,7 @@ export const handlePickerAction = (
   if (action.type === "confirmFill") {
     if (!current.onConfirm) return { ok: false, error: "Not a fill confirmation" };
     const confirm = current.onConfirm;
+    current.onConfirm = null;
     current.onDismiss = null;
     closePicker();
     confirm();
@@ -319,7 +364,7 @@ export const handlePickerAction = (
     return { ok: true };
   }
   const height = Math.max(0, Math.min(Math.round(action.height), current.maxHeight));
-  current.frame.style.height = `${height}px`;
-  current.frame.setAttribute("data-tp-ready", "true");
+  pickerHost.frame.style.height = `${height}px`;
+  if (height > 0) enableHost(pickerHost, current.mobile);
   return { ok: true };
 };

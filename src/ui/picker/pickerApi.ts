@@ -16,9 +16,12 @@ const send = async <T = unknown>(message: ContentToBackground): Promise<Backgrou
   }
 }
 
-export const createPickerApi = (sessionId: string) => {
-  const relay = <T = unknown>(action: PickerAction) =>
-    send<T>({ action, kind: 'picker.relay', sessionId })
+export const announcePickerReady = (hostId: string): void => {
+  void send({ action: { type: 'ready' }, activation: null, hostId, kind: 'picker.relay' })
+}
+
+export const createPickerApi = (hostId: string, activation: string) => {
+  const relay = <T = unknown>(action: PickerAction) => send<T>({ action, activation, hostId, kind: 'picker.relay' })
 
   return {
     authStatus: async (): Promise<AuthStatus> => {
@@ -63,10 +66,7 @@ export const createPickerApi = (sessionId: string) => {
     touchNote: (noteId: string): void => {
       void send({ kind: 'note.touch', noteId })
     },
-    updateNote: async (
-      noteId: string,
-      content: string,
-    ): Promise<{ note: ProfileNote | null; error?: string }> => {
+    updateNote: async (noteId: string, content: string): Promise<{ note: ProfileNote | null; error?: string }> => {
       const res = await send<ProfileNote>({ content, kind: 'note.update', noteId })
       return res.ok ? { note: res.data ?? null } : { error: res.error, note: null }
     },
