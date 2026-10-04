@@ -19,6 +19,7 @@
   import {
     PROFILE_SCORE_COMPLETE_AT,
     PROFILE_SCORE_EMPTY_BELOW,
+    WEB_APP_DASHBOARD_URL,
   } from "~/config";
   import { onDestroy, onMount } from "svelte";
   import {
@@ -67,9 +68,6 @@
   let maxObservedTotal = $state(0);
   let activeTabId: number | null = $state(null);
   let activePort: Browser.runtime.Port | null = null;
-  let pendingEnableChoice = $state<{ pattern: string; origin: string } | null>(
-    null,
-  );
 
   const emptyCounts = () => ({
     failed: 0,
@@ -369,18 +367,8 @@
     }
   };
 
-  const requestEnableOrigin = (pattern: string, origin: string) => {
-    pendingEnableChoice = { origin, pattern };
-  };
-
-  const cancelEnableChoice = () => {
-    pendingEnableChoice = null;
-  };
-
-  const confirmEnableMode = async (mode: OriginMode) => {
-    if (!pendingEnableChoice) return;
-    const { pattern } = pendingEnableChoice;
-    pendingEnableChoice = null;
+  const requestEnableOrigin = async (pattern: string) => {
+    const mode: OriginMode = "application";
     if (busy) return;
     if (typeof activeTabId !== "number") return;
     busy = true;
@@ -463,6 +451,8 @@
     window.close();
   };
 
+  const openApp = (path: string) => openLink(`${WEB_APP_DASHBOARD_URL}${path}`);
+
   const openShortcuts = () => {
     const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
     if (isFirefox) {
@@ -473,9 +463,29 @@
     window.close();
   };
 
+  let settingsButton = $state<HTMLButtonElement | null>(null);
+  let settingsPanel = $state<HTMLDivElement | null>(null);
+
   const toggleSettings = () => {
     settingsOpen = !settingsOpen;
     if (!settingsOpen) manageOpen = false;
+  };
+
+  const closeSettings = () => {
+    settingsOpen = false;
+    manageOpen = false;
+  };
+
+  const closeSettingsOnOutsidePointer = (event: PointerEvent) => {
+    if (!settingsOpen || confirmRevoke) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (settingsPanel?.contains(target) || settingsButton?.contains(target)) return;
+    closeSettings();
+  };
+
+  const closeSettingsOnEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && settingsOpen && !confirmRevoke) closeSettings();
   };
 
   const atsLabel = $derived.by(() => {
@@ -527,6 +537,37 @@
     if (summary.profileScore < PROFILE_SCORE_COMPLETE_AT)
       return { level: "partial", pct };
     return { level: "complete", pct };
+  });
+
+  const initials = $derived.by(() => {
+    const source = summary?.profileName?.trim() || summary?.email || "";
+    const letters = source
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((word) => word[0]);
+    return letters.join("").toUpperCase() || "?";
+  });
+
+  const headline = $derived.by(() => {
+    if (!summary?.jobTitle) return null;
+    return summary.currentCompany
+      ? `${summary.jobTitle} at ${summary.currentCompany}`
+      : summary.jobTitle;
+  });
+
+  const facts = $derived.by(() => {
+    if (!summary) return [];
+    const years = summary.totalExperience?.trim();
+    return [
+      summary.location?.trim() || null,
+      years
+        ? /^\d+(\.\d+)?$/.test(years)
+          ? `${years} ${Number(years) === 1 ? "year" : "years"}`
+          : years
+        : null,
+      summary.openToWork ? "Open to work" : null,
+    ].filter((fact): fact is string => fact !== null);
   });
 
   const missingItems = $derived.by(() => {
@@ -591,7 +632,6 @@
 
   const MODE_OPTIONS: { mode: OriginMode; label: string }[] = [
     { label: "Autofill this page", mode: "application" },
-    { label: "Notes only", mode: "notesOnly" },
     { label: "Auto detect", mode: "auto" },
   ];
 
@@ -642,12 +682,77 @@
   {/if}
 {/snippet}
 
+{#snippet profileCard()}
+  {#if summary}
+    <div class="card" data-tp-profile-card="true">
+      <div class="card-head">
+        <span class="avatar" aria-hidden="true">{initials}</span>
+        <div class="card-id">
+          <p class="name">{summary.profileName ?? summary.email ?? "Your profile"}</p>
+          {#if headline}<p class="headline">{headline}</p>{/if}
+        </div>
+      </div>
+      {#if facts.length > 0}
+        <p class="facts">{facts.join(" · ")}</p>
+      {/if}
+      {#if summary.topSkills.length > 0}
+        <div class="chips">
+          {#each summary.topSkills as skill, index (index)}
+            <span class="chip">{skill}</span>
+          {/each}
+        </div>
+      {/if}
+      {#if profileCompleteness && profileCompleteness.level !== "complete"}
+        <div class="completeness completeness-{profileCompleteness.level}">
+          <div class="completeness-header">
+            <span class="completeness-label">Profile {profileCompleteness.pct}% complete</span>
+          </div>
+          <div class="progress">
+            <div
+              class="progress-bar"
+              style="width: {profileCompleteness.pct}%"
+            ></div>
+          </div>
+          {#if missingItems.length > 0}
+            <p class="missing">
+              Missing: {missingItems.slice(0, 3).join(", ")}{missingItems.length > 3
+                ? ` +${missingItems.length - 3} more`
+                : ""}
+            </p>
+          {/if}
+        </div>
+      {/if}
+      <div class="quick-links">
+        <button type="button" class="quick" onclick={() => openApp("/talent/profile")}
+          >Edit profile</button
+        >
+        <button type="button" class="quick" onclick={() => openApp("/talent/jobs")}
+          >My matches</button
+        >
+        <button
+          type="button"
+          class="quick"
+          onclick={() => openApp("/talent/applied-jobs")}>Applications</button
+        >
+      </div>
+    </div>
+  {:else}
+    <p class="meta">Loading profile…</p>
+  {/if}
+{/snippet}
+
+<svelte:window
+  onpointerdown={closeSettingsOnOutsidePointer}
+  onkeydown={closeSettingsOnEscape}
+/>
+
 <div class="wrap">
   {#if status.authenticated}
     <header class="brand">
       <Logo size={28} />
       <span class="wordmark">Talent<strong>Profile</strong></span>
       <button
+        bind:this={settingsButton}
         type="button"
         class="settings-btn"
         aria-label="Settings"
@@ -732,6 +837,7 @@
       </section>
     {:else if isMinimalMode}
       <section class="minimal">
+        {@render profileCard()}
         <div class="site-row">
           {#if showModeControls}
             <div class="enabled-line">
@@ -749,10 +855,8 @@
                 disabled={busy}
                 onclick={() =>
                   tabOriginInfo &&
-                  requestEnableOrigin(
-                    tabOriginInfo.topPattern,
-                    tabOriginInfo.topOrigin,
-                  )}>Enable here</button
+                  requestEnableOrigin(tabOriginInfo.topPattern)}
+                >Enable here</button
               >
             </div>
           {:else}
@@ -783,7 +887,7 @@
                     type="button"
                     class="secondary secondary-sm"
                     disabled={busy}
-                    onclick={() => requestEnableOrigin(f.pattern, f.origin)}
+                    onclick={() => requestEnableOrigin(f.pattern)}
                     >Enable</button
                   >
                 {/if}
@@ -796,46 +900,8 @@
       </section>
     {:else}
       <section class="profile">
+        {@render profileCard()}
         {#if summary}
-          <p class="name">{summary.profileName ?? "(no name)"}</p>
-          <p class="meta">{summary.email ?? ""}</p>
-          {#if summary.jobTitle}
-            <p class="meta">{summary.jobTitle}</p>
-          {/if}
-
-          {#if profileCompleteness}
-            <div class="completeness completeness-{profileCompleteness.level}">
-              <div class="completeness-header">
-                <span class="completeness-label">
-                  {#if profileCompleteness.level === "empty"}
-                    Profile incomplete
-                  {:else if profileCompleteness.level === "partial"}
-                    Profile partially complete
-                  {:else}
-                    Profile complete
-                  {/if}
-                </span>
-                <span class="completeness-pct">{profileCompleteness.pct}%</span>
-              </div>
-              <div class="progress">
-                <div
-                  class="progress-bar"
-                  style="width: {profileCompleteness.pct}%"
-                ></div>
-              </div>
-              {#if profileCompleteness.level !== "complete" && missingItems.length > 0}
-                <p class="missing">Missing: {missingItems.join(", ")}</p>
-                <button
-                  type="button"
-                  class="link inline"
-                  onclick={() => openLink("https://app.talentprofile.net/")}
-                >
-                  Complete profile →
-                </button>
-              {/if}
-            </div>
-          {/if}
-
           {#if siteLabel}
             <div class="site-row">
               <span class="badge badge-ok">{siteLabel}</span>
@@ -856,15 +922,13 @@
                     type="button"
                     class="secondary secondary-sm"
                     disabled={busy}
-                    onclick={() => requestEnableOrigin(f.pattern, f.origin)}
+                    onclick={() => requestEnableOrigin(f.pattern)}
                     >Enable</button
                   >
                 </div>
               {/each}
             </div>
           {/if}
-        {:else}
-          <p class="meta">Loading profile…</p>
         {/if}
       </section>
 
@@ -944,7 +1008,7 @@
   </div>
 
   {#if settingsOpen && status.authenticated}
-    <div class="settings-panel">
+    <div class="settings-panel" bind:this={settingsPanel}>
       <div class="settings-section">
         <button
           type="button"
@@ -1027,67 +1091,6 @@
     </div>
   {/if}
 
-  {#if pendingEnableChoice}
-    <div class="modal-overlay">
-      <button
-        type="button"
-        class="modal-backdrop-btn"
-        aria-label="Close dialog"
-        onclick={cancelEnableChoice}
-      ></button>
-      <div
-        class="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Choose mode"
-        tabindex={-1}
-      >
-        <p class="modal-title">Enable on {pendingEnableChoice.origin}</p>
-        <p class="modal-body">
-          Choose how TalentProfile should work here. You can change this later.
-        </p>
-        <div class="mode-choices">
-          <button
-            type="button"
-            class="mode-choice"
-            onclick={() => confirmEnableMode("application")}
-          >
-            <span class="mode-choice-title">Autofill + Picker</span>
-            <span class="mode-choice-desc"
-              >Show a Fill button and pick from profile fields.</span
-            >
-          </button>
-          <button
-            type="button"
-            class="mode-choice"
-            onclick={() => confirmEnableMode("notesOnly")}
-          >
-            <span class="mode-choice-title">Picker only</span>
-            <span class="mode-choice-desc"
-              >Show the inline picker for notes and snippets. Best for chat and
-              docs.</span
-            >
-          </button>
-          <button
-            type="button"
-            class="mode-choice"
-            onclick={() => confirmEnableMode("auto")}
-          >
-            <span class="mode-choice-title">Auto (detect)</span>
-            <span class="mode-choice-desc"
-              >Use page hints to choose between autofill and picker
-              automatically.</span
-            >
-          </button>
-        </div>
-        <div class="modal-actions">
-          <button type="button" class="secondary" onclick={cancelEnableChoice}
-            >Cancel</button
-          >
-        </div>
-      </div>
-    </div>
-  {/if}
 
   {#if confirmRevoke}
     <div class="modal-overlay">
@@ -1355,6 +1358,87 @@
     color: #64748b;
     margin: 0;
   }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .avatar {
+    flex: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #e8efff;
+    color: #175cfa;
+    font-weight: 600;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card-id {
+    min-width: 0;
+  }
+  .card-id .name,
+  .headline {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .headline {
+    font-size: 12px;
+    color: #334155;
+    margin: 0;
+  }
+  .facts {
+    font-size: 12px;
+    color: #64748b;
+    margin: 0;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .chip {
+    font-size: 11px;
+    color: #334155;
+    background: #f1f5f9;
+    border-radius: 999px;
+    padding: 2px 8px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .card .completeness {
+    margin-top: 0;
+  }
+  .quick-links {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .quick {
+    padding: 7px 4px;
+    background: #ffffff;
+    color: #175cfa;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .quick:hover {
+    background: #f8fafc;
+    border-color: #175cfa;
+  }
   .completeness {
     margin-top: 12px;
     padding: 10px 12px;
@@ -1392,10 +1476,6 @@
   }
   .completeness-complete .completeness-label {
     color: #047857;
-  }
-  .completeness-pct {
-    font-size: 12px;
-    font-weight: 600;
   }
   .progress {
     height: 4px;
@@ -1775,37 +1855,6 @@
     gap: 8px;
     justify-content: flex-end;
     margin-top: 4px;
-  }
-  .mode-choices {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 4px;
-  }
-  .mode-choice {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    padding: 10px 12px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    text-align: left;
-  }
-  .mode-choice:hover {
-    background: #f1f5f9;
-    border-color: #cbd5e1;
-  }
-  .mode-choice-title {
-    font-weight: 600;
-    font-size: 13px;
-    color: #0f172a;
-  }
-  .mode-choice-desc {
-    font-size: 11px;
-    color: #64748b;
-    line-height: 1.4;
   }
   .footer {
     display: flex;

@@ -189,6 +189,11 @@ export type ProfileSummary = {
   profileName: string | null
   email: string | null
   jobTitle: string | null
+  currentCompany: string | null
+  location: string | null
+  totalExperience: string | null
+  openToWork: boolean
+  topSkills: string[]
   profileScore: number
   scoreItems: ProfileScoreItems
 }

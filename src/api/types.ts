@@ -51,6 +51,8 @@ export type ProfileNote = {
 
 export type Profile = {
   id: string
+  email?: string | null
+  phoneNumber?: string | null
   profileName: string | null
   jobTitle: string | null
   description: string | null

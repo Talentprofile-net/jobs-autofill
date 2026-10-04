@@ -146,3 +146,31 @@ describe('file fields and self-assessment questions', () => {
     expect(resolveField('Languages spoken', 'TextInput', '', p).profileField).toBe('languages')
   })
 })
+
+describe('contacts from the own-profile read', () => {
+  const owned: Profile = {
+    ...profile('Example City'),
+    email: 'owner@example.invalid',
+    links: [
+      { id: 'a', label: 'other', url: 'https://github.com/audit-tester' },
+      { id: 'b', label: 'other', url: 'https://www.linkedin.com/in/audit-tester' },
+    ],
+    phoneNumber: '+66 81 234 5678',
+    user: null,
+  }
+  const text = (label: string) => resolveField(label, 'TextInput', '', owned).value
+
+  it('fills email and phone from the profile when the account contacts are absent', () => {
+    expect(text('Email')).toEqual({ confidence: 'exact', kind: 'string', value: 'owner@example.invalid' })
+    expect(text('Phone')).toEqual({ confidence: 'exact', kind: 'string', value: '+66 81 234 5678' })
+  })
+
+  it('recognizes LinkedIn and GitHub links by host whatever their label', () => {
+    expect(text('LinkedIn Profile')).toEqual({ confidence: 'exact', kind: 'string', value: 'https://www.linkedin.com/in/audit-tester' })
+    expect(text('GitHub')).toEqual({ confidence: 'exact', kind: 'string', value: 'https://github.com/audit-tester' })
+  })
+
+  it('falls back to GitHub for a website when no other link exists', () => {
+    expect(text('Website')).toEqual({ confidence: 'exact', kind: 'string', value: 'https://github.com/audit-tester' })
+  })
+})

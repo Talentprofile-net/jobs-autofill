@@ -1,5 +1,6 @@
-import type { Profile, ProfileLink, ProfileNote } from '~/api/types'
+import type { Profile, ProfileNote } from '~/api/types'
 import type { PickerMode } from '~/field/types'
+import { findProfileLink, profileEmail, profilePhone, websiteLink } from '~/resolver/profileContacts'
 
 export type MenuLeaf = {
   kind: 'leaf'
@@ -35,9 +36,6 @@ const splitName = (
     middle: parts.slice(1, -1).join(' '),
   }
 }
-
-const findLink = (links: ProfileLink[] | null, label: ProfileLink['label']): string =>
-  links?.find((l) => l.label === label)?.url ?? ''
 
 export const previewOf = (s: string): string => {
   const single = s.replace(/\s+/g, ' ').trim()
@@ -97,14 +95,14 @@ export const buildMenuTree = (
     leafOrNull('id.middle', 'Middle name', name.middle),
     leafOrNull('id.last', 'Last name', name.last),
     leafOrNull('id.full', 'Full name', trim(profile.profileName)),
-    leafOrNull('id.email', 'Email', trim(profile.user?.email)),
-    leafOrNull('id.phone', 'Phone', trim(profile.user?.phoneNumber)),
+    leafOrNull('id.email', 'Email', trim(profileEmail(profile))),
+    leafOrNull('id.phone', 'Phone', trim(profilePhone(profile))),
   )
 
   const links = filterLeaves(
-    leafOrNull('lk.li', 'LinkedIn URL', findLink(profile.links, 'linkedin')),
-    leafOrNull('lk.gh', 'GitHub URL', findLink(profile.links, 'github')),
-    leafOrNull('lk.web', 'Personal website', findLink(profile.links, 'other')),
+    leafOrNull('lk.li', 'LinkedIn URL', findProfileLink(profile.links, 'linkedin')),
+    leafOrNull('lk.gh', 'GitHub URL', findProfileLink(profile.links, 'github')),
+    leafOrNull('lk.web', 'Personal website', websiteLink(profile.links)),
   )
 
   const work = filterLeaves(

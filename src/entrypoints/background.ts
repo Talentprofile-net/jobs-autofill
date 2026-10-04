@@ -44,6 +44,7 @@ import {
   type ConnectAttempt,
 } from "~/auth/connectAttempt";
 import { resolveField } from "~/resolver/profileResolver";
+import { profileEmail } from "~/resolver/profileContacts";
 import { calculateProfileScore } from "~/resolver/profileScore";
 import {
   EXTENSION_CONNECT_PATH,
@@ -1165,10 +1166,19 @@ export default defineBackground(() => {
 
   const toSummary = (p: Profile): ProfileSummary => {
     const { profileScore, scoreItems } = calculateProfileScore(p);
+    const current = (p.experience ?? []).find((entry) => entry.isCurrent);
     return {
       profileName: p.profileName,
-      email: p.user?.email ?? null,
-      jobTitle: p.jobTitle,
+      email: profileEmail(p) || null,
+      jobTitle: p.jobTitle ?? current?.title ?? null,
+      currentCompany: current?.company ?? null,
+      location: p.location,
+      totalExperience: p.totalExperience,
+      openToWork: p.isAvailableForHire === true,
+      topSkills: [...(p.skills ?? [])]
+        .sort((a, b) => b.rate - a.rate)
+        .slice(0, 5)
+        .map((entry) => entry.skill),
       profileScore,
       scoreItems,
     };

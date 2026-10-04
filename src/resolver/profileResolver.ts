@@ -2,12 +2,12 @@ import type {
   Profile,
   ProfileEducationEntry,
   ProfileExperienceEntry,
-  ProfileLink,
 } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
 import { parseLocation, type ParsedLocation } from './parseLocation'
 import { parseDate, type ParsedDate } from './parseDate'
 import { parseSection, type ParsedSection } from './sectionParser'
+import { findProfileLink, profileEmail, profilePhone, websiteLink } from './profileContacts'
 
 const TEXT_FIELD_TYPES = new Set(['TextInput', 'ContentEditable'])
 const FILE_FIELD_TYPES = new Set(['FileUpload', 'SingleFileUpload', 'MultiFileUpload'])
@@ -42,11 +42,6 @@ const middleName = (full: string | null): string => {
   if (parts.length <= 2) return ''
   return parts.slice(1, -1).join(' ')
 }
-
-const findLink = (
-  links: ProfileLink[] | null,
-  label: ProfileLink['label'],
-): string => links?.find((l) => l.label === label)?.url ?? ''
 
 const str = (value: string, confidence: 'exact' | 'guess' = 'exact'): ProfileValue =>
   ({ kind: 'string', value, confidence })
@@ -338,22 +333,22 @@ const resolveGeneric = (
     return withField(str(splitName(profile.profileName).first, 'guess'), 'profileName')
   }
   if (re.email.test(fieldName)) {
-    return withField(str(profile.user?.email ?? ''), 'user.email')
+    return withField(str(profileEmail(profile)), 'user.email')
   }
   if (isPhoneField(fieldName)) {
-    const phone = profile.user?.phoneNumber ?? ''
+    const phone = profilePhone(profile)
     if (TEXT_FIELD_TYPES.has(fieldType)) return withField(str(phone), 'user.phoneNumber')
     const dialCode = explicitDialCode(phone)
     return dialCode ? withField(choice(dialCode, []), 'user.phoneNumber') : withField({ kind: 'unsupported' }, null)
   }
   if (re.linkedin.test(fieldName)) {
-    return withField(str(findLink(profile.links, 'linkedin')), 'links.linkedin')
+    return withField(str(findProfileLink(profile.links, 'linkedin')), 'links.linkedin')
   }
   if (re.github.test(fieldName)) {
-    return withField(str(findLink(profile.links, 'github')), 'links.github')
+    return withField(str(findProfileLink(profile.links, 'github')), 'links.github')
   }
   if (re.website.test(fieldName)) {
-    return withField(str(findLink(profile.links, 'other')), 'links.other')
+    return withField(str(websiteLink(profile.links)), 'links.other')
   }
   if (re.jobTitleStrict.test(fieldName)) {
     return withField(str(profile.jobTitle ?? ''), 'jobTitle')
