@@ -100,6 +100,7 @@ export type AnswerCaptureRecord = {
   answerKind: string
   answerValue: ProfileValue
   answerText: string | null
+  jobCountry: string | null
   labelEnumId: string | null
   profileField: string | null
   resolverOutcome: ResolverOutcomeKind
@@ -165,6 +166,7 @@ export type MainWorldRequest =
   | { id: string; kind: 'widget.openDashboard' }
   | { id: string; kind: 'field.descriptor'; descriptor: FieldDescriptor | null }
   | { id: string; kind: 'capture.submit'; records: AnswerCaptureRecord[] }
+  | { id: string; kind: 'capture.draft'; records: AnswerCaptureRecord[] }
 
 export type ContentScriptRequest =
   | { id: string; kind: 'mainWorld.ping' }
@@ -275,6 +277,7 @@ export type ContentToBackground =
   | { kind: 'frame.fillTotalIncreased'; batchId: string; addedTotal: number; pass: number }
   | { kind: 'answers.stage'; payload: CaptureStagePayload }
   | { kind: 'answers.commit'; stageId: string }
+  | { kind: 'answers.saveDraft'; payload: CaptureStagePayload }
   | {
       kind: 'answers.discard'
       stageId: string

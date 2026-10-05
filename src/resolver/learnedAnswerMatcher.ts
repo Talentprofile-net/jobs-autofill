@@ -127,6 +127,8 @@ export const findLearnedAnswer = (
   return best
 }
 
+const CHOICE_FIELD_TYPES = new Set(['SimpleDropdown', 'RadioGroup', 'BooleanRadio'])
+
 export const learnedAnswerToProfileValue = (
   match: MatchResult,
   fieldType: string,
@@ -135,6 +137,11 @@ export const learnedAnswerToProfileValue = (
   if (stored && stored.kind) {
     if (match.method !== 'normalized_text' && stored.kind === 'string') {
       return { ...stored, confidence: 'guess' }
+    }
+    if (stored.kind === 'boolean' && CHOICE_FIELD_TYPES.has(fieldType)) {
+      return stored.value
+        ? { kind: 'choice', preferred: 'Yes', fallbacks: ['True'] }
+        : { kind: 'choice', preferred: 'No', fallbacks: ['False'] }
     }
     return stored
   }
@@ -147,7 +154,7 @@ export const learnedAnswerToProfileValue = (
     return { kind: 'boolean', value: lower === 'yes' || lower === 'true' }
   }
 
-  if (fieldType === 'SimpleDropdown' || fieldType === 'RadioGroup' || fieldType === 'BooleanRadio') {
+  if (CHOICE_FIELD_TYPES.has(fieldType)) {
     return { kind: 'choice', preferred: text, fallbacks: [] }
   }
 

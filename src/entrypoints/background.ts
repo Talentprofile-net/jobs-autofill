@@ -90,6 +90,7 @@ import {
   updateOpenedApplicationTab,
   type ApplicationContextStorage,
 } from "~/capture/applicationContext";
+import { tabJobCountry, withJobCountry } from "~/capture/tabJobCountry";
 import { closeOffscreenDocument } from "~/classifier/offscreenClient";
 import { CLASSIFIER_SUGGESTIONS_KEY } from "~/classifier/suggestionSwitch";
 import { PICKER_PAGE, type PickerRelay } from "~/ui/picker/protocol";
@@ -2107,7 +2108,11 @@ export default defineBackground(() => {
           const { resolveLearnedAnswersBatch } = await import(
             "~/resolver/learnedAnswers"
           );
-          const results = resolveLearnedAnswersBatch(message.fields, profile);
+          const results = resolveLearnedAnswersBatch(
+            message.fields,
+            profile,
+            await tabJobCountry(applicationContextStorage, sender?.tab?.id),
+          );
           return { ok: true, data: results };
         } catch {
           return {
@@ -2160,7 +2165,10 @@ export default defineBackground(() => {
           attempts: 0,
           id: stageId,
           lastError: null,
-          records: payload.records,
+          records: withJobCountry(
+            payload.records,
+            await tabJobCountry(applicationContextStorage, senderTabId),
+          ),
           stagedAt: Date.now(),
           tabId: sender?.tab?.id ?? null,
           talentJobApplicationId,
@@ -2169,6 +2177,43 @@ export default defineBackground(() => {
         // navigation can commit while the write is still in flight.
         await stageAndSettle(stageDeps(), stage);
         return { ok: true, data: { stageId } };
+      }
+      case "answers.saveDraft": {
+        const payload = message.payload;
+        if (
+          !payload?.applicationUrl ||
+          !Array.isArray(payload.records) ||
+          payload.records.length === 0
+        ) {
+          return { ok: false, error: "Invalid capture payload" };
+        }
+        if (!(await ensureAuthenticated())) {
+          return { ok: false, error: "Not authenticated" };
+        }
+        const senderTabId = sender?.tab?.id ?? null;
+        try {
+          const { captureAnswerBatch } = await import("~/api/talentAnswer");
+          await captureAnswerBatch({
+            ats: payload.ats ?? null,
+            originalJobPostUrl: payload.applicationUrl,
+            pageUrl: payload.applicationUrl,
+            records: withJobCountry(
+              payload.records,
+              await tabJobCountry(applicationContextStorage, senderTabId),
+            ),
+            talentJobApplicationId:
+              senderTabId === null
+                ? null
+                : await readApplicationContextForTab(
+                    applicationContextStorage,
+                    senderTabId,
+                  ),
+          });
+          await refreshCachedAnswers();
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: (e as Error).message };
+        }
       }
       case "answers.commit": {
         const stage = await stageStore.read(message.stageId);

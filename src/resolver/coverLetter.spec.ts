@@ -56,7 +56,7 @@ const profile = (talentAnswers: TalentAnswer[]): Profile => ({
 const fill = (fieldName: string, fieldType: string, p: Profile) => {
   const fields = [{ fieldName, fieldType, requestId: 'r1', section: '' }]
   const fromProfile = fields.map((f) => ({ requestId: f.requestId, ...resolveField(f.fieldName, f.fieldType, f.section, p) }))
-  const learned = resolveLearnedAnswersBatch(fieldsWithoutProfileValue(fields, fromProfile), p)
+  const learned = resolveLearnedAnswersBatch(fieldsWithoutProfileValue(fields, fromProfile), p, '_unknown')
   return mergeFillValues(fields, fromProfile, learned)[0]
 }
 

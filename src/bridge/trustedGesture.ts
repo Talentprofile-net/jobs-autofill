@@ -1,6 +1,6 @@
 import { findEnclosingForm, submitButtonFor } from '~/capture/submitTarget'
 
-export type GestureKind = 'click' | 'submit'
+export type GestureKind = 'click' | 'edit' | 'submit'
 
 export type Gesture = {
   at: number
@@ -11,6 +11,7 @@ export type Gesture = {
 
 const WINDOW_MS: Record<GestureKind, number> = {
   click: 2_000,
+  edit: 10_000,
   submit: 3_000,
 }
 
@@ -36,8 +37,15 @@ export const createGestureTracker = (target: Window, now: () => number = Date.no
     latest.set('submit', { at: now(), element: event.target, form: event.target, kind: 'submit' })
   }
 
+  const onChange = (event: Event): void => {
+    if (!event.isTrusted) return
+    const element = firstElement(event)
+    latest.set('edit', { at: now(), element, form: element ? findEnclosingForm(element) : null, kind: 'edit' })
+  }
+
   target.addEventListener('click', onClick, true)
   target.addEventListener('submit', onSubmit, true)
+  target.addEventListener('change', onChange, true)
 
   return {
     consume: (kind: GestureKind): Gesture | null => {
@@ -49,6 +57,7 @@ export const createGestureTracker = (target: Window, now: () => number = Date.no
     destroy: (): void => {
       target.removeEventListener('click', onClick, true)
       target.removeEventListener('submit', onSubmit, true)
+      target.removeEventListener('change', onChange, true)
     },
   }
 }

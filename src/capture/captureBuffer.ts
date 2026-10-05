@@ -1,4 +1,4 @@
-import { submitCapture } from '~/bridge/mainBridge'
+import { draftCapture, submitCapture } from '~/bridge/mainBridge'
 import { findEnclosingForm, submitButtonFor } from './submitTarget'
 import { normalizeQuestion } from '~/resolver/normalizeQuestion'
 import {
@@ -12,6 +12,8 @@ import type { AnswerCaptureRecord } from '~/bridge/types'
 
 type FormCaptureState = {
   buttonHandler: ((event: Event) => void) | null
+  changeHandler: ((event: Event) => void) | null
+  draftTimer: ReturnType<typeof setTimeout> | null
   form: HTMLElement
   fields: Set<BaseField>
   listenerAttached: boolean
@@ -45,6 +47,7 @@ const buildRecord = (field: BaseField): AnswerCaptureRecord | null => {
     answerText: profileValueToText(value),
     answerValue: value,
     fieldType: corpusFieldType,
+    jobCountry: null,
     // Stays null until the country-aware classifier exists. Nothing on either
     // side of the wire infers one: a wrong enum poisons the answer history for
     // every country sharing the question, and a null is backfillable.
@@ -69,6 +72,17 @@ const collectRecords = (state: FormCaptureState): AnswerCaptureRecord[] => {
 }
 
 const SUBMIT_DEBOUNCE_MS = 1_000
+const DRAFT_DEBOUNCE_MS = 1_500
+
+const scheduleDraft = (state: FormCaptureState): void => {
+  if (state.draftTimer) clearTimeout(state.draftTimer)
+  state.draftTimer = setTimeout(() => {
+    state.draftTimer = null
+    if (state.submitted) return
+    const records = collectRecords(state)
+    if (records.length > 0) draftCapture(records)
+  }, DRAFT_DEBOUNCE_MS)
+}
 
 const onSubmitForState = (state: FormCaptureState) => () => {
   if (state.submitted) return
@@ -86,7 +100,12 @@ const attachSubmitListener = (state: FormCaptureState): void => {
   state.listenerAttached = true
   const handler = onSubmitForState(state)
   const submitHandler = () => {
+    if (state.draftTimer) clearTimeout(state.draftTimer)
+    state.draftTimer = null
     handler()
+  }
+  const changeHandler = (e: Event) => {
+    if (e.target instanceof Node && state.form.contains(e.target)) scheduleDraft(state)
   }
   const buttonHandler = (e: Event) => {
     const target = e.target as HTMLElement | null
@@ -97,7 +116,9 @@ const attachSubmitListener = (state: FormCaptureState): void => {
   }
   state.submitHandler = submitHandler
   state.buttonHandler = buttonHandler
+  state.changeHandler = changeHandler
   state.form.addEventListener('submit', submitHandler)
+  document.addEventListener('change', changeHandler, true)
   document.addEventListener('click', buttonHandler, true)
 }
 
@@ -105,11 +126,17 @@ const detachSubmitListeners = (state: FormCaptureState): void => {
   if (state.submitHandler) {
     state.form.removeEventListener('submit', state.submitHandler)
   }
+  if (state.changeHandler) {
+    document.removeEventListener('change', state.changeHandler, true)
+  }
   if (state.buttonHandler) {
     document.removeEventListener('click', state.buttonHandler, true)
   }
+  if (state.draftTimer) clearTimeout(state.draftTimer)
   state.submitHandler = null
   state.buttonHandler = null
+  state.changeHandler = null
+  state.draftTimer = null
   state.listenerAttached = false
 }
 
@@ -120,6 +147,8 @@ export const registerFieldForCapture = (field: BaseField): void => {
   if (!state) {
     state = {
       buttonHandler: null,
+      changeHandler: null,
+      draftTimer: null,
       fields: new Set(),
       form,
       listenerAttached: false,

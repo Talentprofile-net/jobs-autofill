@@ -88,6 +88,7 @@ export type ApiErrorPayload = {
 
 export type TalentAnswer = {
   id: string
+  jobCountry?: string | null
   talentProfileId: string
   talentJobApplicationId: string | null
   sourceAnswerId: string | null

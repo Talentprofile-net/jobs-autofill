@@ -1,12 +1,9 @@
 import { browser } from 'wxt/browser'
 
 import type { TalentAnswer } from '~/api/types'
-import {
-  readJobCountryForTab,
-  type ApplicationContextStorage,
-} from '~/capture/applicationContext'
+import type { ApplicationContextStorage } from '~/capture/applicationContext'
 import { createAnswerLabels } from './answerLabels'
-import { UNKNOWN_JOB_COUNTRY } from './jobCountry'
+import { tabJobCountry } from '~/capture/tabJobCountry'
 import { classifyWithRuntime, closeOffscreenDocument } from './offscreenClient'
 import { createSuggestionService } from './suggestionService'
 import { readClassifierSuggestions } from './suggestionSwitch'
@@ -53,10 +50,7 @@ export const browserSuggestionService = (
     answers,
     classify: classifyWithRuntime,
     enabled: () => readClassifierSuggestions(browser.storage.local),
-    jobCountry: (tabId) =>
-      tabId === undefined
-        ? Promise.resolve(UNKNOWN_JOB_COUNTRY)
-        : readJobCountryForTab(contextStorage, tabId),
+    jobCountry: (tabId) => tabJobCountry(contextStorage, tabId),
     labelNames: loadLabelNames,
     release: closeOffscreenDocument,
   })

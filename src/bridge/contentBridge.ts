@@ -37,6 +37,7 @@ import type { PickerRelay } from "~/ui/picker/protocol";
 import { browser } from "wxt/browser";
 import { focusedFieldTarget } from "~/ui/picker/focusTarget";
 import { whenDocumentVisible } from "~/core/visibility";
+import { pageJobCountry } from "~/capture/pageJobCountry";
 
 type Envelope<T> = {
   magic: typeof BRIDGE_MAGIC;
@@ -412,6 +413,13 @@ export const startContentBridge = (ats: AtsName): void => {
     if (msg.kind === "capture.submit") {
       await handleCapture(msg.records);
     }
+
+    if (msg.kind === "capture.draft" && msg.records.length > 0 && gestures.consume("edit")) {
+      await sendToBackground({
+        kind: "answers.saveDraft",
+        payload: { applicationUrl: location.href, ats, records: msg.records },
+      });
+    }
   };
 
   window.addEventListener("message", (event) => {
@@ -445,6 +453,10 @@ export const startContentBridge = (ats: AtsName): void => {
       batchId?: string;
       mode?: ResolvedOriginMode;
     };
+    if (m.kind === "page.jobCountry") {
+      sendResponse(pageJobCountry(document));
+      return undefined;
+    }
     if (m.kind === "picker.relay") {
       const relay = message as PickerRelay;
       const response = handlePickerAction(relay.hostId, relay.activation, relay.action, fillField);

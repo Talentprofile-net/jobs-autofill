@@ -185,6 +185,10 @@ export const submitCapture = (records: AnswerCaptureRecord[]): void => {
   postToContent({ id: crypto.randomUUID(), kind: 'capture.submit', records })
 }
 
+export const draftCapture = (records: AnswerCaptureRecord[]): void => {
+  postToContent({ id: crypto.randomUUID(), kind: 'capture.draft', records })
+}
+
 export const emitFillStarted = (batchId: string, total: number, pass: number): void =>
   postToContent({ batchId, id: crypto.randomUUID(), kind: 'fill.started', pass, total })
 

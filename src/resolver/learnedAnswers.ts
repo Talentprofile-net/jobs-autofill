@@ -1,5 +1,6 @@
 import type { Profile } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
+import { answersForJob } from './countryScopedAnswers'
 import { findLearnedAnswer, learnedAnswerToProfileValue } from './learnedAnswerMatcher'
 
 export type LearnedAnswerRequest = {
@@ -18,6 +19,7 @@ export type LearnedAnswerResult = {
 export const resolveLearnedAnswersBatch = (
   requests: LearnedAnswerRequest[],
   profile: Profile,
+  jobCountry: string,
 ): LearnedAnswerResult[] => {
   const answers = profile.talentAnswers ?? []
   if (answers.length === 0) {
@@ -29,7 +31,7 @@ export const resolveLearnedAnswersBatch = (
   }
 
   return requests.map((r) => {
-    const match = findLearnedAnswer(r.fieldName, r.fieldType, answers)
+    const match = findLearnedAnswer(r.fieldName, r.fieldType, answersForJob(answers, r.fieldName, jobCountry))
     if (!match) {
       return {
         requestId: r.requestId,

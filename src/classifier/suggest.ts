@@ -9,6 +9,7 @@ import {
 } from '~/resolver/learnedAnswerMatcher'
 import type { AbstentionReason, AnswerKind, ClassifierInput, Decision } from './contract'
 import { UNKNOWN_JOB_COUNTRY } from './jobCountry'
+import { answersForJob } from '~/resolver/countryScopedAnswers'
 
 export type SuggestionRequest = {
   questionText: string
@@ -154,10 +155,11 @@ export const answerClassifierRequest = (answer: TalentAnswer): ClassifyRequest |
 
 export const suggestAnswer = async (
   request: SuggestionRequest,
-  answers: TalentAnswer[],
+  allAnswers: TalentAnswer[],
   jobCountry: string,
   dependencies: SuggestionDependencies,
 ): Promise<Suggestion> => {
+  const answers = answersForJob(allAnswers, request.questionText, jobCountry)
   const match = findLearnedAnswer(request.questionText, request.fieldType, answers)
   if (match && match.method !== 'classifier') {
     const value = learnedAnswerToProfileValue(match, request.fieldType)

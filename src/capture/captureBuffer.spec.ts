@@ -64,7 +64,7 @@ describe('capture listener lifecycle', () => {
 
     expect(h.formAdds).toHaveLength(1)
     expect(h.formRemoves).toEqual(h.formAdds)
-    expect(h.documentAdds).toHaveLength(1)
+    expect(h.documentAdds.map(([type]) => type)).toEqual(['change', 'click'])
     expect(h.documentRemoves).toEqual(h.documentAdds)
   })
 
@@ -74,14 +74,14 @@ describe('capture listener lifecycle', () => {
     registerFieldForCapture(h.field)
     registerFieldForCapture(h.field)
     expect(h.formAdds).toHaveLength(1)
-    expect(h.documentAdds).toHaveLength(1)
+    expect(h.documentAdds).toHaveLength(2)
 
     teardownAllCaptureForms()
     expect(h.formRemoves).toHaveLength(1)
-    expect(h.documentRemoves).toHaveLength(1)
+    expect(h.documentRemoves).toHaveLength(2)
 
     registerFieldForCapture(h.field)
     expect(h.formAdds).toHaveLength(2)
-    expect(h.documentAdds).toHaveLength(2)
+    expect(h.documentAdds).toHaveLength(4)
   })
 })
