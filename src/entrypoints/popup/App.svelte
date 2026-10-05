@@ -509,17 +509,19 @@
   const topIsAuto = $derived(detectedAts === "generic" && topMode === "auto");
   const canFillPage = $derived(topIsApplication || hasEnabledIframe);
 
+  const siteHost = $derived.by(() => {
+    try {
+      return tabOriginInfo?.topOrigin ? new URL(tabOriginInfo.topOrigin).host : "this site";
+    } catch {
+      return "this site";
+    }
+  });
+
   const siteLabel = $derived.by(() => {
     if (atsLabel) return `${atsLabel} detected`;
-    if (topIsApplication) {
-      return `Autofill enabled on ${tabOriginInfo?.topOrigin ?? "this site"}`;
-    }
-    if (topIsNotesOnly) {
-      return `Picker enabled on ${tabOriginInfo?.topOrigin ?? "this site"}`;
-    }
-    if (topIsAuto) {
-      return `Auto mode on ${tabOriginInfo?.topOrigin ?? "this site"}`;
-    }
+    if (topIsApplication) return `Autofill on ${siteHost}`;
+    if (topIsNotesOnly) return `Picker only on ${siteHost}`;
+    if (topIsAuto) return `Auto mode on ${siteHost}`;
     if (hasEnabledIframe) {
       if (enabledIframes.length === 1) {
         return `Enabled on embedded form (${enabledIframes[0].origin})`;
@@ -630,11 +632,6 @@
     detectedAts === "generic" && tabOriginInfo?.topEnabled === true,
   );
 
-  const MODE_OPTIONS: { mode: OriginMode; label: string }[] = [
-    { label: "Autofill this page", mode: "application" },
-    { label: "Auto detect", mode: "auto" },
-  ];
-
   const modeLabel = (mode: OriginMode | null): string => {
     if (mode === "application") return "Autofill + Picker";
     if (mode === "notesOnly") return "Picker only";
@@ -643,41 +640,39 @@
   };
 </script>
 
-{#snippet siteControls()}
-  {#if tabOriginInfo}
-    <div class="mode-controls-row" data-tp-site-controls="true">
-      <span class="mode-label">Mode:</span>
-      {#each MODE_OPTIONS as option (option.mode)}
-        <button
-          type="button"
-          class="mode-pill"
-          class:mode-pill-active={topMode === option.mode}
-          data-mode={option.mode}
-          disabled={busy}
-          onclick={() =>
-            tabOriginInfo &&
-            handleSetMode(
-              {
-                mode: topMode ?? "application",
-                origin: tabOriginInfo.topOrigin,
-                pattern: tabOriginInfo.topPattern,
-              },
-              option.mode,
-            )}>{option.label}</button
-        >
-      {/each}
-    </div>
+{#snippet siteStatus()}
+  <div class="site-status" data-tp-site-controls="true">
+    <span class="badge badge-ok">{siteLabel}</span>
+    {#if showModeControls && tabOriginInfo}
+      <button
+        type="button"
+        class="link inline site-disable"
+        data-tp-site-disable="true"
+        onclick={() =>
+          tabOriginInfo &&
+          handleDisableOrigin({
+            mode: topMode ?? "application",
+            origin: tabOriginInfo.topOrigin,
+            pattern: tabOriginInfo.topPattern,
+          })}>Disable</button
+      >
+    {/if}
+  </div>
+  {#if showModeControls && tabOriginInfo && topMode !== "application"}
     <button
       type="button"
       class="link inline"
-      data-tp-site-disable="true"
+      disabled={busy}
       onclick={() =>
         tabOriginInfo &&
-        handleDisableOrigin({
-          mode: topMode ?? "application",
-          origin: tabOriginInfo.topOrigin,
-          pattern: tabOriginInfo.topPattern,
-        })}>Disable on this site</button
+        handleSetMode(
+          {
+            mode: topMode ?? "auto",
+            origin: tabOriginInfo.topOrigin,
+            pattern: tabOriginInfo.topPattern,
+          },
+          "application",
+        )}>Use autofill on this site</button
     >
   {/if}
 {/snippet}
@@ -840,10 +835,7 @@
         {@render profileCard()}
         <div class="site-row">
           {#if showModeControls}
-            <div class="enabled-line">
-              <span class="badge badge-ok">{siteLabel}</span>
-            </div>
-            {@render siteControls()}
+            {@render siteStatus()}
           {:else if showEnablePrompt}
             <div class="enable-block">
               <p class="enable-text">
@@ -904,12 +896,8 @@
         {#if summary}
           {#if siteLabel}
             <div class="site-row">
-              <span class="badge badge-ok">{siteLabel}</span>
+              {@render siteStatus()}
             </div>
-          {/if}
-
-          {#if showModeControls}
-            {@render siteControls()}
           {/if}
 
           {#if hasEnabledIframe && iframeOrigins.length > enabledIframes.length}
@@ -1506,6 +1494,23 @@
   .site-row {
     margin-top: 12px;
   }
+  .site-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+  }
+  .site-status .badge {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .site-disable {
+    flex: none;
+    font-size: 12px;
+  }
   .minimal .site-row {
     margin-top: 0;
   }
@@ -1526,11 +1531,6 @@
     background: #fffbeb;
     color: #b45309;
     border: 1px solid #fde68a;
-  }
-  .enabled-line {
-    display: flex;
-    align-items: center;
-    gap: 10px;
   }
   .enable-block {
     display: flex;
@@ -1590,42 +1590,6 @@
     background: #ecfdf5;
     color: #047857;
     border: 1px solid #a7f3d0;
-  }
-  .mode-controls-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 8px;
-    flex-wrap: wrap;
-  }
-  .mode-label {
-    font-size: 11px;
-    color: #64748b;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .mode-pill {
-    padding: 4px 10px;
-    font-size: 11px;
-    background: #ffffff;
-    color: #475569;
-    border: 1px solid #e2e8f0;
-    border-radius: 999px;
-    font-weight: 500;
-  }
-  .mode-pill:hover:not(:disabled) {
-    border-color: #cbd5e1;
-    background: #f8fafc;
-  }
-  .mode-pill-active {
-    background: #175cfa;
-    color: #ffffff;
-    border-color: #175cfa;
-  }
-  .mode-pill-active:hover:not(:disabled) {
-    background: #0f4ad6;
-    border-color: #0f4ad6;
   }
   .actions {
     display: flex;
