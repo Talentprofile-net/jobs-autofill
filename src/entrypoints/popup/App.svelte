@@ -19,6 +19,7 @@
   import {
     PROFILE_SCORE_COMPLETE_AT,
     PROFILE_SCORE_EMPTY_BELOW,
+    WEB_APP_BASE_URL,
     WEB_APP_DASHBOARD_URL,
   } from "~/config";
   import { onDestroy, onMount } from "svelte";
@@ -403,23 +404,6 @@
     }
   };
 
-  const handleSetMode = async (entry: EnabledOriginEntry, mode: OriginMode) => {
-    if (busy) return;
-    busy = true;
-    errorMsg = null;
-    try {
-      const res = await send({
-        kind: "origin.setMode",
-        mode,
-        pattern: entry.pattern,
-      });
-      if (!res.ok) errorMsg = res.error ?? "Could not update";
-      await refreshOriginState();
-    } finally {
-      busy = false;
-    }
-  };
-
   const handleDisableOrigin = async (entry: EnabledOriginEntry) => {
     confirmRevoke = entry;
   };
@@ -625,56 +609,29 @@
   });
 
   const isMinimalMode = $derived(status.authenticated && !canFillPage);
+  const OWN_HOSTS = new Set(
+    [WEB_APP_BASE_URL, WEB_APP_DASHBOARD_URL].flatMap((url) => {
+      const host = new URL(url).host;
+      return [host, host.replace(/^www\./, ""), `www.${host.replace(/^www\./, "")}`];
+    }),
+  );
+  const isOwnSite = $derived(
+    tabOriginInfo !== null && OWN_HOSTS.has(siteHost),
+  );
   const showEnablePrompt = $derived(
-    !atsLabel && tabOriginInfo !== null && tabOriginInfo.topEnabled === false,
+    !atsLabel &&
+      !isOwnSite &&
+      tabOriginInfo !== null &&
+      tabOriginInfo.topEnabled === false,
   );
   const showModeControls = $derived(
     detectedAts === "generic" && tabOriginInfo?.topEnabled === true,
   );
 
-  const modeLabel = (mode: OriginMode | null): string => {
-    if (mode === "application") return "Autofill + Picker";
-    if (mode === "notesOnly") return "Picker only";
-    if (mode === "auto") return "Auto (detect)";
-    return "Unknown";
-  };
 </script>
 
 {#snippet siteStatus()}
-  <div class="site-status" data-tp-site-controls="true">
-    <span class="badge badge-ok">{siteLabel}</span>
-    {#if showModeControls && tabOriginInfo}
-      <button
-        type="button"
-        class="link inline site-disable"
-        data-tp-site-disable="true"
-        onclick={() =>
-          tabOriginInfo &&
-          handleDisableOrigin({
-            mode: topMode ?? "application",
-            origin: tabOriginInfo.topOrigin,
-            pattern: tabOriginInfo.topPattern,
-          })}>Disable</button
-      >
-    {/if}
-  </div>
-  {#if showModeControls && tabOriginInfo && topMode !== "application"}
-    <button
-      type="button"
-      class="link inline"
-      disabled={busy}
-      onclick={() =>
-        tabOriginInfo &&
-        handleSetMode(
-          {
-            mode: topMode ?? "auto",
-            origin: tabOriginInfo.topOrigin,
-            pattern: tabOriginInfo.topPattern,
-          },
-          "application",
-        )}>Use autofill on this site</button
-    >
-  {/if}
+  <span class="badge badge-ok" data-tp-site-controls="true">{siteLabel}</span>
 {/snippet}
 
 {#snippet profileCard()}
@@ -833,28 +790,30 @@
     {:else if isMinimalMode}
       <section class="minimal">
         {@render profileCard()}
-        <div class="site-row">
-          {#if showModeControls}
-            {@render siteStatus()}
-          {:else if showEnablePrompt}
-            <div class="enable-block">
-              <p class="enable-text">
-                Not enabled on {tabOriginInfo?.topOrigin}
-              </p>
-              <button
-                type="button"
-                class="primary primary-sm"
-                disabled={busy}
-                onclick={() =>
-                  tabOriginInfo &&
-                  requestEnableOrigin(tabOriginInfo.topPattern)}
-                >Enable here</button
-              >
-            </div>
-          {:else}
-            <span class="badge badge-warn">No supported page</span>
-          {/if}
-        </div>
+        {#if showModeControls || showEnablePrompt || !isOwnSite}
+          <div class="site-row">
+            {#if showModeControls}
+              {@render siteStatus()}
+            {:else if showEnablePrompt}
+              <div class="enable-block">
+                <p class="enable-text">
+                  Not enabled on {siteHost}
+                </p>
+                <button
+                  type="button"
+                  class="primary primary-sm"
+                  disabled={busy}
+                  onclick={() =>
+                    tabOriginInfo &&
+                    requestEnableOrigin(tabOriginInfo.topPattern)}
+                  >Enable here</button
+                >
+              </div>
+            {:else if !isOwnSite}
+              <span class="badge badge-warn">No supported page</span>
+            {/if}
+          </div>
+        {/if}
 
         {#if iframeOrigins.length > 0}
           <div class="iframe-block">
@@ -1018,9 +977,6 @@
                 <div class="manage-row">
                   <div class="manage-origin-block">
                     <span class="manage-origin">{entry.origin}</span>
-                    <span class="manage-mode-badge"
-                      >{modeLabel(entry.mode)}</span
-                    >
                   </div>
                   <button
                     type="button"
@@ -1331,9 +1287,7 @@
     text-align: center;
   }
   .profile {
-    padding: 0 0 14px;
-    border-bottom: 1px solid #e2e8f0;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
   .name {
     font-weight: 600;
@@ -1493,23 +1447,6 @@
   }
   .site-row {
     margin-top: 12px;
-  }
-  .site-status {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    min-width: 0;
-  }
-  .site-status .badge {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .site-disable {
-    flex: none;
-    font-size: 12px;
   }
   .minimal .site-row {
     margin-top: 0;
@@ -1757,11 +1694,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .manage-mode-badge {
-    font-size: 10px;
-    color: #64748b;
-    font-weight: 500;
   }
   .manage-remove {
     background: transparent;

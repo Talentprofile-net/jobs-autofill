@@ -40,7 +40,11 @@ const readRaw = async (): Promise<CurrentStorage> => {
     await writeRaw(migrated)
     return migrated
   }
-  return (raw as CurrentStorage).filter(isCurrentEntry)
+  const entries = (raw as CurrentStorage).filter(isCurrentEntry)
+  if (entries.every((entry) => entry.mode === 'application')) return entries
+  const migrated = entries.map((entry) => ({ ...entry, mode: 'application' as const }))
+  await writeRaw(migrated)
+  return migrated
 }
 
 export const getEnabledOrigins = async (): Promise<StoredEnabledOrigin[]> => {
