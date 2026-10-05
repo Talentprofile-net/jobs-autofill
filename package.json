@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test src",
     "smoke:chrome": "node scripts/chrome-smoke.mjs",
-    "smoke:suggest": "node scripts/chrome-suggest-smoke.mjs"
+    "smoke:suggest": "node scripts/chrome-suggest-smoke.mjs",
+    "docs:screenshots": "node scripts/docs-screenshots.mjs"
   },
   "dependencies": {
     "@floating-ui/dom": "^1.7.6",

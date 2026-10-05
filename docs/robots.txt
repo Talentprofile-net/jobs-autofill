@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://autofill.talentprofile.net/sitemap.xml
