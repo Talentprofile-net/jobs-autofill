@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { ANSWER_LABELS_KEY, createAnswerLabels } from './answerLabels'
+import { ANSWER_LABEL_CHUNK, ANSWER_LABELS_KEY, createAnswerLabels } from './answerLabels'
 import type { Decision } from './contract'
 import type { ClassifyRequest } from './suggest'
 import { talentAnswer } from './testAnswers'
@@ -218,5 +218,142 @@ describe('stored answer labels', () => {
 
     expect(calls).toHaveLength(0)
     expect(result.get('answer-1')).toBeNull()
+  })
+})
+
+describe('bounded stored-answer scheduling', () => {
+  const dated = (index: number, over: Parameters<typeof talentAnswer>[0] = {}) =>
+    talentAnswer({
+      id: `answer-${index}`,
+      questionText: `Question ${index}`,
+      updatedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+      ...over,
+    })
+  const many = (count: number) => Array.from({ length: count }, (_, index) => dated(index))
+  const recording = () => {
+    const values: Record<string, unknown> = {}
+    const writes: number[] = []
+    return {
+      get: async (key: string) => ({ [key]: values[key] }),
+      set: async (items: Record<string, unknown>) => {
+        Object.assign(values, items)
+        const cache = items[ANSWER_LABELS_KEY] as { entries: Record<string, unknown> }
+        writes.push(Object.keys(cache.entries).length)
+      },
+      values,
+      writes,
+    }
+  }
+
+  it('classifies uncached answers newest first in chunks of at most the chunk size', async () => {
+    const { calls, classify } = classifier()
+    const labels = await createAnswerLabels(memory(), classify, async () => {})(many(20), 'runtime-1', 'US')
+
+    expect(ANSWER_LABEL_CHUNK).toBe(8)
+    expect(calls.map((call) => call.length)).toEqual([8, 8, 4])
+    expect(calls.flat().map((request) => request.input.questionText)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `Question ${19 - index}`),
+    )
+    expect(labels.size).toBe(20)
+  })
+
+  it('orders by last use before update time', async () => {
+    const { calls, classify } = classifier()
+    const answers = [dated(0, { lastUsedAt: '2026-06-01T00:00:00.000Z' }), dated(1), dated(2)]
+    await createAnswerLabels(memory(), classify, async () => {})(answers, 'runtime-1', 'US')
+
+    expect(calls[0]?.map((request) => request.input.questionText)).toEqual(['Question 0', 'Question 2', 'Question 1'])
+  })
+
+  it('yields between chunks but not before the first one', async () => {
+    const events: string[] = []
+    const { classify } = classifier()
+    const counting = async (requests: ClassifyRequest[]) => {
+      events.push(`classify:${requests.length}`)
+      return classify(requests)
+    }
+    await createAnswerLabels(memory(), counting, async () => {
+      events.push('pause')
+    })(many(17), 'runtime-1', 'US')
+
+    expect(events).toEqual(['classify:8', 'pause', 'classify:8', 'pause', 'classify:1'])
+  })
+
+  it('stops once the newest answer that satisfies the stop rule is known', async () => {
+    const { calls, classify } = classifier()
+    const answers = many(30)
+    const labels = await createAnswerLabels(memory(), classify, async () => {})(
+      answers,
+      'runtime-1',
+      'US',
+      (_answer, label) => label === 'label:Question 18',
+    )
+
+    expect(calls.map((call) => call.length)).toEqual([8, 8])
+    expect(labels.get('answer-18')).toBe('label:Question 18')
+    expect(labels.has('answer-13')).toBe(false)
+  })
+
+  it('stops without classifying when a cached answer already satisfies the stop rule', async () => {
+    const storage = memory()
+    const { calls, classify } = classifier()
+    const scheduled = createAnswerLabels(storage, classify, async () => {})
+    await scheduled(many(3), 'runtime-1', 'US')
+    calls.length = 0
+
+    await scheduled([...many(3), dated(-1)], 'runtime-1', 'US', (_answer, label) => label === 'label:Question 2')
+
+    expect(calls).toHaveLength(0)
+  })
+
+  it('reaches older uncached answers only after every newer answer is known', async () => {
+    const storage = memory()
+    const { calls, classify } = classifier()
+    const scheduled = createAnswerLabels(storage, classify, async () => {})
+    await scheduled([dated(5)], 'runtime-1', 'US')
+    calls.length = 0
+
+    await scheduled(many(6), 'runtime-1', 'US', (_answer, label) => label === 'label:Question 1')
+
+    expect(calls.map((call) => call.map((request) => request.input.questionText))).toEqual([
+      ['Question 4', 'Question 3', 'Question 2', 'Question 1', 'Question 0'],
+    ])
+  })
+
+  it('persists the cache after every chunk', async () => {
+    const storage = recording()
+    const { classify } = classifier()
+    await createAnswerLabels(storage, classify, async () => {})(many(20), 'runtime-1', 'US')
+
+    expect(storage.writes).toEqual([8, 16, 20])
+  })
+
+  it('keeps completed chunks and sends nothing more when a chunk fails', async () => {
+    const storage = recording()
+    const { classify } = classifier()
+    let call = 0
+    const failing = async (requests: ClassifyRequest[]) => {
+      call += 1
+      if (call === 2) throw new Error('the classifier was closed')
+      return classify(requests)
+    }
+
+    const error = await createAnswerLabels(storage, failing, async () => {})(many(20), 'runtime-1', 'US').then(
+      () => null,
+      (failure: Error) => failure.message,
+    )
+
+    expect(error).toBe('the classifier was closed')
+    expect(call).toBe(2)
+    expect(storage.writes).toEqual([8])
+  })
+
+  it('labels answers with an unknown kind as null without sending them', async () => {
+    const { calls, classify } = classifier()
+    const answers = [dated(0), dated(1, { answerKind: 'legacy' }), dated(2)]
+    const labels = await createAnswerLabels(memory(), classify, async () => {})(answers, 'runtime-1', 'US')
+
+    expect(calls.flat().map((request) => request.input.questionText)).toEqual(['Question 2', 'Question 0'])
+    expect(labels.get('answer-1')).toBeNull()
   })
 })

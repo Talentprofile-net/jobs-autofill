@@ -330,3 +330,101 @@ describe('suggestion request from the page', () => {
     expect(readSuggestionRequest({ ...valid, ...over })).toBeNull()
   })
 })
+
+describe('bounded stored-answer scheduling in a suggestion', () => {
+  const run = async (answers: ReturnType<typeof talentAnswer>[], labelOf: (questionText: string) => string | null) => {
+    const calls: ClassifyRequest[][] = []
+    const classify = async (requests: ClassifyRequest[]) => {
+      calls.push(requests)
+      return {
+        decisions: requests.map((item) =>
+          item.input.questionText === request.questionText
+            ? decision()
+            : decision({ labelEnumId: labelOf(item.input.questionText), topLabelEnumId: 'label-any' }),
+        ),
+        runtimeId: 'runtime-1',
+      }
+    }
+    const storage: Record<string, unknown> = {}
+    const result = await suggestAnswer(request, answers, 'US', {
+      answerLabels: createAnswerLabels(
+        {
+          get: async (key) => ({ [key]: storage[key] }),
+          set: async (items) => {
+            Object.assign(storage, items)
+          },
+        },
+        classify,
+        async () => {},
+      ),
+      classify,
+      labelName: async (id) => `name:${id}`,
+    })
+    return { calls, chosen: result.status === 'classified' ? (result.answer?.id ?? null) : `status ${result.status}` }
+  }
+
+  const fullScan = (answers: ReturnType<typeof talentAnswer>[], labelOf: (questionText: string) => string | null) =>
+    [...answers]
+      .filter((answer) => answer.fieldType === 'TextInput' && labelOf(answer.questionText) === 'label-education')
+      .sort(
+        (a, b) =>
+          Date.parse(b.lastUsedAt ?? b.updatedAt) - Date.parse(a.lastUsedAt ?? a.updatedAt) ||
+          Date.parse(b.updatedAt) - Date.parse(a.updatedAt) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      )
+      .find((answer) => (answer.answerText ?? '').trim().length > 0)?.id ?? null
+
+  const seeded = (seed: number) => {
+    let state = seed
+    return () => {
+      state = (state * 1103515245 + 12345) % 2147483648
+      return state / 2147483648
+    }
+  }
+
+  it.each(Array.from({ length: 25 }, (_, index) => index + 1))(
+    'chooses the same answer as a full scan of every stored answer (seed %i)',
+    async (seed) => {
+      const random = seeded(seed)
+      const answers = Array.from({ length: 40 }, (_, index) => {
+        const usable = random() > 0.3
+        const text = usable ? `Answer ${index}` : ''
+        return talentAnswer({
+          answerText: text,
+          answerValue: { confidence: 'exact', kind: 'string', value: text },
+          fieldType: random() > 0.15 ? 'TextInput' : 'FileUpload',
+          id: `answer-${index}`,
+          lastUsedAt: random() > 0.7 ? new Date(Date.UTC(2026, 5, 1, 0, Math.floor(random() * 500))).toISOString() : null,
+          questionText: `Stored question ${index}`,
+          updatedAt: new Date(Date.UTC(2026, 0, 1, 0, Math.floor(random() * 500))).toISOString(),
+        })
+      })
+      const matching = new Set(answers.filter(() => random() > 0.8).map((answer) => answer.questionText))
+      const labelOf = (questionText: string) => (matching.has(questionText) ? 'label-education' : 'label-other')
+
+      const { calls, chosen } = await run(answers, labelOf)
+
+      expect(chosen).toBe(fullScan(answers, labelOf))
+      expect(calls.slice(1).every((call) => call.length <= 8)).toBe(true)
+      expect(calls.flat().every((item) => item.input.fieldType !== 'FileUpload')).toBe(true)
+    },
+  )
+
+  it('classifies only the chunks needed to reach the newest usable answer with the accepted label', async () => {
+    const answers = Array.from({ length: 128 }, (_, index) =>
+      talentAnswer({
+        answerText: `Answer ${index}`,
+        answerValue: { confidence: 'exact', kind: 'string', value: `Answer ${index}` },
+        id: `answer-${index}`,
+        questionText: `Stored question ${index}`,
+        updatedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+      }),
+    )
+    const { calls, chosen } = await run(answers, (questionText) =>
+      questionText === 'Stored question 117' || questionText === 'Stored question 3' ? 'label-education' : null,
+    )
+
+    expect(chosen).toBe('answer-117')
+    expect(calls.map((call) => call.length)).toEqual([1, 8, 8])
+  })
+})

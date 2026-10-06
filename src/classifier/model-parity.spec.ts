@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import fixture from '~/classifier/__fixtures__/parity.json'
 import type { AnswerKind, Decision, LabelMap, SelectivePolicy } from '~/classifier/contract'
+import { ANSWER_LABEL_CHUNK } from '~/classifier/answerLabels'
 import type { Preprocessing } from '~/classifier/assets'
 import { QuestionClassifier, type OrtLike } from '~/classifier/session'
 
@@ -25,25 +26,40 @@ if (requested && !enabled) {
 }
 const readAsset = <T>(name: string): T => JSON.parse(readFileSync(resolve(ASSETS, name), 'utf8')) as T
 
+let loaded: Promise<QuestionClassifier> | null = null
+const loadClassifier = () => {
+  loaded ??= (async () => {
+    const ort = await import('onnxruntime-web/wasm')
+    ort.env.wasm.numThreads = 1
+    const preprocessing = readAsset<Preprocessing>('preprocessing.json')
+    return QuestionClassifier.create(
+      ort as unknown as OrtLike,
+      readFileSync(resolve(ASSETS, 'model.onnx')).buffer as ArrayBuffer,
+      {
+        tokenizerJson: readAsset('tokenizer.json'),
+        labelMap: readAsset<LabelMap>('labels.json'),
+        policy: readAsset<SelectivePolicy>('selective_policy.json'),
+        maxLength: preprocessing.maxLength,
+        padTokenId: preprocessing.padTokenId,
+        modelVersion: fixture.modelVersion,
+      },
+    )
+  })()
+  return loaded
+}
+
+const worstGap = (rows: number[][], expected: number[][]): number =>
+  rows.reduce(
+    (largest, row, index) =>
+      row.reduce((value, logit, column) => Math.max(value, Math.abs(logit - expected[index][column])), largest),
+    0,
+  )
+
 describe('model parity', () => {
   it.skipIf(!enabled)(
     'matches python logits and decisions through onnxruntime-web',
     async () => {
-      const ort = await import('onnxruntime-web/wasm')
-      ort.env.wasm.numThreads = 1
-      const preprocessing = readAsset<Preprocessing>('preprocessing.json')
-      const classifier = await QuestionClassifier.create(
-        ort as unknown as OrtLike,
-        readFileSync(resolve(ASSETS, 'model.onnx')).buffer as ArrayBuffer,
-        {
-          tokenizerJson: readAsset('tokenizer.json'),
-          labelMap: readAsset<LabelMap>('labels.json'),
-          policy: readAsset<SelectivePolicy>('selective_policy.json'),
-          maxLength: preprocessing.maxLength,
-          padTokenId: preprocessing.padTokenId,
-          modelVersion: fixture.modelVersion,
-        },
-      )
+      const classifier = await loadClassifier()
       const rows = await classifier.logits(cases.map((item) => item.text))
       const worst = rows.reduce(
         (largest, row, index) =>
@@ -61,6 +77,46 @@ describe('model parity', () => {
       expect(decisions.map((decision) => decision.abstentionReason)).toEqual(
         cases.map((item) => item.decision.abstentionReason),
       )
+    },
+    600_000,
+  )
+
+  it.skipIf(!enabled)(
+    'classifies stored-answer chunks the same as one whole batch',
+    async () => {
+      const classifier = await loadClassifier()
+      const requests = cases.map((item) => ({ input: item.input, answerKind: item.answerKind }))
+      const texts = cases.map((item) => item.text)
+      const chunks = Array.from({ length: Math.ceil(cases.length / ANSWER_LABEL_CHUNK) }, (_, index) =>
+        index * ANSWER_LABEL_CHUNK,
+      )
+      const whole = await classifier.logits(texts)
+      const chunked: number[][] = []
+      for (const start of chunks) chunked.push(...(await classifier.logits(texts.slice(start, start + ANSWER_LABEL_CHUNK))))
+      expect(chunks.length).toBeGreaterThan(1)
+      expect(worstGap(chunked, whole)).toBeLessThan(1e-3)
+      expect(worstGap(chunked, cases.map((item) => item.logits))).toBeLessThan(1e-3)
+
+      const wholeDecisions = await classifier.classify(requests)
+      const chunkedDecisions: Decision[] = []
+      for (const start of chunks) {
+        chunkedDecisions.push(...(await classifier.classify(requests.slice(start, start + ANSWER_LABEL_CHUNK))))
+      }
+      expect(chunkedDecisions.map((decision) => decision.labelEnumId)).toEqual(
+        wholeDecisions.map((decision) => decision.labelEnumId),
+      )
+      expect(chunkedDecisions.map((decision) => decision.abstentionReason)).toEqual(
+        wholeDecisions.map((decision) => decision.abstentionReason),
+      )
+      expect(chunkedDecisions.map((decision) => decision.labelEnumId)).toEqual(
+        cases.map((item) => item.decision.labelEnumId),
+      )
+      const confidenceGap = chunkedDecisions.reduce(
+        (largest, decision, index) =>
+          Math.max(largest, Math.abs(decision.calibratedConfidence - wholeDecisions[index].calibratedConfidence)),
+        0,
+      )
+      expect(confidenceGap).toBeLessThan(1e-3)
     },
     600_000,
   )

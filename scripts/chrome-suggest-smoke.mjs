@@ -473,6 +473,13 @@ const RECORD_BRIDGE = CALL(`window.__bridgeSeen = []
 
 const PICKER_HOOK = `if (location.protocol === 'chrome-extension:' && !globalThis.__tpPickerHook) {
   globalThis.__tpPickerHook = true
+  globalThis.__tpPulse = { last: Date.now(), gaps: [], moves: [] }
+  setInterval(() => {
+    const now = Date.now()
+    if (now - __tpPulse.last > 50) __tpPulse.gaps.push({ at: now, gap: now - __tpPulse.last })
+    __tpPulse.last = now
+  }, 16)
+  addEventListener('pointermove', (event) => { if (event.isTrusted) __tpPulse.moves.push(Date.now()) }, true)
   globalThis.__suggestSends = 0
   globalThis.__suggestDone = 0
   globalThis.__suggestGeneration = 0
@@ -896,18 +903,46 @@ try {
   )
   check('the _unknown decision differs from the US decision', !close(unknownDirect.calibratedConfidence, ACCEPTED.decision.calibratedConfidence))
 
-  const closing = await run(
-    CALL(`const requests = Array.from({ length: 128 }, (_, index) => ({ answerKind: 'text', input: { questionText: 'Describe the production incident you resolved ' + index, fieldType: 'TextArea', jobCountry: '_unknown', optionLabels: [] } }))
+  const backgroundHarness = autoSessions.get((await serviceWorker()).targetId)
+  await evaluate(browser, backgroundHarness, harness, 30_000)
+  const closing = await evaluate(
+    browser,
+    backgroundHarness,
+    CALL(`const caller = { serviceWorker: typeof ServiceWorkerGlobalScope === 'function' && self instanceof ServiceWorkerGlobalScope, script: self.location.pathname }
+      const requests = Array.from({ length: 128 }, (_, index) => ({ answerKind: 'text', input: { questionText: 'Describe the production incident you resolved ' + index, fieldType: 'TextArea', jobCountry: '_unknown', optionLabels: [] } }))
       const started = performance.now()
       const inflight = __classify(requests).then(() => 'answered', (error) => error.message)
       await new Promise((done) => setTimeout(done, 1500))
+      const closedAt = Math.round(performance.now() - started)
       await __closeClassifier()
       const outcome = await inflight
-      return { outcome, ms: Math.round(performance.now() - started) }`),
+      return { caller, closedAt, outcome, ms: Math.round(performance.now() - started) }`),
+    60_000,
   )
   await wait(1500)
-  check('a deliberate close resolves the in-flight request at once', closing.outcome === 'the classifier was closed' && closing.ms < 5_000, JSON.stringify(closing))
+  check(
+    'the deliberate close runs from the background service worker',
+    closing.caller.serviceWorker === true && closing.caller.script === '/background.js',
+    JSON.stringify(closing.caller),
+  )
+  check('a deliberate close rejects the in-flight background request promptly', closing.outcome === 'the classifier was closed' && closing.ms < 5_000, JSON.stringify(closing))
   check('a deliberate close is not retried', (await offscreenCount()) === 0)
+  const recreated = await evaluate(
+    browser,
+    backgroundHarness,
+    CALL(`const [decision] = await __classify([{ answerKind: ${JSON.stringify(ACCEPTED.answerKind)}, input: ${JSON.stringify(ACCEPTED.input)} }])
+      return { decision, status: await __status() }`),
+    60_000,
+  )
+  check(
+    'a classification after a deliberate close recreates the runtime',
+    (await offscreenCount()) === 1 &&
+      recreated.decision.labelEnumId === ACCEPTED.decision.labelEnumId &&
+      close(recreated.decision.calibratedConfidence, ACCEPTED.decision.calibratedConfidence) &&
+      recreated.status.runtimeId === status.runtimeId,
+    JSON.stringify(recreated),
+  )
+  report.push(`deliberate close from ${closing.caller.script}: closed at ${closing.closedAt} ms, rejected at ${closing.ms} ms`)
 
   await run(SET_SWITCH(false))
   await waitFor(offscreenCount, (count) => count === 0, 10_000, 'the offscreen document to close')
@@ -1781,6 +1816,87 @@ try {
   const widgetValues = await waitFor(inputValues, (values) => values.first !== '', 20_000, 'the confirmed widget fill')
   await wait(1_000)
   check('confirming in the extension frame fills the same values', JSON.stringify(await inputValues()) === JSON.stringify(expectedFill), JSON.stringify(widgetValues))
+  await freshApplication('responsive')
+  await run(SET_SWITCH(false))
+  await waitFor(offscreenCount, (count) => count === 0, 10_000, 'the offscreen document to close')
+  const loadWorker = autoSessions.get((await serviceWorker()).targetId)
+  await evaluate(browser, loadWorker, RECORD_CLASSIFIER_POSTS, 10_000)
+  await run(SET_SWITCH(true))
+  const LOAD_ANSWERS = 128
+  const loadAnswers = []
+  for (let index = 0; index < LOAD_ANSWERS; index += 1) {
+    loadAnswers.push({
+      ...(await answer(`smoke-load-${index}`, `Describe a project where you used technology number ${index} and what the result was`, `Load answer ${index}`)),
+      updatedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+    })
+  }
+  await run(
+    CALL(`await chrome.storage.session.remove('${ANSWER_LABELS_KEY}')
+      await chrome.storage.session.set({ '${PROFILE_KEY}': { data: ${JSON.stringify({ ...PROFILE, talentAnswers: loadAnswers })}, fetchedAt: Date.now() } })
+      return true`),
+  )
+  await run(BIND(uk.atsTabId, `${ATS}/smoke/jobs/responsive?source=talentprofile`, PAGE_ACCEPTED.input.jobCountry))
+  const loadCrashes = crashed.length
+  const loadStarted = Date.now()
+  const loadMoves = []
+  let loadProbing = true
+  const loadProbe = (async () => {
+    let flip = 0
+    while (loadProbing) {
+      const rect = await pickerFrameRect(uk.atsSession).catch(() => null)
+      if (rect) {
+        flip += 1
+        const sent = Date.now()
+        let acked = false
+        await Promise.race([
+          browser
+            .send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x + rect.width / 2 + (flip % 2 ? 6 : -6), y: rect.y + Math.min(rect.height / 2, 40) }, uk.atsSession)
+            .then(() => {
+              acked = true
+            }),
+          wait(5_000),
+        ])
+        loadMoves.push({ acked, ms: Date.now() - sent, sent })
+      }
+      await wait(150)
+    }
+  })()
+  await openPicker(uk.atsSession, 'f-first')
+  const loaded = await waitFor(pickerState, (state) => state.sends >= 1 && state.done >= state.sends, 120_000, 'the suggestion over the uncached saved answers')
+  const loadAnswered = Date.now()
+  await wait(500)
+  loadProbing = false
+  await loadProbe
+  const loadPulse = await evaluate(browser, await pickerSession(), `({ gaps: __tpPulse.gaps, moves: __tpPulse.moves })`, 5_000)
+  const loadStalls = loadPulse.gaps.filter((gap) => gap.at >= loadStarted && gap.at - gap.gap <= loadAnswered + 500)
+  const loadMaxStall = loadStalls.reduce((largest, gap) => Math.max(largest, gap.gap), 0)
+  const loadSeen = loadPulse.moves.filter((at) => at >= loadStarted).length
+  const loadPosts = (await evaluate(browser, loadWorker, 'globalThis.__classifierPosts', 10_000))
+    .map((post) => JSON.parse(post))
+    .filter((post) => post.kind === 'classify')
+  const loadLabels = await run(CALL(`return Object.keys((await chrome.storage.session.get('${ANSWER_LABELS_KEY}'))['${ANSWER_LABELS_KEY}']?.entries ?? {}).filter((id) => id.startsWith('smoke-load-')).length`))
+  report.push(
+    `responsiveness: ${LOAD_ANSWERS} uncached answers in ${loadAnswered - loadStarted} ms, ${loadPosts.length} classify posts, picker max stall ${loadMaxStall} ms, ${loadMoves.length} pointer moves, slowest ack ${loadMoves.reduce((largest, move) => Math.max(largest, move.ms), 0)} ms`,
+  )
+  check(
+    'every uncached saved answer was classified in chunks of at most 8',
+    loadLabels === LOAD_ANSWERS &&
+      loadPosts.filter((post) => post.requests.length !== 1).every((post) => post.requests.length <= 8) &&
+      loadPosts.reduce((total, post) => total + post.requests.length, 0) >= LOAD_ANSWERS,
+    JSON.stringify({ labels: loadLabels, posts: loadPosts.map((post) => post.requests.length) }),
+  )
+  check(
+    'the picker stays responsive while uncached saved answers are classified',
+    loaded.open &&
+      loadMaxStall < 250 &&
+      loadMoves.length >= 5 &&
+      loadMoves.every((move) => move.acked && move.ms < 1_000) &&
+      loadSeen === loadMoves.length &&
+      collateralCrashes(loadCrashes).length === 0,
+    JSON.stringify({ crashes: collateralCrashes(loadCrashes), maxStall: loadMaxStall, moves: loadMoves.map((move) => [move.acked, move.ms]), seen: loadSeen, stalls: loadStalls }),
+  )
+  await clickCenter(uk.atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
+  await pickerClosed(uk.atsSession, 5_000, 'the responsiveness picker to close')
   await freshApplication('disable')
   const disableOpen = await openPicker(uk.atsSession, 'f-first')
   check('the picker is open before the site is disabled', disableOpen.open)

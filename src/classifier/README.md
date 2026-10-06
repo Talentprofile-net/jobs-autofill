@@ -54,12 +54,19 @@ its own. The fill and capture paths do not call it.
   and the runtime identity. The serialized input holds the job country, so a
   country change reclassifies the answer without a new `updatedAt` or a cache
   version. A label cached under `_unknown` is stale once a known country arrives.
+- Answer scheduling: only answers whose field type fits the live field are
+  considered. They are walked newest first (`lastUsedAt`, then `updatedAt`, then
+  id). Uncached answers are classified in chunks of at most
+  `ANSWER_LABEL_CHUNK` (8), the cache is written after each chunk, and the
+  background yields a task between chunks so a close or another field's request
+  runs in between. The walk stops once the newest usable answer with the
+  accepted label is known, which is the answer the full scan would choose.
 - Country-scoped questions: `answersForJob` keeps only answers stored for the
   current job country when the field's question is country-sensitive (work
   authorization, sponsorship, citizenship, visas, export control and similar),
   and none when the country is `_unknown`. Other answers are reused across
   countries.
-- Runtime identity: the offscreen document hashes the bytes of every staged
+- Runtime identity: the classifier worker hashes the bytes of every staged
   file (`model.onnx`, `tokenizer.json`, `labels.json`, `selective_policy.json`,
   `preprocessing.json`, `model-version.json`) and the runtime contract constants
   (`runtimeIdentity.ts`). Every classify answer carries it. `modelVersion` alone
@@ -109,11 +116,21 @@ its own. The fill and capture paths do not call it.
 | `suggestionRuntime.ts` | the browser wiring of the suggestion service |
 | `suggestClient.ts` | picker-side request, retry, and the row it renders |
 | `messages.ts` | the message contract between background and offscreen |
+| `classifierWorker.ts` | the dedicated worker that loads the assets and runs the model |
 | `attestation.ts` | the browser attestation contract shared with the Python trainer |
 
-The model runs in an offscreen document (`src/entrypoints/offscreen/`), because
-an MV3 service worker is stopped while idle and would reload the model on every
-wake.
+The model runs in a dedicated worker (`classifierWorker.ts`) owned by an
+offscreen document (`src/entrypoints/offscreen/`). An MV3 service worker is
+stopped while idle and would reload the model on every wake, and it cannot start
+a worker. The offscreen document only queues requests and sends them to the
+worker one at a time; it never runs the model. Inference on the offscreen
+document's main thread blocked every extension page in the same renderer,
+including the picker frame, for the whole batch (about 4 s for 128 rows). The
+worker is a packaged chunk of the extension, so the `script-src 'self'` CSP is
+unchanged. There is one worker and one model session. Closing the offscreen
+document ends the worker; the next request starts a new one. A port that
+disconnects drops its queued requests; a request already running finishes and
+its answer is discarded.
 
 ## Assets
 
@@ -217,7 +234,10 @@ note hydration step.
 It checks the switch (no stored value on a fresh profile, explicit `false` off
 across a service worker restart, an invalid value off, no value on), request
 limits, the cold load with the service worker
-stopped, the job countries DE, GB and `_unknown`, a deliberate close, a failed
+stopped, the job countries DE, GB and `_unknown`, a deliberate close issued from
+the background service worker (it proves its caller is `/background.js`, the
+in-flight request is rejected within 5 s, nothing reopens, and the next
+classification starts a new runtime with the same identity), a failed
 model load and its recovery, a request running while the switch turns off, the
 real handoff binding for UK, Germany, no country and a raw `UK`, the
 signed-out and signed-in picker, exact and word-overlap rows without
@@ -227,7 +247,11 @@ country, a fill that never submits the form, the cached reopen in the same
 country, abstention and no-answer, the reclassification of the saved answer when
 a form in another country follows, the context clearing on same-tab
 navigation, note hydration and insertion, page-script forgeries of every
-privileged bridge message, and the popup and form-widget fill. It exits 0 only
+privileged bridge message, the popup and form-widget fill, and 128 uncached
+saved answers classified while the picker is open: every answer is labelled in
+chunks of at most 8, the picker frame's event loop never stalls for 250 ms or
+more, every pointer move sent to the picker is acknowledged within 1 s and seen
+by the frame, and no renderer crashes. It exits 0 only
 when every check passes and the temporary Chrome profile is removed.
 
 It stops the service worker with `ServiceWorker.stopAllWorkers` on the driver page and waits
@@ -292,17 +316,19 @@ separate clean checkout of that commit. The script, in order:
    `scripts/chrome-suggest-smoke.mjs` as shipped at that commit, and parses their check lines
    and Chrome version.
 5. Re-hashes the staged files and the build tree, and re-reads the commit and tree state.
-6. Writes `browser_attestation.json` (`browser-runtime-successor-attestation.v2`) only when
+6. Writes `browser_attestation.json` (`browser-runtime-successor-attestation.v3`) only when
    every gate passes. It also records the digests of this script and `attestation.ts`.
 
-The suggestion smoke must pass and include eight required checks
+The suggestion smoke must pass and include eleven required checks
 (`REQUIRED_SUGGEST_SMOKE_CHECKS`, the same list in the trainer): the three service worker
 restart checks, a fresh profile storing no suggestion preference, the classifier running by
 default without storing one, an explicit `false` staying off after a service worker restart,
-and an invalid stored value answering `disabled` without starting the classifier. v2 added the
-five default-on checks. A v1 successor attestation predates them and is refused by
-`release-package.mjs` and by the trainer's `verify-browser-successor`, with a message to
-attest again.
+an invalid stored value answering `disabled` without starting the classifier, the deliberate
+close running from the background service worker, that close rejecting the in-flight request
+promptly, and the picker staying responsive while uncached saved answers are classified. v2
+added the five default-on checks; v3 added the last three. A v1 or v2 successor attestation
+predates them and is refused by `release-package.mjs` and by the trainer's
+`verify-browser-successor`, with a message to attest again.
 
 Then the trainer's `verify-browser-successor` must pass. Package the release from the same
 checkout:
@@ -312,7 +338,7 @@ node scripts/release-package.mjs [--extension-dir <checkout>] <release-dir>
 ```
 
 It first deletes `release.json`, release zips and partial files in the release directory. It
-refuses when the attestation is not v2, does not cover the successor and its clean commit, the checkout
+refuses when the attestation is not v3, does not cover the successor and its clean commit, the checkout
 is dirty or at another commit, or `.output/chrome-mv3` differs from the attested build in any
 file. It zips exactly the attested files into a partial file, unpacks it and refuses (and deletes it)
 when its files differ from the attested build, or when it has a non-MV3 manifest,

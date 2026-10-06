@@ -64,6 +64,7 @@ export type SuggestionDependencies = {
     answers: TalentAnswer[],
     runtimeId: string,
     jobCountry: string,
+    stop?: (answer: TalentAnswer, labelEnumId: string | null) => boolean,
   ) => Promise<Map<string, string | null>>
 }
 
@@ -193,18 +194,18 @@ export const suggestAnswer = async (
   }
   const labelEnumId = decision.labelEnumId
   const compatible = answers.filter((answer) => typesCompatible(answer.fieldType, request.fieldType))
-  const labels = await dependencies.answerLabels(compatible, classification.runtimeId, jobCountry)
-  const candidates = compatible
+  const valueOf = (answer: TalentAnswer) =>
+    learnedAnswerToProfileValue({ answer, method: 'classifier', score: decision.calibratedConfidence }, request.fieldType)
+  const labels = await dependencies.answerLabels(
+    compatible,
+    classification.runtimeId,
+    jobCountry,
+    (answer, label) => label === labelEnumId && isUsableValue(valueOf(answer)),
+  )
+  const chosen = compatible
     .filter((answer) => labels.get(answer.id) === labelEnumId)
     .sort(newestAnswerFirst)
-  const chosen = candidates
-    .map((answer) => ({
-      answer,
-      value: learnedAnswerToProfileValue(
-        { answer, method: 'classifier', score: decision.calibratedConfidence },
-        request.fieldType,
-      ),
-    }))
+    .map((answer) => ({ answer, value: valueOf(answer) }))
     .find((candidate) => isUsableValue(candidate.value))
   return {
     answer: chosen ? summary(chosen.answer) : null,

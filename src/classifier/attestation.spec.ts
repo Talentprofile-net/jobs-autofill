@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   ATTESTATION_SCHEMA_VERSION,
   PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION,
+  PRE_WORKER_SUCCESSOR_ATTESTATION_SCHEMA_VERSION,
   RECOGNITION_SPEC,
   REQUIRED_BUILD_FILES,
   REQUIRED_CHROME_SMOKE_CHECKS,
@@ -412,14 +413,14 @@ const validSuccessor = (): SuccessorAttestationInput => ({
 describe('runtime successor attestation', () => {
   it('records the exact successor, all six classifier files, both smokes and the build', () => {
     const attestation = buildSuccessorAttestation(validSuccessor())
-    expect(attestation.attestationSchemaVersion).toBe('browser-runtime-successor-attestation.v2')
+    expect(attestation.attestationSchemaVersion).toBe('browser-runtime-successor-attestation.v3')
     expect(attestation.artifact.manifestFile).toBe('browser_successor.json')
     expect(attestation.artifact.artifactManifestSha256).toBe(successor.artifactManifestSha256)
     expect(Object.keys(attestation.artifact.stagedFiles)).toEqual([...SUCCESSOR_STAGED_FILES])
     expect(attestation.chromeVersion).toBe('HeadlessChrome/143.0.7499.40')
     expect(attestation.chromeSmoke.checks).toHaveLength(17)
-    expect(REQUIRED_SUGGEST_SMOKE_CHECKS).toHaveLength(8)
-    expect(attestation.suggestSmoke.checks).toHaveLength(9)
+    expect(REQUIRED_SUGGEST_SMOKE_CHECKS).toHaveLength(11)
+    expect(attestation.suggestSmoke.checks).toHaveLength(12)
     expect(attestation.build.treeSha256).toBe(buildTreeSha256(successorBuild()))
     expect(attestation.attestor.files).toEqual(validSuccessor().attestor)
   })
@@ -575,16 +576,27 @@ describe('runtime successor attestation', () => {
     })
   }
 
-  it('accepts only the v2 successor attestation and refuses v1 as older than the default-on checks', () => {
+  it('accepts only the v3 successor attestation and refuses v1 and v2 as older contracts', () => {
     expect(successorAttestationVersionProblems(SUCCESSOR_ATTESTATION_SCHEMA_VERSION)).toEqual([])
     expect(successorAttestationVersionProblems(PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION)).toEqual([
-      'the attestation is browser-runtime-successor-attestation.v1, which predates the default-on suggestion checks; attest the runtime successor again to write browser-runtime-successor-attestation.v2',
+      'the attestation is browser-runtime-successor-attestation.v1, which predates the default-on suggestion checks; attest the runtime successor again to write browser-runtime-successor-attestation.v3',
+    ])
+    expect(successorAttestationVersionProblems(PRE_WORKER_SUCCESSOR_ATTESTATION_SCHEMA_VERSION)).toEqual([
+      'the attestation is browser-runtime-successor-attestation.v2, which predates worker isolation and the picker-responsiveness checks; attest the runtime successor again to write browser-runtime-successor-attestation.v3',
     ])
     expect(successorAttestationVersionProblems('browser-attestation.v1')).toEqual([
-      'the attestation is not browser-runtime-successor-attestation.v2',
+      'the attestation is not browser-runtime-successor-attestation.v3',
     ])
     expect(successorAttestationVersionProblems(undefined)).toEqual([
-      'the attestation is not browser-runtime-successor-attestation.v2',
+      'the attestation is not browser-runtime-successor-attestation.v3',
+    ])
+  })
+
+  it('requires the worker-isolation and picker-responsiveness checks on top of the default-on checks', () => {
+    expect(REQUIRED_SUGGEST_SMOKE_CHECKS.slice(8)).toEqual([
+      'the deliberate close runs from the background service worker',
+      'a deliberate close rejects the in-flight background request promptly',
+      'the picker stays responsive while uncached saved answers are classified',
     ])
   })
 

@@ -7,8 +7,9 @@ export const ATTESTATION_SCHEMA_VERSION = 'browser-attestation.v1'
 export const CANDIDATE_FILE = 'browser_candidate.json'
 export const ATTESTATION_FILE = 'browser_attestation.json'
 export const SUCCESSOR_SCHEMA_VERSION = 'browser-runtime-successor.v1'
-export const SUCCESSOR_ATTESTATION_SCHEMA_VERSION = 'browser-runtime-successor-attestation.v2'
+export const SUCCESSOR_ATTESTATION_SCHEMA_VERSION = 'browser-runtime-successor-attestation.v3'
 export const PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION = 'browser-runtime-successor-attestation.v1'
+export const PRE_WORKER_SUCCESSOR_ATTESTATION_SCHEMA_VERSION = 'browser-runtime-successor-attestation.v2'
 export const SUCCESSOR_FILE = 'browser_successor.json'
 export const BUILD_COMMAND = 'bun run build'
 export const BUILD_DIRECTORY = '.output/chrome-mv3'
@@ -76,6 +77,9 @@ export const REQUIRED_SUGGEST_SMOKE_CHECKS = [
   'an explicit false switch stays off after the service worker restarts',
   'an invalid stored switch value answers disabled',
   'an invalid stored switch value never starts the classifier',
+  'the deliberate close runs from the background service worker',
+  'a deliberate close rejects the in-flight background request promptly',
+  'the picker stays responsive while uncached saved answers are classified',
 ] as const
 
 export const RECOGNITION_SPEC = 'src/adapters/genericRecognition.spec.ts'
@@ -443,6 +447,11 @@ export const successorAttestationVersionProblems = (version: unknown): string[] 
   if (version === PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION) {
     return [
       `the attestation is ${PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION}, which predates the default-on suggestion checks; attest the runtime successor again to write ${SUCCESSOR_ATTESTATION_SCHEMA_VERSION}`,
+    ]
+  }
+  if (version === PRE_WORKER_SUCCESSOR_ATTESTATION_SCHEMA_VERSION) {
+    return [
+      `the attestation is ${PRE_WORKER_SUCCESSOR_ATTESTATION_SCHEMA_VERSION}, which predates worker isolation and the picker-responsiveness checks; attest the runtime successor again to write ${SUCCESSOR_ATTESTATION_SCHEMA_VERSION}`,
     ]
   }
   return [`the attestation is not ${SUCCESSOR_ATTESTATION_SCHEMA_VERSION}`]
