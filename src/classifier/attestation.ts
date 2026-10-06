@@ -7,7 +7,8 @@ export const ATTESTATION_SCHEMA_VERSION = 'browser-attestation.v1'
 export const CANDIDATE_FILE = 'browser_candidate.json'
 export const ATTESTATION_FILE = 'browser_attestation.json'
 export const SUCCESSOR_SCHEMA_VERSION = 'browser-runtime-successor.v1'
-export const SUCCESSOR_ATTESTATION_SCHEMA_VERSION = 'browser-runtime-successor-attestation.v1'
+export const SUCCESSOR_ATTESTATION_SCHEMA_VERSION = 'browser-runtime-successor-attestation.v2'
+export const PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION = 'browser-runtime-successor-attestation.v1'
 export const SUCCESSOR_FILE = 'browser_successor.json'
 export const BUILD_COMMAND = 'bun run build'
 export const BUILD_DIRECTORY = '.output/chrome-mv3'
@@ -70,6 +71,11 @@ export const REQUIRED_SUGGEST_SMOKE_CHECKS = [
   'the service worker was stopped during the cold load',
   'a suggestion survives the service worker stopping during the cold model load',
   'the service worker was stopped during the picker cold load',
+  'a fresh profile stores no suggestion preference',
+  'with no stored preference the classifier runs by default and stores nothing',
+  'an explicit false switch stays off after the service worker restarts',
+  'an invalid stored switch value answers disabled',
+  'an invalid stored switch value never starts the classifier',
 ] as const
 
 export const RECOGNITION_SPEC = 'src/adapters/genericRecognition.spec.ts'
@@ -430,6 +436,16 @@ function specProblems(label: string, run: SpecRun, required: readonly string[]):
     ...run.tests.filter((test) => test.status !== 'pass').map((test) => `${label} ${test.status}: ${test.name}`),
     ...required.filter((name) => !names.includes(name)).map((name) => `${label} is missing ${name}`),
   ]
+}
+
+export const successorAttestationVersionProblems = (version: unknown): string[] => {
+  if (version === SUCCESSOR_ATTESTATION_SCHEMA_VERSION) return []
+  if (version === PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION) {
+    return [
+      `the attestation is ${PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION}, which predates the default-on suggestion checks; attest the runtime successor again to write ${SUCCESSOR_ATTESTATION_SCHEMA_VERSION}`,
+    ]
+  }
+  return [`the attestation is not ${SUCCESSOR_ATTESTATION_SCHEMA_VERSION}`]
 }
 
 function suggestSmokeProblems(smoke: SmokeRun): string[] {

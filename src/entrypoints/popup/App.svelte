@@ -58,7 +58,7 @@
   let enabledList = $state<EnabledOriginEntry[]>([]);
   let settingsOpen = $state(false);
   let manageOpen = $state(false);
-  let classifierSuggestions = $state(false);
+  let classifierSuggestions = $state(true);
   let confirmRevoke = $state<EnabledOriginEntry | null>(null);
   let busy = $state(false);
   let errorMsg = $state<string | null>(null);

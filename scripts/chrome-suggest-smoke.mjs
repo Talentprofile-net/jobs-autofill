@@ -429,7 +429,9 @@ const CLASSIFY = (request, jobCountry) =>
   CALL(`const [decision] = await __classify([{ answerKind: ${JSON.stringify(request.answerKind)}, input: { questionText: ${JSON.stringify(request.questionText)}, fieldType: ${JSON.stringify(request.fieldType)}, jobCountry: ${JSON.stringify(jobCountry)}, optionLabels: ${JSON.stringify(request.optionLabels)} } }])
     return decision`)
 const OFFSCREEN_COUNT = `chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] }).then((c) => c.length)`
-const SET_SWITCH = (enabled) => CALL(`await chrome.storage.local.set({ '${SWITCH_KEY}': ${enabled} })`)
+const SET_SWITCH = (value) => CALL(`await chrome.storage.local.set({ '${SWITCH_KEY}': ${JSON.stringify(value)} })`)
+const CLEAR_SWITCH = CALL(`await chrome.storage.local.remove('${SWITCH_KEY}')`)
+const SWITCH_STORED = CALL(`return '${SWITCH_KEY}' in (await chrome.storage.local.get('${SWITCH_KEY}'))`)
 const BIND = (tabId, destinationUrl, country) =>
   CALL(`await chrome.storage.session.set({ 'tp.applicationContext.tab.${tabId}': { applicationId: 'smoke', destinationUrl: ${JSON.stringify(destinationUrl)}, jobCountry: ${JSON.stringify(country)} } })
     return true`)
@@ -810,13 +812,32 @@ try {
     JSON.stringify(classifierFetches(probeFrom)),
   )
 
+  check('a fresh profile stores no suggestion preference', (await run(SWITCH_STORED)) === false)
+
+  await run(SET_SWITCH(false))
   const offFrom = requests.length
   const disabled = await run(SUGGEST(requestFor(ACCEPTED)))
-  check('the switch is off by default and nothing is suggested', disabled.status === 'disabled', JSON.stringify(disabled))
+  check('an explicit false switch answers disabled', disabled.status === 'disabled', JSON.stringify(disabled))
+  const stopsBefore = workerStates.filter((state) => state.status === 'stopped').length
+  const restarting = stopWorker()
+  await waitFor(() => workerStates.filter((state) => state.status === 'stopped').length > stopsBefore, Boolean, 10_000, 'the idle service worker to stop')
+  const disabledAfterRestart = await run(SUGGEST(requestFor(ACCEPTED)))
+  const offRestart = await restarting
+  check(
+    'an explicit false switch stays off after the service worker restarts',
+    offRestart !== 'no worker running' && disabledAfterRestart.status === 'disabled',
+    `${offRestart} ${JSON.stringify(disabledAfterRestart)}`,
+  )
   check('a disabled switch never starts the classifier', (await offscreenCount()) === 0)
   check('a disabled switch never fetches a classifier asset', classifierFetches(offFrom).length === 0)
 
-  await run(SET_SWITCH(true))
+  await run(SET_SWITCH('on'))
+  const invalidFrom = requests.length
+  const invalid = await run(SUGGEST(requestFor(ACCEPTED)))
+  check('an invalid stored switch value answers disabled', invalid.status === 'disabled', JSON.stringify(invalid))
+  check('an invalid stored switch value never starts the classifier', (await offscreenCount()) === 0 && classifierFetches(invalidFrom).length === 0)
+
+  await run(CLEAR_SWITCH)
   const malformedFrom = requests.length
   for (const [name, request] of MALFORMED) {
     const refused = await run(SUGGEST(request))
@@ -843,6 +864,7 @@ try {
   check('the dropped request was retried once through the shipped client', attempts === 2, `attempts ${attempts}`)
   check('a suggestion survives the service worker stopping during the cold model load', matchesFixture(cold, ACCEPTED), JSON.stringify(cold))
   check('the bound job country reaches the classifier', cold.jobCountry === 'US', JSON.stringify(cold))
+  check('with no stored preference the classifier runs by default and stores nothing', ['classified', 'abstained'].includes(cold.status) && (await run(SWITCH_STORED)) === false, JSON.stringify(cold).slice(0, 200))
   check('the staged model version answers', cold.modelVersion === fixture.modelVersion, cold.modelVersion)
   check('with no saved answers the suggestion offers nothing to fill', cold.answer === null && cold.value === null)
   const status = await run(CALL('return await __status()'))

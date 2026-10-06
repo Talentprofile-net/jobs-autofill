@@ -92,7 +92,10 @@ import {
 } from "~/capture/applicationContext";
 import { tabJobCountry, withJobCountry } from "~/capture/tabJobCountry";
 import { closeOffscreenDocument } from "~/classifier/offscreenClient";
-import { CLASSIFIER_SUGGESTIONS_KEY } from "~/classifier/suggestionSwitch";
+import {
+  CLASSIFIER_SUGGESTIONS_KEY,
+  classifierSuggestionsEnabled,
+} from "~/classifier/suggestionSwitch";
 import { PICKER_PAGE, type PickerRelay } from "~/ui/picker/protocol";
 
 const FRAME_REGISTRY_KEY = "tp.frameRegistry";
@@ -2274,7 +2277,12 @@ export default defineBackground(() => {
 
   browser.storage.onChanged.addListener((changes, areaName) => {
     const change = changes[CLASSIFIER_SUGGESTIONS_KEY];
-    if (areaName !== "local" || !change || change.newValue === true) return;
+    if (
+      areaName !== "local" ||
+      !change ||
+      classifierSuggestionsEnabled(change.newValue)
+    )
+      return;
     void closeOffscreenDocument().catch(() => {});
   });
 

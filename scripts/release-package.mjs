@@ -8,7 +8,6 @@ import {
   ATTESTATION_FILE,
   BUILD_DIRECTORY,
   RELEASE_FILE,
-  SUCCESSOR_ATTESTATION_SCHEMA_VERSION,
   SUCCESSOR_FILE,
   TEXT_FILE,
   buildTreeSha256,
@@ -20,6 +19,7 @@ import {
   sha256Bytes,
   sha256File,
   sourceProblems,
+  successorAttestationVersionProblems,
   treeDifferences,
 } from '../src/classifier/attestation.ts'
 
@@ -54,9 +54,7 @@ const clean = git('status', '--porcelain', '--untracked-files=all') === ''
 const current = await hashTree(extension)
 
 const gate = [
-  ...(attestation?.attestationSchemaVersion === SUCCESSOR_ATTESTATION_SCHEMA_VERSION
-    ? []
-    : [`the attestation is not ${SUCCESSOR_ATTESTATION_SCHEMA_VERSION}`]),
+  ...successorAttestationVersionProblems(attestation?.attestationSchemaVersion),
   ...(attestation?.artifact?.manifestSha256 === sha256Bytes(successorBytes)
     ? []
     : ['the attestation was written for another runtime successor manifest']),

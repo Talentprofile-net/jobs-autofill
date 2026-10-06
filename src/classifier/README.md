@@ -3,10 +3,19 @@
 Local inference for the autofill question classifier. It never fills a field on
 its own. The fill and capture paths do not call it.
 
-## Suggestions (off by default)
+## Suggestions (on by default)
 
 - Switch: `tp.classifierSuggestions` in `storage.local`, the popup setting
-  "Classifier suggestions (beta)". Off unless turned on.
+  "Classifier suggestions (beta)". It is a kill switch, read by
+  `classifierSuggestionsEnabled` in `suggestionSwitch.ts`: no stored value or
+  `true` is on, `false` or any other value is off. Nothing writes the key on
+  install or update, so an installation that never stored a value, fresh or
+  upgraded, is on, and an explicit `false` stays off across restarts and
+  updates.
+- Gate: a classifier row appears only when the selective policy accepts the
+  label and a usable saved answer is linked. The field is filled only on the
+  user's click, and the form is never submitted. The model loads only when a
+  picker request reaches the classifier step (see Order below).
 - Switch off: the picker page shows no row and never messages the
   background. The background also checks the switch before it
   reads answers, fetches labels or starts the offscreen document. Turning the
@@ -205,7 +214,9 @@ three saved answers. The extension only decodes the token's claims on this path.
 The script fails if the tokens change or any backend request is made before the
 note hydration step.
 
-It checks the switch, request limits, the cold load with the service worker
+It checks the switch (no stored value on a fresh profile, explicit `false` off
+across a service worker restart, an invalid value off, no value on), request
+limits, the cold load with the service worker
 stopped, the job countries DE, GB and `_unknown`, a deliberate close, a failed
 model load and its recovery, a request running while the switch turns off, the
 real handoff binding for UK, Germany, no country and a raw `UK`, the
@@ -281,8 +292,17 @@ separate clean checkout of that commit. The script, in order:
    `scripts/chrome-suggest-smoke.mjs` as shipped at that commit, and parses their check lines
    and Chrome version.
 5. Re-hashes the staged files and the build tree, and re-reads the commit and tree state.
-6. Writes `browser_attestation.json` (`browser-runtime-successor-attestation.v1`) only when
+6. Writes `browser_attestation.json` (`browser-runtime-successor-attestation.v2`) only when
    every gate passes. It also records the digests of this script and `attestation.ts`.
+
+The suggestion smoke must pass and include eight required checks
+(`REQUIRED_SUGGEST_SMOKE_CHECKS`, the same list in the trainer): the three service worker
+restart checks, a fresh profile storing no suggestion preference, the classifier running by
+default without storing one, an explicit `false` staying off after a service worker restart,
+and an invalid stored value answering `disabled` without starting the classifier. v2 added the
+five default-on checks. A v1 successor attestation predates them and is refused by
+`release-package.mjs` and by the trainer's `verify-browser-successor`, with a message to
+attest again.
 
 Then the trainer's `verify-browser-successor` must pass. Package the release from the same
 checkout:
@@ -292,7 +312,7 @@ node scripts/release-package.mjs [--extension-dir <checkout>] <release-dir>
 ```
 
 It first deletes `release.json`, release zips and partial files in the release directory. It
-refuses when the attestation does not cover the successor and its clean commit, the checkout
+refuses when the attestation is not v2, does not cover the successor and its clean commit, the checkout
 is dirty or at another commit, or `.output/chrome-mv3` differs from the attested build in any
 file. It zips exactly the attested files into a partial file, unpacks it and refuses (and deletes it)
 when its files differ from the attested build, or when it has a non-MV3 manifest,

@@ -74,6 +74,21 @@ describe('suggestion row crossing into the page', () => {
     expect(calls).toBe(0)
   })
 
+  it('asks the background once by default when no preference is stored', async () => {
+    let calls = 0
+    const row = await requestSuggestionRow(
+      async () => {
+        calls += 1
+        return { data: classified(), ok: true }
+      },
+      { get: async () => ({}), set: async () => {} },
+      request,
+    )
+
+    expect(calls).toBe(1)
+    expect(row?.value).toEqual(value)
+  })
+
   it('drops a malformed page request before it reaches the background', async () => {
     let calls = 0
     const send = async () => {

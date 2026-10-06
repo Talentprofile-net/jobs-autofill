@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { createAnswerLabels } from './answerLabels'
+import { readClassifierSuggestions } from './suggestionSwitch'
 import type { Decision } from './contract'
 import type { ClassifyRequest } from './suggest'
 import { createSuggestionService, type SuggestionServiceDependencies } from './suggestionService'
@@ -53,6 +54,26 @@ const recording = (enabled: boolean, over: Partial<SuggestionServiceDependencies
 describe('suggestion service', () => {
   it('does nothing but read the switch while it is off', async () => {
     const { called, suggest } = recording(false)
+
+    expect(await suggest(request, 7)).toEqual({ status: 'disabled' })
+    expect(called).toEqual([])
+  })
+
+  it('classifies for a fresh installation that stored no preference', async () => {
+    const { called, suggest } = recording(true, {
+      enabled: () => readClassifierSuggestions({ get: async () => ({}), set: async () => {} }),
+    })
+    const result = await suggest(request, 7)
+
+    expect(result.status).toBe('classified')
+    expect(called).toContain('classify')
+  })
+
+  it('starts no model for an explicit false preference', async () => {
+    const { called, suggest } = recording(true, {
+      enabled: () =>
+        readClassifierSuggestions({ get: async (key) => ({ [key]: false }), set: async () => {} }),
+    })
 
     expect(await suggest(request, 7)).toEqual({ status: 'disabled' })
     expect(called).toEqual([])

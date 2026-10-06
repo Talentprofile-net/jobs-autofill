@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import {
   ATTESTATION_SCHEMA_VERSION,
+  PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION,
   RECOGNITION_SPEC,
   REQUIRED_BUILD_FILES,
   REQUIRED_CHROME_SMOKE_CHECKS,
@@ -23,6 +24,7 @@ import {
   readCandidate,
   readSuccessor,
   sourceProblems,
+  successorAttestationVersionProblems,
   treeChanges,
   type AttestationInput,
   type Candidate,
@@ -397,7 +399,7 @@ const validSuccessor = (): SuccessorAttestationInput => ({
   },
   chromeSmoke: smokeRun(REQUIRED_CHROME_SMOKE_CHECKS, 'node scripts/chrome-smoke.mjs'),
   suggestSmoke: smokeRun(
-    ['the switch is off by default', ...REQUIRED_SUGGEST_SMOKE_CHECKS],
+    ['an explicit false switch answers disabled', ...REQUIRED_SUGGEST_SMOKE_CHECKS],
     'node scripts/chrome-suggest-smoke.mjs',
   ),
   extension: { commitBefore: COMMIT, commitAfter: COMMIT, clean: true },
@@ -410,13 +412,14 @@ const validSuccessor = (): SuccessorAttestationInput => ({
 describe('runtime successor attestation', () => {
   it('records the exact successor, all six classifier files, both smokes and the build', () => {
     const attestation = buildSuccessorAttestation(validSuccessor())
-    expect(attestation.attestationSchemaVersion).toBe(SUCCESSOR_ATTESTATION_SCHEMA_VERSION)
+    expect(attestation.attestationSchemaVersion).toBe('browser-runtime-successor-attestation.v2')
     expect(attestation.artifact.manifestFile).toBe('browser_successor.json')
     expect(attestation.artifact.artifactManifestSha256).toBe(successor.artifactManifestSha256)
     expect(Object.keys(attestation.artifact.stagedFiles)).toEqual([...SUCCESSOR_STAGED_FILES])
     expect(attestation.chromeVersion).toBe('HeadlessChrome/143.0.7499.40')
     expect(attestation.chromeSmoke.checks).toHaveLength(17)
-    expect(attestation.suggestSmoke.checks).toHaveLength(4)
+    expect(REQUIRED_SUGGEST_SMOKE_CHECKS).toHaveLength(8)
+    expect(attestation.suggestSmoke.checks).toHaveLength(9)
     expect(attestation.build.treeSha256).toBe(buildTreeSha256(successorBuild()))
     expect(attestation.attestor.files).toEqual(validSuccessor().attestor)
   })
@@ -526,16 +529,21 @@ describe('runtime successor attestation', () => {
           checks: i.suggestSmoke.checks.map((check) => ({ ...check, ok: false })),
         },
       }),
-      'suggestion smoke failed: the switch is off by default',
+      'suggestion smoke failed: an explicit false switch answers disabled',
     ],
-    [
-      'the service worker restart check is missing',
-      (i) => ({
-        ...i,
-        suggestSmoke: { ...i.suggestSmoke, checks: i.suggestSmoke.checks.slice(0, 2) },
-      }),
-      `suggestion smoke is missing ${REQUIRED_SUGGEST_SMOKE_CHECKS[1]}`,
-    ],
+    ...REQUIRED_SUGGEST_SMOKE_CHECKS.map(
+      (required): [string, (input: SuccessorAttestationInput) => SuccessorAttestationInput, string] => [
+        `the suggestion check "${required}" is missing`,
+        (i) => ({
+          ...i,
+          suggestSmoke: {
+            ...i.suggestSmoke,
+            checks: i.suggestSmoke.checks.filter((check) => check.name !== required),
+          },
+        }),
+        `suggestion smoke is missing ${required}`,
+      ],
+    ),
     [
       'the suggestion smoke exited non-zero',
       (i) => ({ ...i, suggestSmoke: { ...i.suggestSmoke, exitCode: 1 } }),
@@ -567,8 +575,22 @@ describe('runtime successor attestation', () => {
     })
   }
 
+  it('accepts only the v2 successor attestation and refuses v1 as older than the default-on checks', () => {
+    expect(successorAttestationVersionProblems(SUCCESSOR_ATTESTATION_SCHEMA_VERSION)).toEqual([])
+    expect(successorAttestationVersionProblems(PRE_DEFAULT_ON_SUCCESSOR_ATTESTATION_SCHEMA_VERSION)).toEqual([
+      'the attestation is browser-runtime-successor-attestation.v1, which predates the default-on suggestion checks; attest the runtime successor again to write browser-runtime-successor-attestation.v2',
+    ])
+    expect(successorAttestationVersionProblems('browser-attestation.v1')).toEqual([
+      'the attestation is not browser-runtime-successor-attestation.v2',
+    ])
+    expect(successorAttestationVersionProblems(undefined)).toEqual([
+      'the attestation is not browser-runtime-successor-attestation.v2',
+    ])
+  })
+
   it('keeps the preregistered candidate wording and schema', () => {
     expect(buildAttestation(valid()).attestationSchemaVersion).toBe(ATTESTATION_SCHEMA_VERSION)
+    expect(ATTESTATION_SCHEMA_VERSION).toBe('browser-attestation.v1')
     expect(sourceProblems(candidate, { commitBefore: OTHER, commitAfter: OTHER, clean: true })).toEqual([
       `the extension is at ${OTHER}, not the preregistered ${COMMIT}`,
     ])

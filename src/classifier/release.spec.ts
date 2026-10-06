@@ -340,6 +340,21 @@ describe('release-package.mjs', () => {
     }
   })
 
+  it('refuses a v1 attestation because it predates the default-on suggestion checks', async () => {
+    const { base, checkout, release } = fixture()
+    try {
+      const attestation = JSON.parse(readFileSync(join(release, ATTESTATION_FILE), 'utf8'))
+      attestation.attestationSchemaVersion = 'browser-runtime-successor-attestation.v1'
+      writeFileSync(join(release, ATTESTATION_FILE), JSON.stringify(attestation))
+      const { exitCode, output } = await script('release-package.mjs', checkout, release)
+      expect(exitCode).toBe(1)
+      expect(output).toContain('which predates the default-on suggestion checks')
+      expect(listing(release)).toEqual([ATTESTATION_FILE, SUCCESSOR_FILE, 'notes.txt'])
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
   it('leaves no stale or partial output when the zip content check fails', async () => {
     const { base, checkout, release } = fixture()
     try {
