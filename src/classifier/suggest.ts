@@ -8,7 +8,6 @@ import {
   typesCompatible,
 } from '~/resolver/learnedAnswerMatcher'
 import type { AbstentionReason, AnswerKind, ClassifierInput, Decision } from './contract'
-import { UNKNOWN_JOB_COUNTRY } from './jobCountry'
 import { answersForJob } from '~/resolver/countryScopedAnswers'
 
 export type SuggestionRequest = {
@@ -64,6 +63,7 @@ export type SuggestionDependencies = {
   answerLabels: (
     answers: TalentAnswer[],
     runtimeId: string,
+    jobCountry: string,
   ) => Promise<Map<string, string | null>>
 }
 
@@ -140,13 +140,13 @@ export const readSuggestionRequest = (value: unknown): SuggestionRequest | null 
   return { answerKind, fieldType, optionLabels: labels, questionText }
 }
 
-export const answerClassifierRequest = (answer: TalentAnswer): ClassifyRequest | null =>
+export const answerClassifierRequest = (answer: TalentAnswer, jobCountry: string): ClassifyRequest | null =>
   isAnswerKind(answer.answerKind)
     ? {
         answerKind: answer.answerKind,
         input: {
           fieldType: toCorpusFieldType(answer.fieldType),
-          jobCountry: UNKNOWN_JOB_COUNTRY,
+          jobCountry,
           optionLabels: [],
           questionText: answer.questionText,
         },
@@ -193,7 +193,7 @@ export const suggestAnswer = async (
   }
   const labelEnumId = decision.labelEnumId
   const compatible = answers.filter((answer) => typesCompatible(answer.fieldType, request.fieldType))
-  const labels = await dependencies.answerLabels(compatible, classification.runtimeId)
+  const labels = await dependencies.answerLabels(compatible, classification.runtimeId, jobCountry)
   const candidates = compatible
     .filter((answer) => labels.get(answer.id) === labelEnumId)
     .sort(newestAnswerFirst)

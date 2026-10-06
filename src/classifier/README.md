@@ -37,10 +37,19 @@ its own. The fill and capture paths do not call it.
   characters in total. Anything else is dropped before classification.
 - Order: exact question slug, then word overlap, then the classifier.
 - Exact and word-overlap matches never load label names or start the model.
-- Answer link: each stored answer is classified with job country `_unknown`, no
-  options, and its own field type. `answerLabels.ts` caches the label in
-  `storage.session` per answer id, keyed by the answer's `updatedAt`, its exact
-  classifier input, and the runtime identity.
+- Answer link: each candidate stored answer is classified with the current
+  form's job country, the same value the live field uses. It never uses the
+  answer's own stored `jobCountry`. It has no option labels and keeps its own
+  field type. `answerLabels.ts` caches the label in `storage.session` per answer
+  id, keyed by the answer's `updatedAt`, its exact serialized classifier input,
+  and the runtime identity. The serialized input holds the job country, so a
+  country change reclassifies the answer without a new `updatedAt` or a cache
+  version. A label cached under `_unknown` is stale once a known country arrives.
+- Country-scoped questions: `answersForJob` keeps only answers stored for the
+  current job country when the field's question is country-sensitive (work
+  authorization, sponsorship, citizenship, visas, export control and similar),
+  and none when the country is `_unknown`. Other answers are reused across
+  countries.
 - Runtime identity: the offscreen document hashes the bytes of every staged
   file (`model.onnx`, `tokenizer.json`, `labels.json`, `selective_policy.json`,
   `preprocessing.json`, `model-version.json`) and the runtime contract constants
@@ -51,10 +60,7 @@ its own. The fill and capture paths do not call it.
   accepted label, the newest `lastUsedAt ?? updatedAt` wins, then the newest
   `updatedAt`, then the lowest `id`. An answer whose value cannot be filled is
   skipped.
-- Job country: only the `jobCountry` the public site sends with
-  `application.handoff`, checked against the 249-code training allowlist in
-  `jobCountry.ts`. Anything else, and every page without a handoff, is `_unknown`.
-  The public site maps `UK` to `GB` before it sends.
+- Job country: `tabJobCountry` resolves one normalized country for the current tab. It uses the bound application context first. If that context has no country, it requests `page.jobCountry` from the top frame. Page detection reads normalized job metadata. If neither source returns an allowed ISO alpha-2 code, the value is `_unknown`. The public site maps `UK` to `GB`.
 - Context lifetime: the bound tab context stores the normalized handoff
   destination. A top-frame commit or History API navigation to any other origin,
   path or query removes the whole context, application id and country together
@@ -204,11 +210,14 @@ stopped, the job countries DE, GB and `_unknown`, a deliberate close, a failed
 model load and its recovery, a request running while the switch turns off, the
 real handoff binding for UK, Germany, no country and a raw `UK`, the
 signed-out and signed-in picker, exact and word-overlap rows without
-the model, the classifier row and its fill, abstention and no-answer, the cached
-reopen, the context clearing on same-tab navigation, note hydration and
-insertion, page-script forgeries of every privileged bridge message, and the
-popup and form-widget fill. It exits 0 only when
-every check passes and the temporary Chrome profile is removed.
+the model, the classifier row and its fill, a reusable saved answer stored for
+`DE` linked on a form with another known country and classified with that form
+country, a fill that never submits the form, the cached reopen in the same
+country, abstention and no-answer, the reclassification of the saved answer when
+a form in another country follows, the context clearing on same-tab
+navigation, note hydration and insertion, page-script forgeries of every
+privileged bridge message, and the popup and form-widget fill. It exits 0 only
+when every check passes and the temporary Chrome profile is removed.
 
 It stops the service worker with `ServiceWorker.stopAllWorkers` on the driver page and waits
 for a `stopped` version event. It never closes the worker target: Chrome can host the worker in

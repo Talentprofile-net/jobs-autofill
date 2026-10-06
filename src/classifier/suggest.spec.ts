@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
+import { createAnswerLabels } from './answerLabels'
 import type { Decision } from './contract'
 import {
   SUGGESTION_REQUEST_LIMITS,
@@ -24,15 +25,26 @@ const decision = (over: Partial<Decision> = {}): Decision => ({
 const dependencies = (
   fieldDecision: Decision,
   answerLabels: Record<string, string | null> = {},
-): SuggestionDependencies & { calls: ClassifyRequest[][]; runtimes: string[] } => {
+): SuggestionDependencies & {
+  calls: ClassifyRequest[][]
+  countries: string[]
+  linked: string[][]
+  runtimes: string[]
+} => {
   const calls: ClassifyRequest[][] = []
+  const countries: string[] = []
+  const linked: string[][] = []
   const runtimes: string[] = []
   return {
-    answerLabels: async (answers, runtimeId) => {
+    answerLabels: async (answers, runtimeId, jobCountry) => {
       runtimes.push(runtimeId)
+      countries.push(jobCountry)
+      linked.push(answers.map((a) => a.id))
       return new Map(answers.map((a) => [a.id, answerLabels[a.id] ?? null]))
     },
     calls,
+    countries,
+    linked,
     classify: async (requests) => {
       calls.push(requests)
       return { decisions: [fieldDecision], runtimeId: 'runtime-1' }
@@ -62,6 +74,7 @@ describe('classifier suggestions', () => {
 
     expect(result.status).toBe('matched')
     expect(deps.calls).toHaveLength(0)
+    expect(deps.runtimes).toHaveLength(0)
   })
 
   it('prefers a word-overlap match and never calls the classifier', async () => {
@@ -80,6 +93,74 @@ describe('classifier suggestions', () => {
     expect(result.status === 'matched' ? result.method : result.status).toBe('jaccard')
     expect(deps.calls).toHaveLength(0)
     expect(deps.runtimes).toHaveLength(0)
+  })
+
+  it('passes the current form country to the stored-answer labels', async () => {
+    const deps = dependencies(decision(), { 'answer-1': 'label-education' })
+    await suggestAnswer(request, [talentAnswer({ jobCountry: 'DE' })], 'US', deps)
+
+    expect(deps.countries).toEqual(['US'])
+  })
+
+  it('links a reusable answer captured in DE on a US form, classifying both sides with US', async () => {
+    const calls: ClassifyRequest[][] = []
+    const classify = async (requests: ClassifyRequest[]) => {
+      calls.push(requests)
+      return { decisions: requests.map(() => decision()), runtimeId: 'runtime-1' }
+    }
+    const storage: Record<string, unknown> = {}
+    const result = await suggestAnswer(request, [talentAnswer({ jobCountry: 'DE' })], 'US', {
+      answerLabels: createAnswerLabels(
+        {
+          get: async (key) => ({ [key]: storage[key] }),
+          set: async (items) => {
+            Object.assign(storage, items)
+          },
+        },
+        classify,
+      ),
+      classify,
+      labelName: async (id) => `name:${id}`,
+    })
+
+    expect(calls.map((call) => call.map((item) => [item.input.questionText, item.input.jobCountry]))).toEqual([
+      [['What is your education level?', 'US']],
+      [['Highest degree obtained', 'US']],
+    ])
+    expect(result.status === 'classified' ? [result.jobCountry, result.answer?.id] : result).toEqual([
+      'US',
+      'answer-1',
+    ])
+  })
+
+  describe('a country-sensitive question', () => {
+    const authorized = { ...request, questionText: 'Are you legally authorized to work in this country?' }
+    const stored = (id: string, jobCountry: string) =>
+      talentAnswer({
+        answerText: 'Yes',
+        answerValue: { confidence: 'exact', kind: 'string', value: 'Yes' },
+        id,
+        jobCountry,
+        normalizedQuestion: 'do-you-have-the-right-to-work-here',
+        questionText: 'Do you have the right to work here?',
+      })
+
+    it('never offers an answer captured for DE on a US form', async () => {
+      const deps = dependencies(decision(), { de: 'label-education' })
+      const result = await suggestAnswer(authorized, [stored('de', 'DE')], 'US', deps)
+
+      expect(deps.linked).toEqual([[]])
+      expect(result.status === 'classified' ? result.answer : result).toBeNull()
+    })
+
+    it('offers an answer captured for US on a US form', async () => {
+      const deps = dependencies(decision(), { de: 'label-education', us: 'label-education' })
+      const result = await suggestAnswer(authorized, [stored('de', 'DE'), stored('us', 'US')], 'US', deps)
+
+      expect(deps.linked).toEqual([['us']])
+      expect(deps.countries).toEqual(['US'])
+      expect(result.status === 'classified' ? result.answer?.id : result).toBe('us')
+    })
   })
 
   it('classifies after slug and word overlap fail and passes the job country through', async () => {
@@ -169,6 +250,8 @@ describe('classifier suggestions', () => {
       decision({ abstentionReason: 'low_confidence', calibratedConfidence: 0.4, labelEnumId: null }),
     )
     const result = await suggestAnswer(request, [talentAnswer()], '_unknown', deps)
+
+    expect(deps.runtimes).toHaveLength(0)
 
     expect(result).toEqual({
       confidence: 0.4,

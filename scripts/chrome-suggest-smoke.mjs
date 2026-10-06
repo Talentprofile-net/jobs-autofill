@@ -60,6 +60,7 @@ const OVERLAP_FIELD = 'Expected annual salary (euros)'
 const OVERLAP_STORED = 'Expected annual salary in euros'
 const LINKED_CANDIDATES = ['Legal first name', 'Given name', 'Your first name']
 const LINKED_VALUE = 'Smoke Linked Answer'
+const LINKED_STORED_COUNTRY = 'DE'
 const EXACT_VALUE = 'Smoke Exact Answer'
 const OVERLAP_VALUE = 'Smoke Overlap Answer'
 const NOTE_SENTINEL = 'TP-PRIVATE-NOTE-SENTINEL-9c2f6a'
@@ -136,6 +137,7 @@ async function bundle(workDir, name, source) {
 const harnessSource = `import { requestSuggestionFromBackground } from '${resolve(root, 'src/classifier/suggestClient.ts')}'
 import { classifierStatus, classifyQuestions, closeOffscreenDocument } from '${resolve(root, 'src/classifier/offscreenClient.ts')}'
 import { normalizeQuestion } from '${resolve(root, 'src/resolver/normalizeQuestion.ts')}'
+import { isCountryScopedQuestion } from '${resolve(root, 'src/resolver/countryScopedAnswers.ts')}'
 
 globalThis.__attempts = 0
 
@@ -153,6 +155,7 @@ globalThis.__classify = classifyQuestions
 globalThis.__closeClassifier = closeOffscreenDocument
 globalThis.__status = classifierStatus
 globalThis.__normalizeQuestion = normalizeQuestion
+globalThis.__isCountryScoped = isCountryScopedQuestion
 `
 
 async function bundleWebsite(workDir) {
@@ -1293,17 +1296,27 @@ try {
   await browser.send('Page.bringToFront', {}, uk.atsSession)
 
   const linkedLabel = PAGE_ACCEPTED.decision.labelEnumId
+  const formCountry = PAGE_ACCEPTED.input.jobCountry
   let linkedQuestion = null
   for (const question of LINKED_CANDIDATES) {
-    const decision = await run(CLASSIFY({ answerKind: 'text', fieldType: 'TextInput', optionLabels: [], questionText: question }, '_unknown'))
+    const decision = await run(CLASSIFY({ answerKind: 'text', fieldType: 'TextInput', optionLabels: [], questionText: question }, formCountry))
     if (decision.labelEnumId === linkedLabel) {
       linkedQuestion = question
       break
     }
   }
-  check('a stored question links to the accepted field label', linkedQuestion !== null, LINKED_CANDIDATES.join(' / '))
+  check('a stored question links to the accepted field label under the form country', linkedQuestion !== null, `${formCountry}: ${LINKED_CANDIDATES.join(' / ')}`)
+  check(
+    'the reused question is not country-sensitive and the form country differs from the stored one',
+    linkedQuestion !== null &&
+      !(await run(`__isCountryScoped(${JSON.stringify(linkedQuestion)})`)) &&
+      !(await run(`__isCountryScoped(${JSON.stringify(PAGE_ACCEPTED.input.questionText)})`)) &&
+      formCountry !== '_unknown' &&
+      formCountry !== LINKED_STORED_COUNTRY,
+    `${linkedQuestion} / ${formCountry} / ${LINKED_STORED_COUNTRY}`,
+  )
   const now = new Date().toISOString()
-  const answer = async (id, questionText, value) => ({
+  const answer = async (id, questionText, value, jobCountry = null) => ({
     answerKind: 'text',
     answerText: value,
     answerValue: { confidence: 'exact', kind: 'string', value },
@@ -1311,6 +1324,7 @@ try {
     createdAt: now,
     fieldType: 'TextInput',
     id,
+    jobCountry,
     labelEnumId: null,
     lastUsedAt: null,
     normalizedQuestion: await run(`__normalizeQuestion(${JSON.stringify(questionText)})`),
@@ -1326,7 +1340,7 @@ try {
     updatedAt: now,
   })
   const answers = [
-    await answer('smoke-linked', linkedQuestion, LINKED_VALUE),
+    await answer('smoke-linked', linkedQuestion, LINKED_VALUE, LINKED_STORED_COUNTRY),
     await answer('smoke-exact', EXACT_QUESTION, EXACT_VALUE),
     await answer('smoke-overlap', OVERLAP_STORED, OVERLAP_VALUE),
   ]
@@ -1392,6 +1406,7 @@ try {
     .concat(exposure(shownBridge, PAGE_ACCEPTED))
     .concat(shownBridge.filter((message) => message.includes(LINKED_VALUE) || message.includes('classifier.')))
   check('the row, and the page bridge before the click, carry no suggestion or classifier detail', rowLeaks.length === 0, rowLeaks.join(', '))
+  const nativeBeforeFill = await evaluate(browser, uk.atsSession, `({ clicks: window.__nativeClicks, submits: window.__submits })`, 5_000)
   await clickInPicker(uk.atsSession, '[data-tp-suggestion]')
   const filled = await waitFor(
     () => evaluate(browser, uk.atsSession, `document.querySelector('#first').value`, 5_000),
@@ -1408,19 +1423,19 @@ try {
   )
   const closedAfterFill = await pickerClosed(uk.atsSession, 10_000, 'the picker to close after the fill')
   check('clicking the row closes the picker', !closedAfterFill)
-
-  for (const [name, field, item] of [
-    ['an abstention', 'f-links', PAGE_ABSTAINED],
-    ['an accepted label without a saved answer', 'f-portfolio', PAGE_NO_ANSWER],
-  ]) {
-    await seed()
-    await run(BIND(uk.atsTabId, uk.destination, item.input.jobCountry))
-    await openPicker(uk.atsSession, field)
-    const state = await settled()
-    check(`signed in, ${name} shows no row`, state.rows.length === 0, JSON.stringify(state.rows))
-    const visible = exposure(await pageBridge(uk.atsSession), item)
-    check(`signed in, ${name} puts no classifier detail on the page`, visible.length === 0, visible.join(', '))
-  }
+  const nativeAfterFill = await evaluate(browser, uk.atsSession, `({ clicks: window.__nativeClicks, submits: window.__submits })`, 5_000)
+  check(
+    'clicking the row never submits the form or reaches its native controls',
+    nativeAfterFill.submits === 0 && JSON.stringify(nativeAfterFill) === JSON.stringify(nativeBeforeFill),
+    JSON.stringify([nativeBeforeFill, nativeAfterFill]),
+  )
+  const crossCountry = await run(CALL(`return (await chrome.storage.session.get('${ANSWER_LABELS_KEY}'))['${ANSWER_LABELS_KEY}']`))
+  check(
+    `the ${LINKED_STORED_COUNTRY} saved answer was classified with the ${formCountry} form country, not its stored country`,
+    crossCountry?.entries?.['smoke-linked']?.input === `text\u0000field type: TextInput | job country: ${formCountry} | question: ${linkedQuestion}` &&
+      crossCountry.entries['smoke-linked'].labelEnumId === linkedLabel,
+    JSON.stringify(crossCountry?.entries?.['smoke-linked']),
+  )
 
   await seed()
   await run(BIND(uk.atsTabId, uk.destination, PAGE_ACCEPTED.input.jobCountry))
@@ -1443,6 +1458,27 @@ try {
   const reopened = await settled()
   check('reopening the picker shows the row again', reopened.rows.length === 1 && reopened.rows[0].title === LINKED_VALUE, JSON.stringify(reopened.rows))
   check('reopening reuses the stored-answer labels without reclassifying', (await run('window.__labelWrites')) === 0)
+
+  for (const [name, field, item] of [
+    ['an abstention', 'f-links', PAGE_ABSTAINED],
+    ['an accepted label without a saved answer', 'f-portfolio', PAGE_NO_ANSWER],
+  ]) {
+    await seed()
+    await run(BIND(uk.atsTabId, uk.destination, item.input.jobCountry))
+    await openPicker(uk.atsSession, field)
+    const state = await settled()
+    check(`signed in, ${name} shows no row`, state.rows.length === 0, JSON.stringify(state.rows))
+    const visible = exposure(await pageBridge(uk.atsSession), item)
+    check(`signed in, ${name} puts no classifier detail on the page`, visible.length === 0, visible.join(', '))
+  }
+
+  const otherCountry = await run(CALL(`return (await chrome.storage.session.get('${ANSWER_LABELS_KEY}'))['${ANSWER_LABELS_KEY}']`))
+  check(
+    `a form in another country (${PAGE_NO_ANSWER.input.jobCountry}) reclassifies the saved answer without a new revision`,
+    otherCountry?.entries?.['smoke-linked']?.input === `text\u0000field type: TextInput | job country: ${PAGE_NO_ANSWER.input.jobCountry} | question: ${linkedQuestion}` &&
+      otherCountry.entries['smoke-linked'].revision === now,
+    JSON.stringify(otherCountry?.entries?.['smoke-linked']),
+  )
 
   const storedTokens = await run(CALL(`return (await chrome.storage.local.get('${TOKENS_KEY}'))['${TOKENS_KEY}']`))
   check('the synthetic tokens were never refreshed', JSON.stringify(storedTokens) === JSON.stringify(TOKENS))

@@ -29,12 +29,12 @@ export const createAnswerLabels =
     storage: AnswerLabelStorage,
     classify: (requests: ClassifyRequest[]) => Promise<Classification>,
   ) =>
-  async (answers: TalentAnswer[], runtimeId: string): Promise<Map<string, string | null>> => {
+  async (answers: TalentAnswer[], runtimeId: string, jobCountry: string): Promise<Map<string, string | null>> => {
     const stored = (await storage.get(ANSWER_LABELS_KEY))[ANSWER_LABELS_KEY]
     const entries: Record<string, Entry> =
       isCache(stored) && stored.runtimeId === runtimeId ? { ...stored.entries } : {}
     const keyed = answers.map((answer) => {
-      const request = answerClassifierRequest(answer)
+      const request = answerClassifierRequest(answer, jobCountry)
       return { answer, input: classifierInputKey(request), request }
     })
     const missing = keyed.filter(({ answer, input }) => {

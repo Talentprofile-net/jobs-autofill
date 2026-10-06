@@ -21,8 +21,8 @@ const request = { answerKind: 'text', fieldType: 'TextInput', optionLabels: [], 
 const recording = (enabled: boolean, over: Partial<SuggestionServiceDependencies> = {}) => {
   const called: string[] = []
   const dependencies: SuggestionServiceDependencies = {
-    answerLabels: async (answers) => {
-      called.push('answerLabels')
+    answerLabels: async (answers, _runtimeId, jobCountry) => {
+      called.push(`answerLabels:${jobCountry}`)
       return new Map(answers.map((answer) => [answer.id, 'label-education']))
     },
     answers: async () => {
@@ -78,7 +78,7 @@ describe('suggestion service', () => {
     ])
     expect(called).toContain('jobCountry:7')
     expect(called).toContain('classify')
-    expect(called).toContain('answerLabels')
+    expect(called).toContain('answerLabels:DE')
   })
 
   it('never loads label names or starts the classifier for an exact question match', async () => {
@@ -88,7 +88,7 @@ describe('suggestion service', () => {
     const result = await suggest(request, 7)
 
     expect(result.status).toBe('matched')
-    expect(called.filter((name) => ['labelNames', 'classify', 'answerLabels'].includes(name))).toEqual([])
+    expect(called.filter((name) => ['labelNames', 'classify'].includes(name) || name.startsWith('answerLabels'))).toEqual([])
   })
 
   it('answers disabled and releases the model when the switch turns off mid-request', async () => {
@@ -158,7 +158,10 @@ describe('suggestion service', () => {
       sentinel,
       { confidence: 'guess', kind: 'string', value: sentinel },
     ])
-    expect(classified.flat().map((item) => item.input.questionText)).toEqual(['Education', 'Highest degree obtained'])
+    expect(classified.flat().map((item) => [item.input.questionText, item.input.jobCountry])).toEqual([
+      ['Education', 'DE'],
+      ['Highest degree obtained', 'DE'],
+    ])
     expect(JSON.stringify(classified)).not.toContain(sentinel)
     expect(JSON.stringify(stored)).not.toContain(sentinel)
   })
