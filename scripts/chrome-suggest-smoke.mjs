@@ -483,6 +483,7 @@ const PICKER_HOOK = `if (location.protocol === 'chrome-extension:' && !globalThi
   globalThis.__suggestSends = 0
   globalThis.__suggestDone = 0
   globalThis.__suggestGeneration = 0
+  globalThis.__suggestResults = []
   const watchActivation = () =>
     new MutationObserver(() => {
       if (document.documentElement.getAttribute('data-tp-active') === 'true') return
@@ -499,7 +500,10 @@ const PICKER_HOOK = `if (location.protocol === 'chrome-extension:' && !globalThi
     const generation = globalThis.__suggestGeneration
     if (suggest) globalThis.__suggestSends += 1
     const result = original(...args)
-    if (suggest) Promise.resolve(result).then(() => {}, () => {}).then(() => {
+    if (suggest) Promise.resolve(result).then(
+      (value) => { globalThis.__suggestResults.push(JSON.stringify(value).slice(0, 600)) },
+      (error) => { globalThis.__suggestResults.push('rejected: ' + String(error)) },
+    ).then(() => {
       if (generation === globalThis.__suggestGeneration) globalThis.__suggestDone += 1
     })
     return result
@@ -531,6 +535,7 @@ const PICKER_STATE = CALL(`const rows = [...document.querySelectorAll('[data-tp-
       sends: globalThis.__suggestSends ?? -1,
       done: globalThis.__suggestDone ?? -1,
       generation: globalThis.__suggestGeneration ?? -1,
+      results: (globalThis.__suggestResults ?? []).slice(-3),
       open: true,
       title: document.querySelector('.title')?.textContent?.trim() ?? null,
       signIn: Boolean(document.querySelector('.signin')),
@@ -943,6 +948,8 @@ try {
     JSON.stringify(recreated),
   )
   report.push(`deliberate close from ${closing.caller.script}: closed at ${closing.closedAt} ms, rejected at ${closing.ms} ms`)
+  await run(CALL('await __closeClassifier(); return true'))
+  await waitFor(offscreenCount, (count) => count === 0, 10_000, 'the offscreen document to close for the popup harness')
 
   await run(SET_SWITCH(false))
   await waitFor(offscreenCount, (count) => count === 0, 10_000, 'the offscreen document to close')
@@ -1448,7 +1455,7 @@ try {
   report.push(`picker cold suggestion, service worker stopped while the model loaded (${pickerStopped}): ${Date.now() - coldStarted} ms, ${pickerSends} sends`)
   check('the service worker was stopped during the picker cold load', pickerStopped !== 'no worker running', pickerStopped)
   check('the picker request was retried exactly once', pickerSends === 2, `sends ${pickerSends}`)
-  check('an accepted label with a saved answer shows exactly one row', shown.rows.length === 1, JSON.stringify(shown.rows))
+  check('an accepted label with a saved answer shows exactly one row', shown.rows.length === 1, JSON.stringify({ results: shown.results, rows: shown.rows }))
   check(
     'the row holds only the saved answer and Suggested answer',
     shown.rows[0]?.title === LINKED_VALUE &&
