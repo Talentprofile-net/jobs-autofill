@@ -15,6 +15,7 @@ export type SuggestionServiceDependencies = {
   release: () => Promise<void>
   classify: SuggestionDependencies['classify']
   answerLabels: SuggestionDependencies['answerLabels']
+  standardValue: SuggestionDependencies['standardValue']
 }
 
 const suggestSafely = async (
@@ -28,6 +29,7 @@ const suggestSafely = async (
       answerLabels: dependencies.answerLabels,
       classify: dependencies.classify,
       labelName: async (labelEnumId) => (await dependencies.labelNames()).get(labelEnumId) ?? labelEnumId,
+      standardValue: dependencies.standardValue,
     })
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error), status: 'unavailable' }

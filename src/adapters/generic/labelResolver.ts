@@ -172,6 +172,16 @@ const placeholderOrName = (input: HTMLElement): string => {
   return ''
 }
 
+export const associatedLabels = (input: HTMLElement): string[] =>
+  [
+    labelByFor(input),
+    wrappingLabel(input),
+    labelByAriaLabelledby(input),
+    ariaLabel(input),
+    shadowHostLabel(input),
+    closestLegend(input),
+  ].filter((text) => text.length > 0)
+
 export const resolveFieldLabel = (input: HTMLElement): string => {
   return (
     labelByFor(input) ||

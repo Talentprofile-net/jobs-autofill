@@ -46,6 +46,10 @@ const recording = (enabled: boolean, over: Partial<SuggestionServiceDependencies
     release: async () => {
       called.push('release')
     },
+    standardValue: async (field, fieldType) => {
+      called.push(`standardValue:${field}:${fieldType}`)
+      return { confidence: 'exact', kind: 'string', value: 'Audit' }
+    },
     ...over,
   }
   return { called, suggest: createSuggestionService(dependencies) }
@@ -110,6 +114,28 @@ describe('suggestion service', () => {
 
     expect(result.status).toBe('matched')
     expect(called.filter((name) => ['labelNames', 'classify'].includes(name) || name.startsWith('answerLabels'))).toEqual([])
+  })
+
+  it('suggests a standard field from the profile without labels or the classifier', async () => {
+    const { called, suggest } = recording(true)
+    const result = await suggest({ ...request, questionText: 'Vorname', standardField: 'given-name' }, 7)
+
+    expect(result).toEqual({
+      method: 'dom_standard',
+      standardField: 'given-name',
+      status: 'standard',
+      value: { confidence: 'exact', kind: 'string', value: 'Audit' },
+    })
+    expect(called).toContain('standardValue:given-name:TextInput')
+    expect(called.filter((name) => ['labelNames', 'classify'].includes(name) || name.startsWith('answerLabels'))).toEqual([])
+  })
+
+  it('never reads a standard value for a request without a standard field', async () => {
+    const { called, suggest } = recording(true)
+    await suggest(request, 7)
+
+    expect(called.filter((name) => name.startsWith('standardValue'))).toEqual([])
+    expect(called).toContain('classify')
   })
 
   it('answers disabled and releases the model when the switch turns off mid-request', async () => {

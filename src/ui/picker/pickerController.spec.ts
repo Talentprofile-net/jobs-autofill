@@ -124,6 +124,10 @@ const fieldUuidOf = (activation: string | null) => {
   const id = response.data.descriptor.fieldUuid
   return typeof id === 'string' ? id : null
 }
+const contextOf = (activation: string | null) => {
+  const response = relay(activation, { type: 'context' })
+  return isRecord(response) && isRecord(response.data) ? response.data : null
+}
 const press = (key: string) => {
   const event = new window.Event('keydown', { bubbles: true })
   Object.defineProperty(event, 'key', { value: key })
@@ -371,6 +375,29 @@ describe('persistent picker frame', () => {
     expect(handlePickerAction('another-frame', activation, { type: 'dismiss' }, fillField)).toBeNull()
     expect(handlePickerAction('another-frame', null, { type: 'ready' }, fillField)).toBeNull()
     expect(isPickerOpen()).toBe(true)
+  })
+
+  it('carries each reopened field's standard field through the reused frame and fills nothing by itself', () => {
+    document.getElementById('first')?.setAttribute('autocomplete', 'given-name')
+    document.getElementById('second')?.setAttribute('name', 'email')
+    openPicker(fieldTarget('first'))
+    ready()
+    const first = lastActivation()
+    expect(contextOf(first)?.standardField).toBe('given-name')
+    closePicker()
+    openPicker(fieldTarget('second'))
+    const second = lastActivation()
+    expect(frames()).toHaveLength(1)
+    expect(contextOf(second)?.standardField).toBe('email')
+    expect(contextOf(first)).toBeNull()
+    expect(inserted).toEqual([])
+    expect(fills).toEqual([])
+  })
+
+  it('sends no standard field for a field without standard evidence', () => {
+    openPicker(fieldTarget('first'))
+    ready()
+    expect(contextOf(lastActivation())?.standardField).toBeNull()
   })
 
   it('never inserts or fills without a user action from the picker', () => {

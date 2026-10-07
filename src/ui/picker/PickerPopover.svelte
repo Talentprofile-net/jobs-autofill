@@ -120,7 +120,11 @@
 
   const loadSuggestion = () =>
     suggestionLoader.load(ctx.fieldUuid, () =>
-      suggestionRequestFor({ ...ctx, optionLabels: context.optionLabels }),
+      suggestionRequestFor({
+        ...ctx,
+        optionLabels: context.optionLabels,
+        standardField: context.standardField,
+      }),
     )
 
   const applySuggestion = async () => {

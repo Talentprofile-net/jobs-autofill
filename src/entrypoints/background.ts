@@ -2136,9 +2136,8 @@ export default defineBackground(() => {
           applicationContextStorage,
           async () =>
             (await ensureAuthenticated())
-              ? ((await getProfile(false).catch(() => null))?.talentAnswers ??
-                [])
-              : [],
+              ? await getProfile(false).catch(() => null)
+              : null,
         );
         return {
           ok: true,

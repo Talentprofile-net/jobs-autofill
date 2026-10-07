@@ -12,6 +12,7 @@ import type { ProfileValue } from "~/field/types";
 import { readOptionLabels } from "~/capture/optionLabels";
 import { findIconDonor, readDonorAppearance } from "~/ui/donorStyle";
 import { insertIntoField } from "./insertion";
+import { readStandardField } from "./standardField";
 import {
   PICKER_PAGE,
   type PickerAction,
@@ -210,11 +211,13 @@ const frameLayout = (anchor: FrameAnchor) => {
 export const openPicker = (target: PickerTarget): void => {
   closePicker();
   const layout = frameLayout(target);
+  const optionLabels = readOptionLabels(target.field);
   const context: PickerFieldContext = {
     ...layout,
     descriptor: target.descriptor,
     kind: "field",
-    optionLabels: readOptionLabels(target.field),
+    optionLabels,
+    standardField: readStandardField(target.field, target.descriptor, optionLabels),
     storageKey: storageKeyFor(),
   };
   showFrame({ anchor: target, context, onConfirm: null, onDismiss: null, target, title: "Insert from TalentProfile" });

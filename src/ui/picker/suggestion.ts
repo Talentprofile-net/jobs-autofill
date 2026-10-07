@@ -1,6 +1,7 @@
 import { toCorpusAnswerKind, toCorpusFieldType } from '~/capture/corpusVocabulary'
 import type { SuggestionRequest } from '~/classifier/suggest'
 import type { SuggestionRow } from '~/classifier/suggestClient'
+import type { StandardField } from '~/resolver/standardField'
 
 export type FieldSuggestion = { fieldUuid: string; row: SuggestionRow }
 
@@ -8,9 +9,10 @@ export const suggestionRequestFor = (ctx: {
   fieldName: string
   fieldType: string
   optionLabels: string[] | null
+  standardField: StandardField | null
 }): SuggestionRequest => {
   const optionLabels = ctx.optionLabels
-  return {
+  const request: SuggestionRequest = {
     answerKind: toCorpusAnswerKind(toCorpusFieldType(ctx.fieldType), optionLabels, {
       kind: 'unsupported',
     }),
@@ -18,6 +20,7 @@ export const suggestionRequestFor = (ctx: {
     optionLabels: optionLabels ?? [],
     questionText: ctx.fieldName,
   }
+  return ctx.standardField ? { ...request, standardField: ctx.standardField } : request
 }
 
 export const createSuggestionLoader = (

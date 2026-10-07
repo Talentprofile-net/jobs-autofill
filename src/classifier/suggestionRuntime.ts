@@ -1,7 +1,8 @@
 import { browser } from 'wxt/browser'
 
-import type { TalentAnswer } from '~/api/types'
+import type { Profile } from '~/api/types'
 import type { ApplicationContextStorage } from '~/capture/applicationContext'
+import { standardFieldValue } from '~/resolver/standardFieldValue'
 import { createAnswerLabels } from './answerLabels'
 import { tabJobCountry } from '~/capture/tabJobCountry'
 import { classifyWithRuntime, closeOffscreenDocument } from './offscreenClient'
@@ -43,14 +44,18 @@ const answerLabels = createAnswerLabels(
 
 export const browserSuggestionService = (
   contextStorage: ApplicationContextStorage,
-  answers: () => Promise<TalentAnswer[]>,
+  profile: () => Promise<Profile | null>,
 ) =>
   createSuggestionService({
     answerLabels,
-    answers,
+    answers: async () => (await profile())?.talentAnswers ?? [],
     classify: classifyWithRuntime,
     enabled: () => readClassifierSuggestions(browser.storage.local),
     jobCountry: (tabId) => tabJobCountry(contextStorage, tabId),
     labelNames: loadLabelNames,
     release: closeOffscreenDocument,
+    standardValue: async (field, fieldType) => {
+      const current = await profile()
+      return current ? standardFieldValue(field, fieldType, current) : null
+    },
   })

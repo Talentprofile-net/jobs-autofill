@@ -10,6 +10,7 @@ import {
   type SuggestionDependencies,
 } from './suggest'
 import { talentAnswer } from './testAnswers'
+import type { ProfileValue } from '~/field/types'
 
 const decision = (over: Partial<Decision> = {}): Decision => ({
   abstentionReason: null,
@@ -51,6 +52,7 @@ const dependencies = (
     },
     labelName: async (id) => `name:${id}`,
     runtimes,
+    standardValue: async () => null,
   }
 }
 
@@ -121,6 +123,7 @@ describe('classifier suggestions', () => {
       ),
       classify,
       labelName: async (id) => `name:${id}`,
+      standardValue: async () => null,
     })
 
     expect(calls.map((call) => call.map((item) => [item.input.questionText, item.input.jobCountry]))).toEqual([
@@ -265,8 +268,98 @@ describe('classifier suggestions', () => {
   })
 })
 
+describe('standard field suggestions', () => {
+  const email: ProfileValue = { confidence: 'exact', kind: 'string', value: 'audit.tester@example.invalid' }
+  const standardRequest = { ...request, questionText: 'E-Mail', standardField: 'email' as const }
+  const withStandard = (value: ProfileValue | null) => {
+    const deps = dependencies(decision(), { 'answer-1': 'label-education' })
+    const asked: string[] = []
+    return {
+      asked,
+      deps: {
+        ...deps,
+        standardValue: async (field: string, fieldType: string) => {
+          asked.push(`${field}:${fieldType}`)
+          return value
+        },
+      },
+    }
+  }
+
+  it('suggests the profile value for a standard field before the classifier', async () => {
+    const { asked, deps } = withStandard(email)
+    const result = await suggestAnswer(standardRequest, [talentAnswer()], 'DE', deps)
+
+    expect(result).toEqual({ method: 'dom_standard', standardField: 'email', status: 'standard', value: email })
+    expect(asked).toEqual(['email:TextInput'])
+    expect(deps.calls).toHaveLength(0)
+    expect(deps.runtimes).toHaveLength(0)
+  })
+
+  it('lets an exact question match win over the standard field', async () => {
+    const { asked, deps } = withStandard(email)
+    const answer = talentAnswer({ normalizedQuestion: 'e-mail', questionText: 'E-Mail' })
+    const result = await suggestAnswer(standardRequest, [answer], 'DE', deps)
+
+    expect(result.status === 'matched' ? result.method : result.status).toBe('normalized_text')
+    expect(asked).toEqual([])
+  })
+
+  it('lets a word-overlap match win over the standard field', async () => {
+    const { asked, deps } = withStandard(email)
+    const answer = talentAnswer({
+      normalizedQuestion: 'personal-contact-email-address-for-recruiters',
+      questionText: 'Personal contact email address for recruiters',
+    })
+    const result = await suggestAnswer(
+      { ...standardRequest, questionText: 'Personal contact email address (recruiters)' },
+      [answer],
+      'DE',
+      deps,
+    )
+
+    expect(result.status === 'matched' ? result.method : result.status).toBe('jaccard')
+    expect(asked).toEqual([])
+  })
+
+  it('falls back to the classifier when the profile has no usable value', async () => {
+    for (const value of [null, { confidence: 'exact', kind: 'string', value: '  ' } as const]) {
+      const { asked, deps } = withStandard(value)
+      const result = await suggestAnswer(standardRequest, [talentAnswer()], 'DE', deps)
+
+      expect(asked).toEqual(['email:TextInput'])
+      expect(deps.calls).toHaveLength(1)
+      expect(result.status).toBe('classified')
+    }
+  })
+
+  it('falls back to the classifier when the page sent no standard field', async () => {
+    const { asked, deps } = withStandard(email)
+    const result = await suggestAnswer(request, [talentAnswer()], 'DE', deps)
+
+    expect(asked).toEqual([])
+    expect(deps.calls).toHaveLength(1)
+    expect(result.status).toBe('classified')
+  })
+
+  it('never uses a standard field on a sensitive or third-party question', async () => {
+    for (const questionText of ['Referrer email', 'Expected salary', 'Do you require visa sponsorship?', 'Gender']) {
+      const { asked, deps } = withStandard(email)
+      const result = await suggestAnswer({ ...standardRequest, questionText }, [talentAnswer()], 'DE', deps)
+
+      expect(asked).toEqual([])
+      expect(result.status === 'standard').toBe(false)
+    }
+  })
+})
+
 describe('suggestion request from the page', () => {
   const valid = { answerKind: 'choice', fieldType: 'SimpleDropdown', optionLabels: ['Yes', 'No'], questionText: 'Q' }
+
+  it('keeps a listed standard field', () => {
+    expect(readSuggestionRequest({ ...valid, standardField: 'country' })).toEqual({ ...valid, standardField: 'country' })
+    expect(readSuggestionRequest({ ...valid, standardField: null })).toEqual(valid)
+  })
 
   it('keeps a well-formed request and drops every other key', () => {
     expect(readSuggestionRequest({ ...valid, __proto__: { polluted: true }, extra: 'x' })).toEqual(valid)
@@ -285,6 +378,8 @@ describe('suggestion request from the page', () => {
     ['options that are not a list', { ...valid, optionLabels: 'Yes / No' }],
     ['an option that is not text', { ...valid, optionLabels: ['Yes', 1] }],
     ['an oversized option', { ...valid, optionLabels: ['x'.repeat(SUGGESTION_REQUEST_LIMITS.optionLabel + 1)] }],
+    ['an unlisted standard field', { ...valid, standardField: 'url' }],
+    ['a standard field that is not text', { ...valid, standardField: 1 }],
     ['too many options', { ...valid, optionLabels: Array.from({ length: SUGGESTION_REQUEST_LIMITS.optionLabels + 1 }, () => 'o') }],
   ])('rejects %s', (_, raw) => {
     expect(readSuggestionRequest(raw)).toBeNull()
@@ -359,6 +454,7 @@ describe('bounded stored-answer scheduling in a suggestion', () => {
       ),
       classify,
       labelName: async (id) => `name:${id}`,
+      standardValue: async () => null,
     })
     return { calls, chosen: result.status === 'classified' ? (result.answer?.id ?? null) : `status ${result.status}` }
   }

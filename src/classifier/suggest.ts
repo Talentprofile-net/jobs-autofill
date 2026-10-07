@@ -9,12 +9,14 @@ import {
 } from '~/resolver/learnedAnswerMatcher'
 import type { AbstentionReason, AnswerKind, ClassifierInput, Decision } from './contract'
 import { answersForJob } from '~/resolver/countryScopedAnswers'
+import { isRefusedQuestion, isStandardField, type StandardField } from '~/resolver/standardField'
 
 export type SuggestionRequest = {
   questionText: string
   fieldType: string
   optionLabels: string[]
   answerKind: AnswerKind
+  standardField?: StandardField
 }
 
 export type SuggestedAnswer = {
@@ -30,6 +32,12 @@ export type Suggestion =
       status: 'matched'
       method: 'normalized_text' | 'jaccard'
       answer: SuggestedAnswer
+      value: ProfileValue
+    }
+  | {
+      status: 'standard'
+      method: 'dom_standard'
+      standardField: StandardField
       value: ProfileValue
     }
   | {
@@ -60,6 +68,7 @@ export type Classification = { decisions: Decision[]; runtimeId: string }
 export type SuggestionDependencies = {
   classify: (requests: ClassifyRequest[]) => Promise<Classification>
   labelName: (labelEnumId: string) => Promise<string>
+  standardValue: (field: StandardField, fieldType: string) => Promise<ProfileValue | null>
   answerLabels: (
     answers: TalentAnswer[],
     runtimeId: string,
@@ -122,7 +131,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export const readSuggestionRequest = (value: unknown): SuggestionRequest | null => {
   if (!isRecord(value)) return null
-  const { answerKind, fieldType, optionLabels, questionText } = value
+  const { answerKind, fieldType, optionLabels, questionText, standardField } = value
   const limits = SUGGESTION_REQUEST_LIMITS
   if (typeof answerKind !== 'string' || !isAnswerKind(answerKind)) return null
   if (typeof fieldType !== 'string' || fieldType.length === 0 || fieldType.length > limits.fieldType) {
@@ -138,7 +147,9 @@ export const readSuggestionRequest = (value: unknown): SuggestionRequest | null 
     if (optionText > limits.optionText) return null
     labels.push(label)
   }
-  return { answerKind, fieldType, optionLabels: labels, questionText }
+  if (standardField !== undefined && standardField !== null && !isStandardField(standardField)) return null
+  const request: SuggestionRequest = { answerKind, fieldType, optionLabels: labels, questionText }
+  return isStandardField(standardField) ? { ...request, standardField } : request
 }
 
 export const answerClassifierRequest = (answer: TalentAnswer, jobCountry: string): ClassifyRequest | null =>
@@ -167,6 +178,11 @@ export const suggestAnswer = async (
     if (isUsableValue(value)) {
       return { answer: summary(match.answer), method: match.method, status: 'matched', value }
     }
+  }
+  const standardField = request.standardField
+  if (standardField && !isRefusedQuestion(request.questionText)) {
+    const value = await dependencies.standardValue(standardField, request.fieldType)
+    if (value && isUsableValue(value)) return { method: 'dom_standard', standardField, status: 'standard', value }
   }
   const classification = await dependencies.classify([
     {

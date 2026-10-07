@@ -44,8 +44,19 @@ its own. The fill and capture paths do not call it.
   characters (empty is allowed), at most 60 `optionLabels` (the DOM extractor's
   `MAX_OPTIONS`), each at most 4,096 characters, and at most 65,536 option
   characters in total. Anything else is dropped before classification.
-- Order: exact question slug, then word overlap, then the classifier.
-- Exact and word-overlap matches never load label names or start the model.
+- Order: exact question slug, then word overlap, then a standard field, then
+  the classifier.
+- Standard field: the content script reads the field's own control when the
+  picker opens (`ui/picker/standardField.ts`). Only an exact `autocomplete`
+  token or an exact `name` or `id` resolves it; labels, legends, ARIA text and
+  the input type can only confirm or refuse it (`resolver/standardField.ts`).
+  The background fills the row from the profile through `resolveField`
+  (`resolver/standardFieldValue.ts`). Consent, terms, EEO, disability,
+  veteran, work authorization, sponsorship, export control, background,
+  salary, availability, notice period and third-party fields are refused, and
+  the classifier still runs for them.
+- Exact, word-overlap and standard-field matches never load label names or
+  start the model.
 - Answer link: each candidate stored answer is classified with the current
   form's job country, the same value the live field uses. It never uses the
   answer's own stored `jobCountry`. It has no option labels and keeps its own

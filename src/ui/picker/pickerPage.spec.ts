@@ -34,6 +34,7 @@ const fieldContext = (fieldName: string): PickerContextData => ({
   maxHeight: 320,
   mobile: false,
   optionLabels: null,
+  standardField: null,
   storageKey: 'tp.picker.path.test',
 })
 

@@ -38,6 +38,7 @@ const row = (answerText: string | null, value: ProfileValue): SuggestionRow | nu
 
 export const describeSuggestion = (suggestion: Suggestion | null): SuggestionRow | null => {
   if (suggestion?.status === 'matched') return row(suggestion.answer.answerText, suggestion.value)
+  if (suggestion?.status === 'standard') return row(null, suggestion.value)
   if (suggestion?.status === 'classified' && suggestion.answer && suggestion.value) {
     return row(suggestion.answer.answerText, suggestion.value)
   }

@@ -1,6 +1,7 @@
 import type { FieldDescriptor } from '~/bridge/types'
 import type { ProfileValue } from '~/field/types'
 import type { DonorAppearance } from '~/ui/donorStyle'
+import type { StandardField } from '~/resolver/standardField'
 
 export const PICKER_PAGE = '/picker.html'
 
@@ -8,6 +9,7 @@ export type PickerFieldContext = {
   kind: 'field'
   descriptor: FieldDescriptor
   optionLabels: string[] | null
+  standardField: StandardField | null
   mobile: boolean
   appearance: DonorAppearance | null
   storageKey: string

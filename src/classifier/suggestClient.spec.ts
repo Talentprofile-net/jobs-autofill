@@ -172,6 +172,15 @@ describe('picker suggestion row', () => {
     expect(describeSuggestion(classified({ answer: { ...answer, answerText: ' ' }, value: empty }))).toBeNull()
   })
 
+  it('shows a standard field value titled by the value it fills', () => {
+    const email = { confidence: 'exact' as const, kind: 'string' as const, value: 'audit.tester@example.invalid' }
+    expect(describeSuggestion({ method: 'dom_standard', standardField: 'email', status: 'standard', value: email })).toEqual({
+      title: 'audit.tester@example.invalid',
+      value: email,
+    })
+    expect(describeSuggestion({ method: 'dom_standard', standardField: 'email', status: 'standard', value: { ...email, value: ' ' } })).toBeNull()
+  })
+
   it('shows a saved answer found by question text', () => {
     expect(describeSuggestion({ answer, method: 'jaccard', status: 'matched', value })).toEqual({
       title: 'MSc',
