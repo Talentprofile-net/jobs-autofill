@@ -140,7 +140,13 @@ beforeEach(() => {
   installDom(`<html><body>
     <input id="first"><input id="second"><button id="elsewhere">x</button>
   </body></html>`)
-  Object.assign(window, { innerHeight: 800, matchMedia: () => ({ matches: mobile }) })
+  Object.assign(window, {
+    getComputedStyle: () => ({ direction: 'ltr', display: 'block', position: 'static', visibility: 'visible' }),
+    innerHeight: 800,
+    matchMedia: () => ({ matches: mobile }),
+    scrollX: 0,
+    scrollY: 0,
+  })
   Object.defineProperty(globalThis, 'location', {
     configurable: true,
     value: new URL('https://job-boards.greenhouse.io/smoke/jobs/1'),
@@ -377,7 +383,7 @@ describe('persistent picker frame', () => {
     expect(isPickerOpen()).toBe(true)
   })
 
-  it('carries each reopened field's standard field through the reused frame and fills nothing by itself', () => {
+  it('carries the standard field of each reopened field through the reused frame and fills nothing by itself', () => {
     document.getElementById('first')?.setAttribute('autocomplete', 'given-name')
     document.getElementById('second')?.setAttribute('name', 'email')
     openPicker(fieldTarget('first'))

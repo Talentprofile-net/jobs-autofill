@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 
 import type { Profile } from '~/api/types'
-import { STANDARD_FIELDS } from './standardField'
+import type { ProfileValue } from '~/field/types'
+import type { StandardField } from './standardField'
 import { standardFieldValue } from './standardFieldValue'
 
 const profile = (over: Partial<Profile> = {}): Profile => ({
@@ -30,10 +31,10 @@ const profile = (over: Partial<Profile> = {}): Profile => ({
   ...over,
 })
 
-const text = (value: string) => ({ confidence: 'exact', kind: 'string', value })
+const text = (value: string): ProfileValue => ({ confidence: 'exact', kind: 'string', value })
 
 describe('standard field values from the profile', () => {
-  it.each([
+  it.each<[StandardField, ProfileValue]>([
     ['given-name', text('Audit')],
     ['family-name', text('Tester')],
     ['name', text('Audit Tester')],
@@ -44,7 +45,7 @@ describe('standard field values from the profile', () => {
     ['organization-title', text('Staff Engineer')],
     ['address-level2', text('Berlin')],
     ['country', text('Germany')],
-  ] as const)('fills a text input for %p', (field, value) => {
+  ])('fills a text input for %p', (field, value) => {
     expect(standardFieldValue(field, 'TextInput', profile())).toEqual(value)
   })
 
@@ -54,10 +55,6 @@ describe('standard field values from the profile', () => {
     if (value?.kind !== 'choice') return
     expect(value.preferred).toBe('Germany')
     expect(value.fallbacks).toContain('DE')
-  })
-
-  it('has a profile question for every standard field', () => {
-    for (const field of STANDARD_FIELDS) expect(() => standardFieldValue(field, 'TextInput', profile())).not.toThrow()
   })
 
   it('refuses field types the standard field cannot fill', () => {

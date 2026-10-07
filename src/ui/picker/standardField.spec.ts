@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
-import { parseHTML } from 'linkedom'
 
 import { installDom, setRect } from '~/core/__fixtures__/domGlobals'
 import { readStandardField } from './standardField'
@@ -10,13 +9,22 @@ const shown = (el: Element | null): HTMLElement => {
   return el
 }
 
+const realm = (html: string) => {
+  const dom = installDom(html)
+  Object.assign(dom.window, {
+    getComputedStyle: () => ({ direction: 'ltr', display: 'block', position: 'static', visibility: 'visible' }),
+    scrollX: 0,
+    scrollY: 0,
+  })
+}
+
 const byId = (id: string): HTMLElement => shown(document.getElementById(id))
 
 const read = (id: string, fieldName = '', options: string[] | null = null, section = '') =>
   readStandardField(byId(id), { fieldName, section }, options)
 
 beforeEach(() => {
-  installDom(`<html><body><form>
+  realm(`<html><body><form>
     <div id="wrap-first" class="field"><label for="first">Vorname</label><input id="first" type="text" autocomplete="given-name"></div>
     <div id="wrap-email"><label>E-Mail <input id="email" type="email" name="job_application[email]"></label></div>
     <input id="aria" aria-labelledby="aria-label" autocomplete="family-name"><span id="aria-label">Last name</span>
@@ -115,15 +123,13 @@ describe('reading standard field evidence from the DOM', () => {
     expect(readStandardField(host, { fieldName: 'Email', section: '' }, null)).toBe('email')
   })
 
-  it('reads a field in another frame document from its own document only', () => {
-    const inner = parseHTML(
-      '<html><body><label for="f">Referrer email</label><input id="f" type="email" name="email"><input id="g" autocomplete="tel"></body></html>',
-    ).document
-    const referrer = shown(inner.getElementById('f'))
-    const phone = shown(inner.getElementById('g'))
-    expect(readStandardField(referrer, { fieldName: '', section: '' }, null)).toBeNull()
-    expect(readStandardField(phone, { fieldName: '', section: '' }, null)).toBe('tel')
+  it('reads each frame from the document of its own content script', () => {
     expect(read('first')).toBe('given-name')
+    realm(
+      '<html><body><label for="first">Referrer first name</label><input id="first" autocomplete="given-name"><input id="g" autocomplete="tel"></body></html>',
+    )
+    expect(read('first')).toBeNull()
+    expect(read('g')).toBe('tel')
   })
 
   it('never changes the field it reads', () => {
