@@ -359,6 +359,9 @@ class Session {
   }
 }
 
+const CDP_NOT_READY = /wasn't found|No session with given id|Session with given id not found|No target with given id|Target closed|Cannot find context with specified id|Execution context was destroyed|Inspected target navigated or closed|Cannot find default execution context/
+const cdpNotReady = (error) => CDP_NOT_READY.test(error instanceof Error ? error.message : String(error))
+
 async function evaluate(session, sessionId, expression, timeoutMs = TIMEOUT_MS, extra = {}) {
   let timer
   const result = await Promise.race([
@@ -620,6 +623,10 @@ try {
   const apiState = { answers: [], notes: [], profile: null }
   const contexts = new Map()
   const workerStates = []
+  const sessionReady = new Map()
+  const targetLog = new Map()
+  const setupRetries = []
+  const setupErrors = []
 
   browser.on(async (message) => {
     if (message.method === 'Inspector.targetCrashed') {
@@ -727,12 +734,24 @@ try {
       } catch {}
       return
     }
+    if (message.method === 'Target.detachedFromTarget') {
+      const { sessionId: detached, targetId } = message.params
+      if (autoSessions.get(targetId) === detached) autoSessions.delete(targetId)
+      sessionTypes.delete(detached)
+      sessionReady.delete(detached)
+      return
+    }
     if (message.method !== 'Target.attachedToTarget') return
     const { sessionId, targetInfo, waitingForDebugger } = message.params
     if (autoSessions.has(targetInfo.targetId)) return
     autoSessions.set(targetInfo.targetId, sessionId)
+    let settle = () => {}
+    sessionReady.set(sessionId, new Promise((done) => {
+      settle = done
+    }))
     if (targetInfo.type === 'iframe') pickerParents.set(targetInfo.targetId, message.sessionId ?? null)
     sessionTypes.set(sessionId, targetInfo.type)
+    let setupError = null
     try {
       await browser.send('Network.enable', {}, sessionId)
       if (targetInfo.type === 'page') {
@@ -745,13 +764,70 @@ try {
         await browser.send('Page.enable', {}, sessionId)
         await browser.send('Page.addScriptToEvaluateOnNewDocument', { source: PICKER_HOOK }, sessionId)
       }
-    } catch {}
-    if (waitingForDebugger) await browser.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {})
+    } catch (error) {
+      setupError = `domain setup: ${error.message}`
+    }
+    if (waitingForDebugger) {
+      await browser.send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch((error) => {
+        setupError = [setupError, `resume: ${error.message}`].filter(Boolean).join('; ')
+      })
+    }
+    if (setupError) setupErrors.push({ error: setupError, type: targetInfo.type, url: targetInfo.url.replace(/^chrome-extension:\/\/[a-p]+/, '') })
+    settle(setupError ? { error: setupError, ok: false } : { ok: true })
   })
+  browser.on((message) => {
+    if (message.sessionId) return
+    if (message.method === 'Target.targetCreated' || message.method === 'Target.targetInfoChanged') {
+      const info = message.params.targetInfo
+      targetLog.set(info.targetId, { destroyed: false, type: info.type, url: info.url })
+    }
+    if (message.method === 'Target.targetDestroyed') {
+      const known = targetLog.get(message.params.targetId)
+      if (known) known.destroyed = true
+    }
+  })
+  await browser.send('Target.setDiscoverTargets', { discover: true })
   await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true })
 
-  const attach = async (targetId) =>
-    (await browser.send('Target.attachToTarget', { flatten: true, targetId })).sessionId
+  const liveTarget = (test) => [...targetLog.entries()].find(([, info]) => !info.destroyed && test(info))?.[0] ?? null
+  const attach = async (targetId, what = targetId) => {
+    const deadline = Date.now() + 20_000
+    for (;;) {
+      let attached = null
+      try {
+        attached = (await browser.send('Target.attachToTarget', { flatten: true, targetId })).sessionId
+        await browser.send('Runtime.enable', {}, attached)
+        await browser.send('Page.enable', {}, attached)
+        return attached
+      } catch (error) {
+        if (attached) await browser.send('Target.detachFromTarget', { sessionId: attached }).catch(() => {})
+        if (!cdpNotReady(error) || Date.now() > deadline) throw new Error(`could not attach to ${what}: ${error.message}`)
+        setupRetries.push({ step: `attach ${what}`, error: error.message })
+        await wait(250)
+      }
+    }
+  }
+  const setupEvaluate = async (sessionOf, reattach, expression, timeoutMs, what) => {
+    const deadline = Date.now() + 20_000
+    for (;;) {
+      try {
+        return await evaluate(browser, sessionOf(), expression, timeoutMs)
+      } catch (error) {
+        if (!cdpNotReady(error) || Date.now() > deadline) throw error
+        setupRetries.push({ step: what, error: error.message })
+        await wait(250)
+        await reattach()
+      }
+    }
+  }
+  const readySession = async (targetId, timeoutMs) => {
+    const sessionId = autoSessions.get(targetId)
+    if (!sessionId) return null
+    const ready = sessionReady.get(sessionId)
+    if (!ready) return null
+    const outcome = await Promise.race([ready, wait(timeoutMs).then(() => ({ error: 'setup still running', ok: false }))])
+    return outcome.ok && autoSessions.get(targetId) === sessionId ? sessionId : null
+  }
 
   const serviceWorker = async () => {
     for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -799,10 +875,20 @@ try {
   const extensionId = new URL(worker.url).host
   const extensionOrigin = `chrome-extension://${extensionId}`
   report.push(`extension ${extensionId} (copy of ${build})`)
-  const page = await browser.send('Target.createTarget', { url: `${extensionOrigin}/popup.html` })
-  const sessionId = await attach(page.targetId)
+  const popupUrl = `${extensionOrigin}/popup.html`
+  const page = await browser.send('Target.createTarget', { url: popupUrl })
+  let sessionId = await attach(page.targetId, 'the popup harness page')
   await wait(1000)
-  await evaluate(browser, sessionId, harness, 30_000)
+  await setupEvaluate(
+    () => sessionId,
+    async () => {
+      await browser.send('Target.detachFromTarget', { sessionId }).catch(() => {})
+      sessionId = await attach(liveTarget((info) => info.type === 'page' && info.url === popupUrl) ?? page.targetId, 'the popup harness page')
+    },
+    harness,
+    30_000,
+    'inject the popup harness',
+  )
   const run = (expression, timeoutMs) => evaluate(browser, sessionId, expression, timeoutMs)
   const offscreenCount = () => run(OFFSCREEN_COUNT)
   const harnessTab = await run(HARNESS_TAB)
@@ -986,7 +1072,7 @@ try {
   report.push(`accepted ${cold.label}@${cold.confidence.toFixed(3)}; abstained ${options.topLabel}@${options.confidence.toFixed(3)}:${options.reason}`)
 
   const site = await browser.send('Target.createTarget', { url: 'about:blank' })
-  const siteSession = await attach(site.targetId)
+  const siteSession = await attach(site.targetId, 'the handoff site page')
   await browser.send('Page.navigate', { url: `${SITE}/job` }, siteSession)
   await waitFor(
     () => evaluate(browser, siteSession, `typeof __handoff === 'function' && typeof chrome?.runtime?.sendMessage === 'function'`, 5_000),
@@ -1017,16 +1103,22 @@ try {
     )
     check(`the extension accepted the ${raw ? 'raw ' : ''}handoff for ${JSON.stringify(country)}`, sent.response?.ok === true, JSON.stringify(sent))
     await browser.send('Page.bringToFront', {}, siteSession)
-    await evaluate(browser, siteSession, `window.open(${JSON.stringify(destination)}, '_blank'); true`, 5_000, { userGesture: true })
-    const target = await waitFor(
-      async () => (await browser.send('Target.getTargets')).targetInfos.find((info) => info.url === destination),
-      Boolean,
-      20_000,
-      `the application tab for ${destination}`,
-    )
-    const atsSession = await attach(target.targetId)
-    await browser.send('Page.enable', {}, atsSession)
-    await browser.send('Runtime.enable', {}, atsSession)
+    const destinationTarget = async () =>
+      liveTarget((info) => info.type === 'page' && info.url === destination) ??
+      (await browser.send('Target.getTargets')).targetInfos.find((info) => info.type === 'page' && info.url === destination)?.targetId ??
+      null
+    let openError = null
+    if (!(await destinationTarget())) {
+      await evaluate(browser, siteSession, `window.open(${JSON.stringify(destination)}, '_blank'); true`, 5_000, { userGesture: true }).catch((error) => {
+        openError = error
+      })
+    }
+    const targetId = await waitFor(destinationTarget, Boolean, 20_000, `the application tab for ${destination}`).catch((error) => {
+      throw openError ?? error
+    })
+    if (openError) setupRetries.push({ step: `window.open ${destination}`, error: `${openError.message}; the tab was created anyway, so it was not opened again` })
+    const target = { targetId }
+    const atsSession = await attach(target.targetId, `the application tab ${destination}`)
     await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, atsSession)
     const atsTabId = await waitFor(
       () => run(CALL(`return (await chrome.tabs.query({ url: ${JSON.stringify(destination)} }))[0]?.id ?? null`)),
@@ -1071,7 +1163,7 @@ try {
       (info) => info.type === 'iframe' && info.url.startsWith('chrome-extension://') && new URL(info.url).pathname === '/picker.html',
     )
   const isActivePicker = async (target) => {
-    const session = autoSessions.get(target.targetId)
+    const session = await readySession(target.targetId, 2_000)
     if (!session) return false
     return evaluate(browser, session, `document.documentElement.getAttribute('data-tp-active') === 'true'`, 2_000).catch(() => false)
   }
@@ -1172,7 +1264,7 @@ try {
     }
     await evaluate(browser, atsSession, RECORD_BRIDGE, 5_000)
     await openPickerByCommand(atsSession, `#${field} input`)
-    return waitFor(
+    const opening = waitFor(
       async () => {
         const target = await pickerTarget()
         return { ...(await pickerState()), target: target?.url ?? null, attached: target ? autoSessions.has(target.targetId) : false }
@@ -1181,6 +1273,43 @@ try {
       20_000,
       'the picker to open',
     )
+    try {
+      return await opening
+    } catch (error) {
+      const frames = await pickerFrameDom(atsSession).catch((domError) => [{ error: domError.message }])
+      const parented = (await pickerTargets()).filter((target) => pickerParents.get(target.targetId) === atsSession)
+      const targets = await Promise.all(
+        parented.map(async (target) => {
+          const session = await readySession(target.targetId, 2_000)
+          const view = session
+            ? await evaluate(browser, session, `({ active: document.documentElement.getAttribute('data-tp-active'), rendered: (document.getElementById('app')?.children.length ?? 0) > 0 })`, 2_000).catch((viewError) => ({ error: viewError.message }))
+            : null
+          return { attached: autoSessions.has(target.targetId), ready: Boolean(session), view }
+        }),
+      )
+      const evidence = JSON.stringify({ frames, setupErrors: setupErrors.slice(-5), targets })
+      if (frames.length === 0) throw new Error(`product: no picker iframe was created after one open command; ${error.message}; ${evidence}`)
+      if (!frames.some((frame) => frame.ready === 'true')) throw new Error(`product: the picker iframe exists but never became ready; ${error.message}; ${evidence}`)
+      if (!targets.some((target) => target.ready)) {
+        throw new Error(`harness: the picker iframe is ready but no target parented to this tab has a ready session; ${error.message}; ${evidence}`)
+      }
+      throw new Error(`product: the picker target has a ready session but did not activate or render; ${error.message}; ${evidence}`)
+    }
+  }
+  const pickerFrameDom = async (atsSession) => {
+    const { root } = await browser.send('DOM.getDocument', { depth: -1, pierce: true }, atsSession)
+    const stack = [root]
+    const frames = []
+    while (stack.length) {
+      const node = stack.pop()
+      const attributes = node.attributes ?? []
+      const attr = (name) => (attributes.includes(name) ? attributes[attributes.indexOf(name) + 1] : null)
+      if (node.nodeName === 'IFRAME' && (attr('src') ?? '').includes('/picker.html')) {
+        frames.push({ ready: attr('data-tp-ready'), style: (attr('style') ?? '').replace(/\s+/g, ' ').slice(0, 120) })
+      }
+      stack.push(...(node.children ?? []), ...(node.shadowRoots ?? []))
+    }
+    return frames
   }
   const answered = (state) => state.sends >= 1 && state.done >= state.sends
   const settledState = async (expectSuggestion) => {
@@ -1265,7 +1394,7 @@ try {
     )
   }
   const classicTab = await browser.send('Target.createTarget', { url: 'about:blank' })
-  const classicSession = await attach(classicTab.targetId)
+  const classicSession = await attach(classicTab.targetId, 'the classic tab')
   await browser.send('Page.enable', {}, classicSession)
   await browser.send('Runtime.enable', {}, classicSession)
   await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, classicSession)
@@ -1290,7 +1419,7 @@ try {
   await pickerClosed(uk.atsSession, 5_000, 'the picker to close before the Workday checks')
 
   const workdayTab = await browser.send('Target.createTarget', { url: 'about:blank' })
-  const workdaySession = await attach(workdayTab.targetId)
+  const workdaySession = await attach(workdayTab.targetId, 'the workday tab')
   await browser.send('Page.enable', {}, workdaySession)
   await browser.send('Runtime.enable', {}, workdaySession)
   await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, workdaySession)
@@ -1319,7 +1448,7 @@ try {
   await browser.send('Target.closeTarget', { targetId: workdayTab.targetId })
 
   const framesTab = await browser.send('Target.createTarget', { url: 'about:blank' })
-  const framesSession = await attach(framesTab.targetId)
+  const framesSession = await attach(framesTab.targetId, 'the frames tab')
   await browser.send('Page.enable', {}, framesSession)
   await browser.send('Runtime.enable', {}, framesSession)
   await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, framesSession)
@@ -1916,6 +2045,8 @@ try {
     : null
   check('disabling the site closes the picker and clears its answers', disabledUi?.children === 0 && disabledUi.text === '' && disabledUi.active === null, JSON.stringify(disabledUi))
   check('no page, frame or extension document crashed during the smoke', collateralCrashes().length === 0, JSON.stringify(collateralCrashes()))
+  report.push(`cdp setup retries: ${setupRetries.length ? JSON.stringify(setupRetries) : 'none'}`)
+  report.push(`cdp session setup errors: ${setupErrors.length ? JSON.stringify(setupErrors) : 'none'}`)
   browser.close()
 } catch (error) {
   failure = error
