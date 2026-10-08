@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -31,6 +32,26 @@ if (attestFlag !== -1 && !artifactDir) {
 }
 
 const wait = (ms) => new Promise((done) => setTimeout(done, ms))
+
+async function extensionIdOf(directory) {
+  const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
+  const identity = manifest.key ? Buffer.from(manifest.key, 'base64') : await realpath(directory)
+  return [...createHash('sha256').update(identity).digest('hex').slice(0, 32)]
+    .map((digit) => String.fromCharCode(97 + Number.parseInt(digit, 16)))
+    .join('')
+}
+
+async function requireExtensionApis(session, sessionId, targetId) {
+  const page = await evaluate(
+    session,
+    sessionId,
+    `({ href: location.href, runtime: typeof globalThis.chrome?.runtime, tabs: typeof globalThis.chrome?.tabs })`,
+    10_000,
+  )
+  if (page.runtime !== 'object' || page.tabs !== 'object') {
+    throw new Error(`the harness page has no extension APIs: ${JSON.stringify({ targetId, ...page })}`)
+  }
+}
 
 // The page runs the real exported client, bundled from source, so request
 // correlation, reconnection and disconnect handling are the shipped code rather
@@ -212,6 +233,7 @@ async function prepareAttestation(artifact) {
 const prepared = artifactDir ? await prepareAttestation(resolve(artifactDir)) : null
 const workDir = await mkdtemp(join(tmpdir(), 'tp-smoke-build-'))
 const clientBundle = await bundleClient(workDir)
+const extensionId = await extensionIdOf(extension)
 const profile = await mkdtemp(join(tmpdir(), 'tp-smoke-'))
 const chrome = spawn(
   CHROME,
@@ -241,12 +263,11 @@ try {
   for (let attempt = 0; attempt < 60 && !worker; attempt += 1) {
     const targets = await browser.send('Target.getTargets')
     worker = targets.targetInfos.find(
-      (target) => target.type === 'service_worker' && target.url.endsWith('/background.js'),
+      (target) => target.type === 'service_worker' && target.url === `chrome-extension://${extensionId}/background.js`,
     )
     if (!worker) await wait(500)
   }
   if (!worker) throw new Error('the extension service worker never appeared')
-  const extensionId = new URL(worker.url).host
   report.push(`extension ${extensionId}`)
 
   const attach = async (targetId) =>
@@ -257,6 +278,7 @@ try {
   })
   const driverSession = await attach(driver.targetId)
   await wait(1000)
+  await requireExtensionApis(browser, driverSession, driver.targetId)
   await evaluate(browser, driverSession, clientBundle, 30_000)
   check(
     'the exported client loads in an extension page',

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync } from 'node:fs'
-import { cp, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -35,6 +35,26 @@ const TOKENS_KEY = 'tp.tokens'
 const PROFILE_KEY = 'tp.profileCache'
 
 const wait = (ms) => new Promise((done) => setTimeout(done, ms))
+
+async function extensionIdOf(directory) {
+  const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
+  const identity = manifest.key ? Buffer.from(manifest.key, 'base64') : await realpath(directory)
+  return [...createHash('sha256').update(identity).digest('hex').slice(0, 32)]
+    .map((digit) => String.fromCharCode(97 + Number.parseInt(digit, 16)))
+    .join('')
+}
+
+async function requireExtensionApis(session, sessionId, targetId) {
+  const page = await evaluate(
+    session,
+    sessionId,
+    `({ href: location.href, runtime: typeof globalThis.chrome?.runtime, tabs: typeof globalThis.chrome?.tabs })`,
+    10_000,
+  )
+  if (page.runtime !== 'object' || page.tabs !== 'object') {
+    throw new Error(`the harness page has no extension APIs: ${JSON.stringify({ targetId, ...page })}`)
+  }
+}
 
 const pick = (question, fieldType, country, optionCount) => {
   const found = fixture.cases.find(
@@ -574,6 +594,8 @@ const stagedModel = await sha256(resolve(root, 'public/classifier/model.onnx'))
 const workDir = await mkdtemp(join(tmpdir(), 'tp-suggest-build-'))
 const extension = join(workDir, 'extension')
 await cp(build, extension, { recursive: true })
+const extensionId = await extensionIdOf(extension)
+const workerUrl = `chrome-extension://${extensionId}/background.js`
 const modelPath = join(extension, 'classifier/model.onnx')
 const harness = await bundle(workDir, 'harness', harnessSource)
 const websiteBundle = await bundleWebsite(workDir)
@@ -635,7 +657,7 @@ try {
     }
     if (message.method === 'ServiceWorker.workerVersionUpdated') {
       for (const version of message.params.versions) {
-        if (version.scriptURL.endsWith('/background.js')) workerStates.push({ id: version.versionId, status: version.runningStatus })
+        if (version.scriptURL === workerUrl) workerStates.push({ id: version.versionId, status: version.runningStatus })
       }
       return
     }
@@ -833,7 +855,7 @@ try {
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const targets = await browser.send('Target.getTargets')
       const found = targets.targetInfos.find(
-        (target) => target.type === 'service_worker' && target.url.endsWith('/background.js'),
+        (target) => target.type === 'service_worker' && target.url === workerUrl,
       )
       if (found) return found
       await wait(500)
@@ -854,7 +876,7 @@ try {
 
   const runningWorker = async () =>
     (await browser.send('Target.getTargets')).targetInfos.find(
-      (target) => target.type === 'service_worker' && target.url.endsWith('/background.js'),
+      (target) => target.type === 'service_worker' && target.url === workerUrl,
     ) ?? null
   const stopWorker = async () => {
     if (!(await runningWorker())) return 'no worker running'
@@ -871,8 +893,7 @@ try {
     return 'ServiceWorker.stopAllWorkers'
   }
 
-  const worker = await serviceWorker()
-  const extensionId = new URL(worker.url).host
+  await serviceWorker()
   const extensionOrigin = `chrome-extension://${extensionId}`
   report.push(`extension ${extensionId} (copy of ${build})`)
   const popupUrl = `${extensionOrigin}/popup.html`
@@ -889,6 +910,7 @@ try {
     30_000,
     'inject the popup harness',
   )
+  await requireExtensionApis(browser, sessionId, page.targetId)
   const run = (expression, timeoutMs) => evaluate(browser, sessionId, expression, timeoutMs)
   const offscreenCount = () => run(OFFSCREEN_COUNT)
   const harnessTab = await run(HARNESS_TAB)
