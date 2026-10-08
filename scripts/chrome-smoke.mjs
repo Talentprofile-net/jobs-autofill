@@ -1,6 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -17,6 +16,7 @@ import {
   sha256Bytes,
   sourceProblems,
 } from '../src/classifier/attestation.ts'
+import { extensionIdOf, requireExtensionApis } from './extension-identity.mjs'
 
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const PORT = Number(process.env.CHROME_SMOKE_PORT ?? 9333)
@@ -32,26 +32,6 @@ if (attestFlag !== -1 && !artifactDir) {
 }
 
 const wait = (ms) => new Promise((done) => setTimeout(done, ms))
-
-async function extensionIdOf(directory) {
-  const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
-  const identity = manifest.key ? Buffer.from(manifest.key, 'base64') : await realpath(directory)
-  return [...createHash('sha256').update(identity).digest('hex').slice(0, 32)]
-    .map((digit) => String.fromCharCode(97 + Number.parseInt(digit, 16)))
-    .join('')
-}
-
-async function requireExtensionApis(session, sessionId, targetId) {
-  const page = await evaluate(
-    session,
-    sessionId,
-    `({ href: location.href, runtime: typeof globalThis.chrome?.runtime, tabs: typeof globalThis.chrome?.tabs })`,
-    10_000,
-  )
-  if (page.runtime !== 'object' || page.tabs !== 'object') {
-    throw new Error(`the harness page has no extension APIs: ${JSON.stringify({ targetId, ...page })}`)
-  }
-}
 
 // The page runs the real exported client, bundled from source, so request
 // correlation, reconnection and disconnect handling are the shipped code rather
@@ -278,7 +258,7 @@ try {
   })
   const driverSession = await attach(driver.targetId)
   await wait(1000)
-  await requireExtensionApis(browser, driverSession, driver.targetId)
+  await requireExtensionApis((expression) => evaluate(browser, driverSession, expression, 10_000), driver.targetId)
   await evaluate(browser, driverSession, clientBundle, 30_000)
   check(
     'the exported client loads in an extension page',

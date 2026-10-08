@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createWriteStream, existsSync } from 'node:fs'
-import { cp, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+
+import { extensionIdOf, requireExtensionApis } from './extension-identity.mjs'
 
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const PORT = Number(process.env.CHROME_SMOKE_PORT ?? 9334)
@@ -35,26 +37,6 @@ const TOKENS_KEY = 'tp.tokens'
 const PROFILE_KEY = 'tp.profileCache'
 
 const wait = (ms) => new Promise((done) => setTimeout(done, ms))
-
-async function extensionIdOf(directory) {
-  const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
-  const identity = manifest.key ? Buffer.from(manifest.key, 'base64') : await realpath(directory)
-  return [...createHash('sha256').update(identity).digest('hex').slice(0, 32)]
-    .map((digit) => String.fromCharCode(97 + Number.parseInt(digit, 16)))
-    .join('')
-}
-
-async function requireExtensionApis(session, sessionId, targetId) {
-  const page = await evaluate(
-    session,
-    sessionId,
-    `({ href: location.href, runtime: typeof globalThis.chrome?.runtime, tabs: typeof globalThis.chrome?.tabs })`,
-    10_000,
-  )
-  if (page.runtime !== 'object' || page.tabs !== 'object') {
-    throw new Error(`the harness page has no extension APIs: ${JSON.stringify({ targetId, ...page })}`)
-  }
-}
 
 const pick = (question, fieldType, country, optionCount) => {
   const found = fixture.cases.find(
@@ -829,11 +811,11 @@ try {
       }
     }
   }
-  const setupEvaluate = async (sessionOf, reattach, expression, timeoutMs, what) => {
+  const setupStep = async (step, reattach, what) => {
     const deadline = Date.now() + 20_000
     for (;;) {
       try {
-        return await evaluate(browser, sessionOf(), expression, timeoutMs)
+        return await step()
       } catch (error) {
         if (!cdpNotReady(error) || Date.now() > deadline) throw error
         setupRetries.push({ step: what, error: error.message })
@@ -898,19 +880,21 @@ try {
   report.push(`extension ${extensionId} (copy of ${build})`)
   const popupUrl = `${extensionOrigin}/popup.html`
   const page = await browser.send('Target.createTarget', { url: popupUrl })
-  let sessionId = await attach(page.targetId, 'the popup harness page')
+  let popupTarget = page.targetId
+  let sessionId = await attach(popupTarget, 'the popup harness page')
   await wait(1000)
-  await setupEvaluate(
-    () => sessionId,
+  await setupStep(
+    async () => {
+      await requireExtensionApis((expression) => evaluate(browser, sessionId, expression, 10_000), popupTarget)
+      return evaluate(browser, sessionId, harness, 30_000)
+    },
     async () => {
       await browser.send('Target.detachFromTarget', { sessionId }).catch(() => {})
-      sessionId = await attach(liveTarget((info) => info.type === 'page' && info.url === popupUrl) ?? page.targetId, 'the popup harness page')
+      popupTarget = liveTarget((info) => info.type === 'page' && info.url === popupUrl) ?? page.targetId
+      sessionId = await attach(popupTarget, 'the popup harness page')
     },
-    harness,
-    30_000,
     'inject the popup harness',
   )
-  await requireExtensionApis(browser, sessionId, page.targetId)
   const run = (expression, timeoutMs) => evaluate(browser, sessionId, expression, timeoutMs)
   const offscreenCount = () => run(OFFSCREEN_COUNT)
   const harnessTab = await run(HARNESS_TAB)

@@ -3,6 +3,8 @@ import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { extensionIdOf, requireExtensionApis } from './extension-identity.mjs'
+
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const PORT = Number(process.env.CHROME_SMOKE_PORT ?? 9338)
 const root = resolve(import.meta.dirname, '..')
@@ -234,6 +236,8 @@ const workDir = await mkdtemp(join(tmpdir(), 'tp-docs-shots-'))
 const extension = join(workDir, 'extension')
 const profileDir = join(workDir, 'profile')
 await cp(build, extension, { recursive: true })
+const extensionId = await extensionIdOf(extension)
+const workerUrl = `chrome-extension://${extensionId}/background.js`
 await mkdir(out, { recursive: true })
 
 const chrome = spawn(
@@ -320,21 +324,22 @@ try {
   })
   await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true })
 
-  const worker = await waitFor(
+  await waitFor(
     async () =>
       (await browser.send('Target.getTargets')).targetInfos.find(
-        (target) => target.type === 'service_worker' && target.url.endsWith('/background.js'),
+        (target) => target.type === 'service_worker' && target.url === workerUrl,
       ),
     Boolean,
     30_000,
     'the extension service worker',
   )
-  const extensionOrigin = `chrome-extension://${new URL(worker.url).host}`
+  const extensionOrigin = `chrome-extension://${extensionId}`
   const attach = async (targetId) => (await browser.send('Target.attachToTarget', { flatten: true, targetId })).sessionId
 
   const control = await browser.send('Target.createTarget', { url: `${extensionOrigin}/popup.html` })
   const controlSession = await attach(control.targetId)
   await wait(1000)
+  await requireExtensionApis((expression) => evaluate(controlSession, expression), control.targetId)
   await evaluate(
     controlSession,
     `(async () => {
@@ -560,4 +565,5 @@ try {
   await rm(workDir, { force: true, recursive: true })
 }
 
+console.log(`extension ${extensionId}`)
 for (const path of saved) console.log(`wrote ${path}`)
