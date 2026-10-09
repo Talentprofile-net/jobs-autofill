@@ -4,6 +4,7 @@ import { decideStandardField, isStandardField, normalizeNameOrId, type FieldEvid
 
 const evidence = (over: Partial<FieldEvidence> = {}): FieldEvidence => ({
   autocomplete: '',
+  combobox: false,
   control: 'text',
   id: '',
   inputType: 'text',
@@ -187,6 +188,62 @@ describe('standard field decision', () => {
     '__systemfield_name',
   ])('resolves nothing from the system token %p', (name) => {
     expect('refused' in decideStandardField(evidence({ name, id: name }))).toBe(true)
+  })
+
+  it.each<[string[], boolean, StandardField]>([
+    [['Country of Residence'], false, 'country'],
+    [['What is your current country of residence?*'], true, 'country'],
+    [['Current country of residence', 'Country of residence'], false, 'country'],
+    [['City *'], false, 'address-level2'],
+    [['City', 'City *'], false, 'address-level2'],
+  ])('resolves the applicant place label %p on a text control (combobox %p)', (labels, combobox, field) => {
+    expect(decideStandardField(evidence({ combobox, labels }))).toEqual({ field })
+    expect(decideStandardField(evidence({ combobox, inputType: '', labels }))).toEqual({ field })
+  })
+
+  it.each<[string[], Partial<FieldEvidence>]>([
+    [['Country'], {}],
+    [['Country*'], { combobox: true }],
+    [['City'], { combobox: true }],
+    [['Location (City)*'], { combobox: true }],
+    [['Location (City)'], {}],
+    [['What is your location?'], {}],
+    [['Current location'], {}],
+    [['City', 'Current location'], {}],
+    [['City', 'Country of residence'], {}],
+    [['City'], { inputType: 'email' }],
+    [['City'], { control: 'select', optionLabels: ['Berlin', 'Paris', 'Austin'] }],
+    [['Country of residence'], { control: 'select', optionLabels: ['Germany', 'France', 'Spain'] }],
+    [['Country of residence'], { control: 'textarea' }],
+    [['City'], { section: 'Emergency contact' }],
+    [['Country of residence'], { section: 'Demographic Survey' }],
+  ])('refuses the place label %p with %p', (labels, over) => {
+    expect('refused' in decideStandardField(evidence({ labels, ...over }))).toBe(true)
+  })
+
+  it.each([
+    'Passport Country',
+    'Country of birth',
+    'City of birth',
+    'Country of citizenship',
+    'Nationality',
+    'Are you willing to relocate?',
+    'Work authorization country',
+    'Visa country',
+    'Company city',
+    'University city',
+  ])('refuses the sensitive or third-party place question %p', (label) => {
+    expect('refused' in decideStandardField(evidence({ labels: [label] }))).toBe(true)
+    expect('refused' in decideStandardField(evidence({ autocomplete: 'country', labels: [label] }))).toBe(true)
+  })
+
+  it('refuses a place label that disagrees with the attribute evidence or sits in an entry section', () => {
+    expect(decideStandardField(evidence({ id: 'country', labels: ['Country', 'Phone'] }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ id: 'country', labels: ['City'] }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ autocomplete: 'address-level2', labels: ['Country of residence'] }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ labels: ['City'], section: 'employment 1' }))).toEqual({ refused: 'section' })
+    expect(decideStandardField(evidence({ labels: ['Passport Country'], name: 'country' }))).toEqual({ refused: 'sensitive' })
+    expect(decideStandardField(evidence({ labels: ['Demographic survey: country of residence'] }))).toEqual({ refused: 'sensitive' })
   })
 
   it('accepts a label, legend or ARIA text that agrees with the attribute evidence', () => {

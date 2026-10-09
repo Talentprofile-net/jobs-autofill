@@ -32,6 +32,13 @@ const controlKind = (control: HTMLElement): ControlKind => {
   return 'other'
 }
 
+const AUTOCOMPLETE_LISTS = new Set(['list', 'both'])
+
+const isCombobox = (control: HTMLElement): boolean =>
+  control.getAttribute('role') === 'combobox' ||
+  AUTOCOMPLETE_LISTS.has((control.getAttribute('aria-autocomplete') ?? '').toLowerCase()) ||
+  control.hasAttribute('list')
+
 const isOperable = (field: HTMLElement, control: HTMLElement): boolean =>
   field.isConnected &&
   control.isConnected &&
@@ -51,6 +58,7 @@ const readEvidence = (
   if (!control || !isOperable(field, control)) return null
   const decision = decideStandardField({
     autocomplete: control.getAttribute('autocomplete') ?? '',
+    combobox: isCombobox(control),
     control: controlKind(control),
     id: control.getAttribute('id') ?? '',
     inputType: inputTypeOf(control),

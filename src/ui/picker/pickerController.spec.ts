@@ -128,12 +128,17 @@ const contextOf = (activation: string | null) => {
   const response = relay(activation, { type: 'context' })
   return isRecord(response) && isRecord(response.data) ? response.data : null
 }
-const press = (key: string) => {
-  const event = new window.Event('keydown', { bubbles: true })
-  Object.defineProperty(event, 'key', { value: key })
-  document.body.dispatchEvent(event)
+const userEvent = (type: string, trusted: boolean) => {
+  const event = new window.Event(type, { bubbles: true })
+  Object.defineProperty(event, 'isTrusted', { value: trusted })
+  return event
 }
-const mouseDownOn = (el: Element) => el.dispatchEvent(new window.Event('mousedown', { bubbles: true }))
+const press = (key: string, trusted = true, target: Element = document.body) => {
+  const event = userEvent('keydown', trusted)
+  Object.defineProperty(event, 'key', { value: key })
+  target.dispatchEvent(event)
+}
+const mouseDownOn = (el: Element, trusted = true) => el.dispatchEvent(userEvent('mousedown', trusted))
 
 beforeEach(() => {
   closePicker()
@@ -275,6 +280,21 @@ describe('persistent picker frame', () => {
     expect(frame().isConnected).toBe(true)
     expect(frames()).toHaveLength(1)
     expect(signals('picker.deactivate')).toHaveLength(2)
+  })
+
+  it('stays open when a page or another field dispatches a synthetic Escape or mousedown', () => {
+    openPicker(fieldTarget('first'))
+    ready()
+    const elsewhere = document.getElementById('elsewhere')
+    if (!elsewhere) throw new Error('missing button')
+    press('Escape', false, elsewhere)
+    press('Escape', false)
+    mouseDownOn(elsewhere, false)
+    expect(isPickerOpen()).toBe(true)
+    expect(signals('picker.deactivate')).toHaveLength(0)
+    press('Escape')
+    expect(isPickerOpen()).toBe(false)
+    expect(signals('picker.deactivate')).toHaveLength(1)
   })
 
   it('runs the fill confirmation and its dismissal at most once', () => {

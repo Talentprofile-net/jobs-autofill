@@ -299,6 +299,7 @@ const showFrame = (options: {
   }
 
   const handleOutsideMouseDown = (e: MouseEvent) => {
+    if (!e.isTrusted) return;
     const node = e.target as Node;
     if (host.contains(node)) return;
     if (target.anchor.contains(node)) return;
@@ -306,7 +307,7 @@ const showFrame = (options: {
     closePicker();
   };
   const handleEscape = (e: KeyboardEvent) => {
-    if (e.key === "Escape") closePicker();
+    if (e.isTrusted && e.key === "Escape") closePicker();
   };
   document.addEventListener("mousedown", handleOutsideMouseDown, true);
   document.addEventListener("keydown", handleEscape, true);

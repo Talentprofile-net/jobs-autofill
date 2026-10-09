@@ -1660,6 +1660,15 @@ try {
   await waitFor(pickerState, (state) => state.open && state.list !== undefined, 20_000, 'the phone picker to open')
   const phoneShown = await settled()
   check('Greenhouse React: the phone field shows the saved Phone answer', phoneShown.rows.length === 1 && phoneShown.rows[0].title === PHONE_VALUE, JSON.stringify(phoneShown.rows))
+  await evaluate(
+    browser,
+    phoneSession,
+    `(() => { const other = document.getElementById('country'); other.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Escape' })); other.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); return true })()`,
+    5_000,
+  )
+  await wait(500)
+  const afterSynthetic = { target: Boolean(await pickerTarget()), rows: (await pickerState()).rows ?? null }
+  check('a synthetic Escape or mousedown from another field leaves the open picker and its row in place', afterSynthetic.target && afterSynthetic.rows?.length === 1 && afterSynthetic.rows[0].title === PHONE_VALUE, JSON.stringify(afterSynthetic))
   await clickInPicker(phoneSession, '[data-tp-suggestion]')
   const phoneFilled = await waitFor(
     () => evaluate(browser, phoneSession, `({ phone: document.getElementById('phone').value, search: document.getElementById('dial-search').value, country: document.getElementById('country').value })`, 5_000),
@@ -1668,6 +1677,13 @@ try {
     'the phone field to fill',
   )
   check('Greenhouse React: clicking the row fills the visible tel input, not the hidden dial-code search', phoneFilled.phone === PHONE_VALUE && phoneFilled.search === '' && phoneFilled.country === '', JSON.stringify(phoneFilled))
+  const phoneRendered = await evaluate(
+    browser,
+    phoneSession,
+    `new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done({ phone: document.getElementById('phone').value, search: document.getElementById('dial-search').value, country: document.getElementById('country').value }))))`,
+    5_000,
+  )
+  check('the filled value survives the next rendered frames and no other field changes', phoneRendered.phone === PHONE_VALUE && phoneRendered.search === '' && phoneRendered.country === '', JSON.stringify(phoneRendered))
   await pickerClosed(phoneSession, 10_000, 'the phone picker to close after the fill')
   const phoneNativeAfter = await evaluate(browser, phoneSession, `({ clicks: window.__nativeClicks, submits: window.__submits, href: location.href })`, 5_000)
   check(

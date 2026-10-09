@@ -33,6 +33,7 @@ export type FieldEvidence = {
   labels: string[]
   optionLabels: string[] | null
   section: string
+  combobox: boolean
 }
 
 const AUTOCOMPLETE: Record<string, StandardField> = {
@@ -129,7 +130,7 @@ const TEXT_ONLY: ReadonlySet<StandardField> = new Set([
 const MIN_PLACE_OPTIONS = 3
 
 const REFUSED_TOPICS =
-  /\b(consent|agree|acknowledg\w*|terms|privacy|polic(y|ies)|gender|sex|sexual|race|racial|ethnic\w*|hispanic|latin[oax]|pronouns?|eeo|equal (employment )?opportunity|self[- ]identif\w*|disabilit(y|ies)|disabled|veterans?|military|criminal|convict\w*|felon\w*|offen[cs]es?|background check|arrest\w*|salary|compensation|wages?|pay|remuneration|availab\w*|notice period|start date|earliest start)\b/i
+  /\b(consent|agree|acknowledg\w*|terms|privacy|polic(y|ies)|gender|sex|sexual|race|racial|ethnic\w*|hispanic|latin[oax]|pronouns?|eeo|equal (employment )?opportunity|self[- ]identif\w*|disabilit(y|ies)|disabled|veterans?|military|criminal|convict\w*|felon\w*|offen[cs]es?|background check|arrest\w*|salary|compensation|wages?|pay|remuneration|availab\w*|notice period|start date|earliest start|passports?|birth\w*|demographic\w*)\b/i
 
 const THIRD_PARTY =
   /\b(referr(er|al|ed)|referee|reference|emergency|next of kin|manager|supervisor|recruiter|spouse|partner|parent|guardian|contact person|company|employer|school|university)\b/i
@@ -170,6 +171,31 @@ const fromLabelAndType = (evidence: FieldEvidence, labelled: StandardField[]): S
   return isRefusedQuestion(evidence.section) ? null : field
 }
 
+const PLACE_TEXT_TYPES: ReadonlySet<string> = new Set(['', 'text'])
+
+const PLACE_LABEL: Partial<Record<string, 'city' | 'residence'>> = {
+  city: 'city',
+  'country of residence': 'residence',
+  'current country of residence': 'residence',
+  'what is your current country of residence': 'residence',
+}
+
+const PLACE_FIELD: Record<'city' | 'residence', StandardField> = { city: 'address-level2', residence: 'country' }
+
+const placeField = (text: string): StandardField | null => {
+  const meaning = PLACE_LABEL[normalizeLabel(text)]
+  return meaning ? PLACE_FIELD[meaning] : null
+}
+
+const fromPlaceLabel = (evidence: FieldEvidence): StandardField | null => {
+  if (evidence.control !== 'text' || !PLACE_TEXT_TYPES.has(evidence.inputType) || evidence.labels.length === 0) return null
+  const meanings = evidence.labels.map((text) => PLACE_LABEL[normalizeLabel(text)] ?? null)
+  const [meaning] = meanings
+  if (!meaning || meanings.some((value) => value !== meaning) || isRefusedQuestion(evidence.section)) return null
+  if (meaning === 'residence') return 'country'
+  return evidence.combobox ? null : 'address-level2'
+}
+
 const fromAutocomplete = (value: string): StandardField | null | 'refused' => {
   const tokens = value.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
@@ -197,9 +223,9 @@ export const decideStandardField = (evidence: FieldEvidence): StandardFieldDecis
   const strong = [autocomplete, fromNameOrId(evidence.name), fromNameOrId(evidence.id)]
   const candidates = strong.filter((field): field is StandardField => field !== null)
   const labelled = evidence.labels
-    .map((text) => LABEL[normalizeLabel(text)] ?? null)
+    .map((text) => LABEL[normalizeLabel(text)] ?? placeField(text))
     .filter((value): value is StandardField => value !== null)
-  const field = candidates[0] ?? fromLabelAndType(evidence, labelled)
+  const field = candidates[0] ?? fromLabelAndType(evidence, labelled) ?? fromPlaceLabel(evidence)
   if (!field) return { refused: 'no-evidence' }
   if (candidates.some((value) => value !== field) || labelled.some((value) => value !== field)) return { refused: 'conflict' }
   const typed = INPUT_TYPE[evidence.inputType]

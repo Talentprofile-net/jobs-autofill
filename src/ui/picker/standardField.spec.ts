@@ -54,6 +54,15 @@ beforeEach(() => {
     <div id="wrap-hidden-email"><div hidden><input type="email" name="email"></div><label for="shown-tel">Phone</label><input id="shown-tel" type="tel" name="phone"></div>
     <div id="wrap-aria-search"><label for="aria-tel">Phone</label><div aria-hidden="true"><input id="aria-search" type="search" aria-label="Search"></div><input id="aria-tel" type="tel" name="phone"></div>
     <div id="wrap-far-search"><label for="far-tel">Phone</label><input id="far-search" type="search" aria-label="Search"><input id="far-tel" type="tel" name="phone"></div>
+    <div id="wrap-city"><label for="FabricTextField-350">City<span aria-hidden="true"> *</span></label><div><input id="FabricTextField-350" name="city.value" type="text"></div></div>
+    <div id="wrap-passport"><label for="6a8946a7">Passport Country</label><div><input id="6a8946a7" name="6a8946a7" type="text" placeholder="Type here..."></div></div>
+    <div id="wrap-residence"><label for="8a7d09af">Country of Residence</label><div><input id="8a7d09af" name="8a7d09af" type="text" placeholder="Type here..."></div></div>
+    <div id="wrap-residence-combo"><label id="res-label" for="res">What is your current country of residence?<span aria-hidden="true">*</span></label><div><input id="res" type="text" role="combobox" aria-autocomplete="list" aria-labelledby="res-label" autocomplete="off"></div><input required tabindex="-1" aria-hidden="true"></div>
+    <div id="wrap-location-city"><label id="loc-label" for="candidate-location">Location (City)<span aria-hidden="true">*</span></label><div><input id="candidate-location" type="text" role="combobox" aria-autocomplete="list" aria-labelledby="loc-label" autocomplete="off"></div></div>
+    <div id="wrap-city-list"><label for="city-list">City</label><input id="city-list" type="text" list="cities"><datalist id="cities"><option>Berlin</option></datalist></div>
+    <fieldset id="phone-country"><legend>Phone</legend><div id="wrap-phone-country"><label id="pc-label" for="pc">Country</label><input id="pc" type="text" role="combobox" aria-labelledby="pc-label" autocomplete="off"></div></fieldset>
+    <fieldset id="contact-city"><legend>Emergency contact</legend><div id="wrap-contact-city"><label for="contact-city-input">City</label><input id="contact-city-input" type="text"></div></fieldset>
+    <div id="wrap-survey-location"><h4>Demographic Survey</h4><label><div>What is your location?</div><select id="survey-location"><option>Select...</option><option>Afghanistan</option><option>Albania</option><option>Germany</option></select></label></div>
     <div id="wrap-two-shown"><input type="search" aria-label="Search"><input type="tel" name="phone"></div>
     <div id="host"></div>
   </form></body></html>`)
@@ -147,6 +156,22 @@ describe('reading standard field evidence from the DOM', () => {
 
   it('refuses a wrapper with two visible controls', () => {
     expect(read('wrap-two-shown', 'Phone')).toBeNull()
+  })
+
+  it('reads an applicant city and an applicant country of residence', () => {
+    expect(read('wrap-city', 'City *')).toBe('address-level2')
+    expect(read('wrap-residence', 'Country of Residence')).toBe('country')
+    expect(read('wrap-residence-combo', 'What is your current country of residence?*')).toBe('country')
+  })
+
+  it('refuses a passport country, a city autocomplete, a phone country and another person or survey location', () => {
+    expect(read('wrap-passport', 'Passport Country')).toBeNull()
+    expect(read('wrap-location-city', 'Location (City)*')).toBeNull()
+    expect(read('wrap-city-list', 'City')).toBeNull()
+    expect(read('wrap-phone-country', 'Country')).toBeNull()
+    expect(read('wrap-contact-city', 'City')).toBeNull()
+    expect(read('wrap-survey-location', 'What is your location?', ['Select...', 'Afghanistan', 'Albania', 'Germany'], 'Demographic Survey')).toBeNull()
+    expect(read('wrap-survey-location', 'What is your location?', ['Select...', 'Afghanistan', 'Albania', 'Germany'])).toBeNull()
   })
 
   it('refuses textareas, file inputs and a button-only CV uploader', () => {
