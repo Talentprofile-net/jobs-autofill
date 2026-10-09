@@ -78,6 +78,19 @@ const NAME_OR_ID: Record<string, StandardField> = {
   telephone: 'tel',
 }
 
+const SYSTEM_TOKEN: Record<string, StandardField> = {
+  _systemfield_email: 'email',
+  _systemfield_name: 'name',
+}
+
+const PATH_SEPARATOR = '--'
+
+const PATH_SEGMENT = /^[a-z0-9_]+$/i
+
+const APPLICANT_NAME_SCOPES: ReadonlySet<string> = new Set(['name', 'legalname', 'legal_name'])
+
+const NAME_PARTS: ReadonlySet<StandardField> = new Set(['given-name', 'family-name'])
+
 const LABEL: Record<string, StandardField> = {
   city: 'address-level2',
   country: 'country',
@@ -138,6 +151,25 @@ export const normalizeNameOrId = (value: string): string => {
   return (bracketed ? bracketed[1] : lowered).replace(/[\s.-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
 }
 
+const fromPath = (value: string): StandardField | null => {
+  const segments = value.trim().split(PATH_SEPARATOR)
+  if (segments.length < 2 || !segments.every((segment) => PATH_SEGMENT.test(segment))) return null
+  const field = NAME_OR_ID[normalizeNameOrId(segments[segments.length - 1])] ?? null
+  if (!field || !NAME_PARTS.has(field)) return null
+  return segments.slice(0, -1).every((segment) => APPLICANT_NAME_SCOPES.has(normalizeNameOrId(segment))) ? field : null
+}
+
+const fromNameOrId = (value: string): StandardField | null =>
+  SYSTEM_TOKEN[value.trim().toLowerCase()] ?? NAME_OR_ID[normalizeNameOrId(value)] ?? fromPath(value)
+
+const fromLabelAndType = (evidence: FieldEvidence, labelled: StandardField[]): StandardField | null => {
+  const typed = INPUT_TYPE[evidence.inputType]
+  if (!typed || labelled.length === 0 || labelled.length !== evidence.labels.length) return null
+  const [field] = labelled
+  if (labelled.some((value) => value !== field) || !typed.has(field)) return null
+  return isRefusedQuestion(evidence.section) ? null : field
+}
+
 const fromAutocomplete = (value: string): StandardField | null | 'refused' => {
   const tokens = value.trim().toLowerCase().split(/\s+/).filter(Boolean)
   if (tokens.length === 0) return null
@@ -162,13 +194,13 @@ export const decideStandardField = (evidence: FieldEvidence): StandardFieldDecis
   if (texts.some((text) => text && isRefusedQuestion(text.replace(/[_\-[\].]+/g, ' ')))) return { refused: 'sensitive' }
   const autocomplete = fromAutocomplete(evidence.autocomplete)
   if (autocomplete === 'refused') return { refused: 'qualified-autocomplete' }
-  const strong = [autocomplete, NAME_OR_ID[normalizeNameOrId(evidence.name)] ?? null, NAME_OR_ID[normalizeNameOrId(evidence.id)] ?? null]
+  const strong = [autocomplete, fromNameOrId(evidence.name), fromNameOrId(evidence.id)]
   const candidates = strong.filter((field): field is StandardField => field !== null)
-  if (candidates.length === 0) return { refused: 'no-evidence' }
-  const [field] = candidates
   const labelled = evidence.labels
     .map((text) => LABEL[normalizeLabel(text)] ?? null)
     .filter((value): value is StandardField => value !== null)
+  const field = candidates[0] ?? fromLabelAndType(evidence, labelled)
+  if (!field) return { refused: 'no-evidence' }
   if (candidates.some((value) => value !== field) || labelled.some((value) => value !== field)) return { refused: 'conflict' }
   const typed = INPUT_TYPE[evidence.inputType]
   if (typed && !typed.has(field)) return { refused: 'conflict' }

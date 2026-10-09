@@ -9,7 +9,7 @@ import { CheckboxBoolean } from './checkboxBoolean'
 import { CheckboxMulti } from './checkboxMulti'
 import { File } from './file'
 import { Section } from './section'
-import { BaseField, isRegistered, isVisible } from '~/field/baseField'
+import { BaseField, isInsideRegistered, isVisible } from '~/field/baseField'
 
 type FieldClass = {
   XPATH: string
@@ -31,7 +31,7 @@ const adapters: FieldClass[] = [
 const discoverAdapter = (Ctor: FieldClass, root: ParentNode): void => {
   const elements = getElements(root as Node, Ctor.XPATH)
   for (const el of elements) {
-    if (isRegistered(el) || !isVisible(el)) continue
+    if (isInsideRegistered(el) || !isVisible(el)) continue
     const instance = new Ctor(el)
     instance.init()
   }

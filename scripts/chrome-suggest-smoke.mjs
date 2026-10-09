@@ -226,6 +226,55 @@ ${FIELDS.map(([wrapper, input, label]) => `    <div class="field" id="${wrapper}
 ${NATIVE_COUNTERS}
 </body></html>`
 
+const PHONE_VALUE = '+44 20 7946 0958'
+
+const PHONE_PAGE = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title>
+<style>body{font:14px sans-serif;margin:24px}fieldset{border:0;padding:0;margin:0 0 28px;width:420px}input{width:360px;padding:6px}.companion{opacity:0;position:absolute;height:1px;width:1px;pointer-events:none}</style>
+</head><body>
+<div class="application--container"><div jaf-section="personal"><form>
+  <fieldset class="phone-input">
+    <legend style="position:absolute;width:1px;height:1px;overflow:hidden">Phone</legend>
+    <div class="phone-input__country"><div class="select"><div class="select__container">
+      <label id="country-label" for="country">Country<span aria-hidden="true">*</span></label>
+      <div class="select-shell" style="position:relative">
+        <div><div class="select__control">
+          <div class="select__value-container"><div class="select__placeholder"></div><div class="select__input-container"><input class="select__input" id="country" type="text" role="combobox" aria-labelledby="country-label" autocomplete="off"></div></div>
+          <div class="select__indicators"><button type="button" aria-label="Toggle flyout">v</button></div>
+        </div></div>
+        <input id="country-companion" class="companion" required tabindex="-1" aria-hidden="true">
+      </div>
+    </div></div></div>
+    <div class="phone-input__phone"><div class="text-input-wrapper"><div class="input-wrapper">
+      <label id="phone-label" for="phone">Phone<span aria-hidden="true">*</span></label>
+      <div class="iti">
+        <button type="button" aria-label="Select country">+</button>
+        <div class="iti__dropdown-content" style="display:none"><input id="dial-search" type="search" placeholder="Search" aria-label="Search" autocomplete="off"></div>
+        <input id="phone" type="tel" aria-label="Phone" autocomplete="off">
+      </div>
+    </div></div></div>
+  </fieldset>
+  <button type="submit" id="submit-application">Submit application</button>
+</form></div></div>
+${NATIVE_COUNTERS}
+</body></html>`
+
+const PHONE_REGISTRY = `(() => {
+  const fields = [...document.querySelectorAll('[data-tp-field]')]
+  const owner = (id) => document.getElementById(id)?.closest('[data-tp-field]')?.getAttribute('data-tp-field') ?? null
+  const holding = (id) => fields.filter((field) => field.contains(document.getElementById(id))).length
+  return {
+    companion: owner('country-companion'),
+    country: owner('country'),
+    countryFields: holding('country'),
+    fields: fields.length,
+    nested: fields.filter((field) => fields.some((other) => other !== field && other.contains(field))).length,
+    phone: owner('phone'),
+    phoneFields: holding('phone'),
+    phoneHoldsCountry: Boolean(document.getElementById('phone')?.closest('[data-tp-field]')?.contains(document.getElementById('country'))),
+  }
+})()`
+
 const CLASSIC_FIELDS = [
   ['c-first', 'First Name'],
   ['c-last', 'Last Name'],
@@ -712,7 +761,9 @@ try {
             ? FRAMES_PAGE
             : url.pathname === '/smoke/inner'
               ? INNER_PAGE
-              : ATS_PAGE
+              : url.pathname === '/smoke/phone'
+                ? PHONE_PAGE
+                : ATS_PAGE
           : url.origin === WORKDAY
             ? WORKDAY_PAGE
             : url.origin === CLASSIC
@@ -1578,6 +1629,54 @@ try {
     check(`${name} never starts the model`, (await offscreenCount()) === 0)
     check(`${name} fetches no classifier asset`, classifierFetches(from).length === 0, JSON.stringify(classifierFetches(from)))
   }
+
+  await clickCenter(uk.atsSession, `({ x: 1, y: 1, width: 2, height: 2 })`)
+  await pickerClosed(uk.atsSession, 5_000, 'the picker to close before the Greenhouse React phone checks')
+  const phoneTab = await browser.send('Target.createTarget', { url: 'about:blank' })
+  const phoneSession = await attach(phoneTab.targetId, 'the phone tab')
+  await browser.send('Page.enable', {}, phoneSession)
+  await browser.send('Runtime.enable', {}, phoneSession)
+  await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, phoneSession)
+  await browser.send('Page.navigate', { url: `${ATS}/smoke/phone` }, phoneSession)
+  await browser.send('Page.bringToFront', {}, phoneSession)
+  const phoneUrl = `${ATS}/smoke/phone`
+  await waitFor(() => evaluate(browser, phoneSession, PHONE_REGISTRY, 5_000), (state) => state.country !== null, 30_000, 'the Greenhouse React adapter to register the country combobox')
+  await wait(1_500)
+  const phoneRegistry = await evaluate(browser, phoneSession, PHONE_REGISTRY, 5_000)
+  check('Greenhouse React: a react-select registers as exactly one country field', phoneRegistry.countryFields === 1, JSON.stringify(phoneRegistry))
+  check('Greenhouse React: no field registers inside another field', phoneRegistry.nested === 0, JSON.stringify(phoneRegistry))
+  check('Greenhouse React: the country companion input stays in the country field', phoneRegistry.companion !== null && phoneRegistry.companion === phoneRegistry.country, JSON.stringify(phoneRegistry))
+  check(
+    'Greenhouse React: the native tel input registers as its own phone field',
+    phoneRegistry.phone !== null && phoneRegistry.phoneFields === 1 && !phoneRegistry.phoneHoldsCountry && phoneRegistry.fields === 2,
+    JSON.stringify(phoneRegistry),
+  )
+  await run(
+    CALL(`await chrome.storage.session.set({ '${PROFILE_KEY}': { data: ${JSON.stringify({ ...PROFILE, talentAnswers: [...answers, await answer('smoke-phone', 'Phone', PHONE_VALUE)] })}, fetchedAt: Date.now() } })
+      return true`),
+  )
+  const phoneNativeBefore = await evaluate(browser, phoneSession, `({ clicks: window.__nativeClicks, submits: window.__submits })`, 5_000)
+  await openPickerByCommand(phoneSession, '#phone')
+  await waitFor(pickerState, (state) => state.open && state.list !== undefined, 20_000, 'the phone picker to open')
+  const phoneShown = await settled()
+  check('Greenhouse React: the phone field shows the saved Phone answer', phoneShown.rows.length === 1 && phoneShown.rows[0].title === PHONE_VALUE, JSON.stringify(phoneShown.rows))
+  await clickInPicker(phoneSession, '[data-tp-suggestion]')
+  const phoneFilled = await waitFor(
+    () => evaluate(browser, phoneSession, `({ phone: document.getElementById('phone').value, search: document.getElementById('dial-search').value, country: document.getElementById('country').value })`, 5_000),
+    (state) => state.phone === PHONE_VALUE,
+    10_000,
+    'the phone field to fill',
+  )
+  check('Greenhouse React: clicking the row fills the visible tel input, not the hidden dial-code search', phoneFilled.phone === PHONE_VALUE && phoneFilled.search === '' && phoneFilled.country === '', JSON.stringify(phoneFilled))
+  await pickerClosed(phoneSession, 10_000, 'the phone picker to close after the fill')
+  const phoneNativeAfter = await evaluate(browser, phoneSession, `({ clicks: window.__nativeClicks, submits: window.__submits, href: location.href })`, 5_000)
+  check(
+    'Greenhouse React: the phone fill never submits the form or leaves the page',
+    phoneNativeAfter.submits === 0 && phoneNativeAfter.clicks === phoneNativeBefore.clicks && phoneNativeAfter.href === phoneUrl,
+    JSON.stringify([phoneNativeBefore, phoneNativeAfter]),
+  )
+  await browser.send('Target.closeTarget', { targetId: phoneTab.targetId })
+  await browser.send('Page.bringToFront', {}, uk.atsSession)
 
   await seed()
   const coldStarted = Date.now()

@@ -4,11 +4,14 @@ const hasClass = (cls: string): string =>
 const hasClassPrefix = (prefix: string): string =>
   `(${hasClass(prefix)} or contains(@class, '${prefix}--') or contains(@class, '${prefix}__'))`
 
+const TEXT_LIKE_INPUT = `.//input[@type="text" or @type="email" or @type="tel" or @type="url"]`
+
 export const xpaths = {
+  TEXT_LIKE_INPUT,
   TEXT_INPUT: [
     `.//div`,
     `[${hasClassPrefix('text-input-wrapper')}]`,
-    `[.//input[@type="text"]]`,
+    `[${TEXT_LIKE_INPUT}]`,
   ].join(''),
   NUMBER_INPUT: [
     `.//div`,

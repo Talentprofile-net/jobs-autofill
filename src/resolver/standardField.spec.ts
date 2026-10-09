@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { decideStandardField, isStandardField, normalizeNameOrId, type FieldEvidence } from './standardField'
+import { decideStandardField, isStandardField, normalizeNameOrId, type FieldEvidence, type StandardField } from './standardField'
 
 const evidence = (over: Partial<FieldEvidence> = {}): FieldEvidence => ({
   autocomplete: '',
@@ -79,8 +79,114 @@ describe('standard field decision', () => {
 
   it('never resolves from a label, legend, ARIA text or input type alone', () => {
     expect(decideStandardField(evidence({ labels: ['First name'] }))).toEqual({ refused: 'no-evidence' })
-    expect(decideStandardField(evidence({ inputType: 'email', labels: ['Email'] }))).toEqual({ refused: 'no-evidence' })
+    expect(decideStandardField(evidence({ labels: ['Phone'] }))).toEqual({ refused: 'no-evidence' })
     expect(decideStandardField(evidence({ inputType: 'tel' }))).toEqual({ refused: 'no-evidence' })
+    expect(decideStandardField(evidence({ inputType: 'email' }))).toEqual({ refused: 'no-evidence' })
+  })
+
+  it.each<[string, string[], StandardField]>([
+    ['tel', ['Phone'], 'tel'],
+    ['tel', ['Phone number *', 'Phone'], 'tel'],
+    ['email', ['Email'], 'email'],
+    ['email', ['Email address (required)'], 'email'],
+    ['url', ['LinkedIn'], 'linkedin'],
+    ['url', ['GitHub'], 'github'],
+  ])('resolves a native %p input whose every label is the exact matching field', (inputType, labels, field) => {
+    expect(decideStandardField(evidence({ inputType, labels }))).toEqual({ field })
+  })
+
+  it.each<[string, string[], string]>([
+    ['text', ['Phone'], ''],
+    ['search', ['Phone'], ''],
+    ['', ['Email'], ''],
+    ['tel', ['Email'], ''],
+    ['email', ['Phone'], ''],
+    ['tel', ['Phone', 'Preferred contact time'], ''],
+    ['tel', ['Phone', 'Email'], ''],
+    ['email', ['Work email'], ''],
+    ['tel', ['Phone'], 'Emergency contact'],
+    ['email', ['Email'], 'Reference 1'],
+  ])('finds no evidence in a native %p input labelled %p in section %p', (inputType, labels, section) => {
+    expect(decideStandardField(evidence({ inputType, labels, section }))).toEqual({ refused: 'no-evidence' })
+  })
+
+  it('keeps refusal rules when a native input carries an exact label', () => {
+    expect(decideStandardField(evidence({ inputType: 'tel', labels: ['Emergency contact phone'] }))).toEqual({ refused: 'sensitive' })
+    expect(decideStandardField(evidence({ inputType: 'email', labels: ['Referrer email'] }))).toEqual({ refused: 'sensitive' })
+    expect(decideStandardField(evidence({ inputType: 'email', labels: ['Email'], section: 'employment 1' }))).toEqual({ refused: 'section' })
+    expect(decideStandardField(evidence({ autocomplete: 'email', inputType: 'tel', labels: ['Phone'] }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ inputType: 'tel', labels: ['Phone'], name: 'first_name' }))).toEqual({ refused: 'conflict' })
+  })
+
+  it.each([
+    ['legalName--firstName', 'given-name'],
+    ['legalName--lastName', 'family-name'],
+    ['name--legalName--firstName', 'given-name'],
+    ['name--legalName--lastName', 'family-name'],
+    ['legal_name--first_name', 'given-name'],
+  ])('maps the applicant name path %p to %p', (name, field) => {
+    expect(decideStandardField(evidence({ name }))).toEqual({ field })
+    expect(decideStandardField(evidence({ id: name }))).toEqual({ field })
+    expect(decideStandardField(evidence({ id: `name--${name}`, labels: ['Given Name - Western Script'], name }))).toEqual({ field })
+  })
+
+  it('refuses an applicant name path that disagrees with the rest of the evidence', () => {
+    expect(decideStandardField(evidence({ labels: ['Last name'], name: 'legalName--firstName' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ id: 'name--legalName--lastName', name: 'legalName--firstName' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ autocomplete: 'email', name: 'legalName--firstName' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ inputType: 'email', name: 'legalName--firstName' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ labels: ['Referrer first name'], name: 'legalName--firstName' }))).toEqual({ refused: 'sensitive' })
+    expect(decideStandardField(evidence({ name: 'legalName--firstName', section: 'employment 1' }))).toEqual({ refused: 'section' })
+  })
+
+  it.each([
+    'legalName--firstNameLocal',
+    'legalName--lastNameLocal',
+    'legalName--middleName',
+    'preferredName--firstName',
+    'emergencyContact--firstName',
+    'reference--lastName',
+    'spouse--name--firstName',
+    'legalName--email',
+    'legalName--',
+    'legalName---firstName',
+    'legalName-firstName',
+    'legalName__firstName',
+  ])('resolves nothing from the path %p', (name) => {
+    expect('refused' in decideStandardField(evidence({ name, id: name }))).toBe(true)
+    expect('refused' in decideStandardField(evidence({ labels: ['First name'], name }))).toBe(true)
+  })
+
+  it.each([
+    ['_systemfield_name', 'name'],
+    ['_systemfield_email', 'email'],
+    [' _SystemField_Email ', 'email'],
+  ])('maps the exact system token %p to %p', (name, field) => {
+    expect(decideStandardField(evidence({ name }))).toEqual({ field })
+    expect(decideStandardField(evidence({ id: name }))).toEqual({ field })
+    expect(decideStandardField(evidence({ id: name, name }))).toEqual({ field })
+  })
+
+  it('refuses a system token that disagrees with the rest of the evidence', () => {
+    expect(decideStandardField(evidence({ labels: ['Email'], name: '_systemfield_name' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ inputType: 'tel', name: '_systemfield_email' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ id: 'email', name: '_systemfield_name' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ labels: ['Referrer name (if relevant)'], name: '_systemfield_name' }))).toEqual({ refused: 'sensitive' })
+    expect(decideStandardField(evidence({ control: 'textarea', name: '_systemfield_name' }))).toEqual({ refused: 'control' })
+  })
+
+  it.each([
+    '_systemfield_resume',
+    '_systemfield_location',
+    '_systemfield_eeoc_gender',
+    '7fcba0c3-c874-4ee1-81ea-5dd3331e4f15__systemfield_eeoc_gender',
+    'x_systemfield_name',
+    '_systemfield_name_2',
+    '_systemfield_names',
+    'systemfield_name',
+    '__systemfield_name',
+  ])('resolves nothing from the system token %p', (name) => {
+    expect('refused' in decideStandardField(evidence({ name, id: name }))).toBe(true)
   })
 
   it('accepts a label, legend or ARIA text that agrees with the attribute evidence', () => {

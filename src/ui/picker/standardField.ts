@@ -14,7 +14,9 @@ const isHiddenInput = (el: HTMLElement): boolean =>
 
 const controlOf = (field: HTMLElement): HTMLElement | null => {
   if (isControl(field)) return field
-  const controls = querySelectorAllDeep<HTMLElement>(field, CONTROL_SELECTOR).filter((el) => !isHiddenInput(el))
+  const controls = querySelectorAllDeep<HTMLElement>(field, CONTROL_SELECTOR).filter(
+    (el) => !isHiddenInput(el) && isRenderedElement(el) && !isConcealedControl(el),
+  )
   return controls.length === 1 ? controls[0] : null
 }
 

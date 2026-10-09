@@ -44,6 +44,17 @@ beforeEach(() => {
     <textarea id="notes" name="email"></textarea>
     <div id="cv-field"><button type="button">Upload résumé/CV</button><input id="cv" type="file" name="resume"></div>
     <input id="org-title" autocomplete="organization-title">
+    <div id="wrap-local"><label for="name--legalName--firstNameLocal">Thai Given Name</label><input type="text" id="name--legalName--firstNameLocal" name="legalName--firstNameLocal"></div>
+    <div id="wrap-system"><label for="_systemfield_name">Name</label><input type="text" id="_systemfield_name" name="_systemfield_name"></div>
+    <div id="wrap-tel"><label for="8039f8aa">Phone</label><input type="tel" id="8039f8aa" name="8039f8aa"></div>
+    <div id="wrap-text-phone"><label for="0d1e2f3a">Phone</label><input type="text" id="0d1e2f3a" name="0d1e2f3a"></div>
+    <div id="wrap-text-linkedin"><label for="dbb7e595">LinkedIn Profile</label><input type="text" id="dbb7e595" name="dbb7e595"></div>
+    <fieldset id="emergency"><legend>Emergency contact</legend><label for="em-tel">Phone</label><input type="tel" id="em-tel" name="5c1d"></fieldset>
+    <div id="wrap-dial"><label for="dial-tel">Phone</label><div style="display:none"><input id="dial-search" type="search" aria-label="Search"></div><input id="dial-tel" type="tel" name="phone"></div>
+    <div id="wrap-hidden-email"><div hidden><input type="email" name="email"></div><label for="shown-tel">Phone</label><input id="shown-tel" type="tel" name="phone"></div>
+    <div id="wrap-aria-search"><label for="aria-tel">Phone</label><div aria-hidden="true"><input id="aria-search" type="search" aria-label="Search"></div><input id="aria-tel" type="tel" name="phone"></div>
+    <div id="wrap-far-search"><label for="far-tel">Phone</label><input id="far-search" type="search" aria-label="Search"><input id="far-tel" type="tel" name="phone"></div>
+    <div id="wrap-two-shown"><input type="search" aria-label="Search"><input type="tel" name="phone"></div>
     <div id="host"></div>
   </form></body></html>`)
 })
@@ -100,6 +111,42 @@ describe('reading standard field evidence from the DOM', () => {
     expect(read('country', 'Country', ['Select...', 'Germany', 'France', 'Spain'])).toBe('country')
     expect(read('country', 'Country', ['Yes', 'No', 'Other'])).toBeNull()
     expect(read('country', 'Country', null)).toBeNull()
+  })
+
+  it('refuses a local-script name path, a generic label on a plain text input and a contact of someone else', () => {
+    expect(read('wrap-local', 'Thai Given Name')).toBeNull()
+    expect(read('wrap-text-phone', 'Phone')).toBeNull()
+    expect(read('wrap-text-linkedin', 'LinkedIn Profile')).toBeNull()
+    expect(read('wrap-tel', 'Phone extension')).toBeNull()
+    expect(read('wrap-system', 'Referrer name (if relevant)')).toBeNull()
+    expect(read('em-tel', 'Phone')).toBeNull()
+    expect(read('em-tel', 'Phone', null, 'Emergency contact')).toBeNull()
+  })
+
+  it('uses the one rendered control and ignores an unrendered companion', () => {
+    expect(read('wrap-dial', 'Phone')).toBe('tel')
+    expect(read('wrap-hidden-email', 'Phone')).toBe('tel')
+    expect(read('wrap-two-shown', 'Phone')).toBeNull()
+  })
+
+  it('reads an exact system-name field and an exact native phone field', () => {
+    expect(read('wrap-system', 'Name')).toBe('name')
+    expect(read('wrap-tel', 'Phone')).toBe('tel')
+  })
+
+  it('ignores an aria-hidden companion control', () => {
+    for (const id of ['aria-search', 'aria-tel']) shown(document.getElementById(id))
+    expect(read('wrap-aria-search', 'Phone')).toBe('tel')
+  })
+
+  it('ignores an off-canvas companion control', () => {
+    shown(document.getElementById('far-tel'))
+    setRect(document.getElementById('far-search')!, { height: 30, width: 300, x: -9999, y: 10 })
+    expect(read('wrap-far-search', 'Phone')).toBe('tel')
+  })
+
+  it('refuses a wrapper with two visible controls', () => {
+    expect(read('wrap-two-shown', 'Phone')).toBeNull()
   })
 
   it('refuses textareas, file inputs and a button-only CV uploader', () => {

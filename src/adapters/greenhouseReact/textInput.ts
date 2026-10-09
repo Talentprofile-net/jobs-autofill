@@ -11,7 +11,7 @@ export class TextInput extends GreenhouseReactBaseInput {
   override fieldType = 'TextInput'
 
   get inputElement(): HTMLInputElement | null {
-    return getElement(this.element, './/input') as HTMLInputElement | null
+    return getElement(this.element, xpaths.TEXT_LIKE_INPUT) as HTMLInputElement | null
   }
 
   currentValue(): string {
