@@ -735,3 +735,77 @@ describe('dial-code selectors and site-provided dial prefixes', () => {
     expect(input.value).toBe('+1')
   })
 })
+
+const { readStandardField } = await import('../ui/picker/standardField')
+
+const BUNQ = `<html><body><div id="page"><button>Apply now</button>
+<div id="overlay"><div id="sheet">
+  <div id="intro"><p>Nice to meet you!</p><label>Tell us who you are by filling the form below.</label></div>
+  <div id="who">
+    <div id="row-name"><label for="name">What is your full name?</label><input name="name" placeholder="Emily Clark" value=""></div>
+    <div id="row-email"><label for="email">What is your email?</label><input name="email" placeholder="emily@bunq.com" type="email" value=""></div>
+    <div id="row-phone"><label for="phone">What is your phone number?</label><input name="phone" placeholder="+31313133131" value=""></div>
+  </div>
+  <hr>
+  <div id="row-country"><label>What country do you currently live in?</label><input name="4415333" value=""></div>
+  <div id="row-trap"><div id="trap-box"><label>Leave this empty</label><input name="website" value=""></div></div>
+  <div id="row-salary"><label>What are your salary expectations? (gross, annual, in EUR)</label><input name="4415340" value=""></div>
+  <div id="row-hidden"><input name="zero" value=""><div aria-hidden="true"><input name="concealed" value=""></div><input name="far-above" value=""></div>
+</div></div></div></body></html>`
+
+const place = (el: Element | null, y: number, height: number, x = 0, width = 1280) => setRect(el!, { height, width, x, y })
+
+describe('Recruitee bunq: unassociated wording inside an overlay that overflows above the page', () => {
+  const input = (name: string) => document.querySelector<HTMLInputElement>(`input[name="${name}"]`)!
+
+  beforeEach(() => {
+    mount(BUNQ)
+    place(document.getElementById('overlay'), 0, 1457)
+    place(document.getElementById('sheet'), -696, 2850)
+    place(document.getElementById('intro'), -676, 80)
+    place(document.getElementById('who'), -576, 250)
+    const rows: [string, string, number][] = [['row-name', 'name', -560], ['row-email', 'email', -470], ['row-phone', 'phone', -380], ['row-country', '4415333', -256]]
+    for (const [row, name, y] of rows) {
+      place(document.getElementById(row), y, 90)
+      place(document.querySelector(`#${row} label`), y, 30)
+      place(input(name), y + 34, 56)
+    }
+    place(document.getElementById('row-trap'), 600, 40)
+    place(document.getElementById('trap-box'), 600, 40, -9999, 200)
+    place(document.querySelector('#trap-box label'), 600, 20, -9999, 200)
+    place(input('website'), 620, 20, -9999, 200)
+    place(document.getElementById('row-salary'), 661, 90)
+    place(input('4415340'), 695, 56)
+    place(document.getElementById('row-hidden'), 760, 120)
+    place(input('zero'), 0, 0, 0, 0)
+    place(input('concealed'), 770, 30)
+    place(input('far-above'), -9000, 30)
+    RegisterInputs(document)
+  })
+
+  it('registers the four applicant controls above the page top and names them from the nearby wording', () => {
+    expect(['name', 'email', 'phone', '4415333', '4415340'].map((name) => fieldFor(input(name))?.fieldName)).toEqual([
+      'What is your full name?',
+      'What is your email?',
+      'What is your phone number?',
+      'What country do you currently live in?',
+      'What are your salary expectations? (gross, annual, in EUR)',
+    ])
+  })
+
+  it('still ignores a far-left honeypot inside the same overlay', () => {
+    expect(fieldFor(input('website')) ?? null).toBeNull()
+  })
+
+  it('still ignores zero-size, concealed and far-above controls outside their container', () => {
+    expect(['zero', 'concealed', 'far-above'].map((name) => fieldFor(input(name)) ?? null)).toEqual([null, null, null])
+  })
+
+  it('recognizes full name, email, phone and current country, and nothing for salary', () => {
+    const standard = (name: string) => {
+      const field = fieldFor(input(name))!
+      return readStandardField(field.element, { fieldName: field.fieldName, section: field.section }, null)
+    }
+    expect(['name', 'email', 'phone', '4415333', '4415340'].map(standard)).toEqual(['name', 'email', 'tel', 'country', null])
+  })
+})

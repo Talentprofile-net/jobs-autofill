@@ -93,6 +93,16 @@ export const typesCompatible = (stored: string, live: string): boolean => {
   return TEXTISH.has(a) && TEXTISH.has(b)
 }
 
+export const findExactLearnedAnswer = (
+  questionText: string,
+  fieldType: string,
+  answers: TalentAnswer[],
+): MatchResult | null => {
+  const normalized = normalizeQuestion(questionText)
+  const answer = answers.find((a) => typesCompatible(a.fieldType, fieldType) && a.normalizedQuestion === normalized)
+  return answer ? { answer, score: 1.0, method: 'normalized_text' } : null
+}
+
 export const findLearnedAnswer = (
   questionText: string,
   fieldType: string,
@@ -100,16 +110,10 @@ export const findLearnedAnswer = (
 ): MatchResult | null => {
   if (answers.length === 0) return null
 
-  const normalized = normalizeQuestion(questionText)
+  const exact = findExactLearnedAnswer(questionText, fieldType, answers)
+  if (exact) return exact
 
-  for (const answer of answers) {
-    if (!typesCompatible(answer.fieldType, fieldType)) continue
-    if (answer.normalizedQuestion === normalized) {
-      return { answer, score: 1.0, method: 'normalized_text' }
-    }
-  }
-
-  const keywords = extractKeywords(normalized)
+  const keywords = extractKeywords(normalizeQuestion(questionText))
   if (keywords.size < JACCARD_MIN_SHARED) return null
 
   let best: MatchResult | null = null

@@ -21,6 +21,7 @@ type Sent = { kind?: string; hostId?: string; activation?: string; maxHeight?: n
 const sent: Sent[] = []
 const inserted: string[] = []
 let liveFloating = 0
+const shifts: unknown[] = []
 let mobile = false
 
 mock.module('wxt/browser', () => ({
@@ -36,7 +37,8 @@ mock.module('wxt/browser', () => ({
 }))
 mock.module('@floating-ui/dom', () => ({
   ...actual.floating,
-  autoUpdate: () => {
+  autoUpdate: (_reference: unknown, _floating: unknown, update: () => void) => {
+    update()
     liveFloating += 1
     return () => {
       liveFloating -= 1
@@ -45,7 +47,10 @@ mock.module('@floating-ui/dom', () => ({
   computePosition: async () => ({ x: 10, y: 20 }),
   flip: () => ({}),
   offset: () => ({}),
-  shift: () => ({}),
+  shift: (options: unknown) => {
+    shifts.push(options)
+    return {}
+  },
   size: () => ({}),
 }))
 mock.module('~/capture/optionLabels', () => ({ ...actual.optionLabels, readOptionLabels: () => null }))
@@ -181,6 +186,15 @@ beforeEach(() => {
   fills.length = 0
   liveFloating = 0
   mobile = false
+})
+
+describe('picker placement', () => {
+  it('keeps the picker inside the viewport on both axes when its field cannot scroll into view', () => {
+    shifts.length = 0
+    openPicker(fieldTarget('first'))
+    expect(shifts).toEqual([{ crossAxis: true, padding: 8 }])
+    closePicker()
+  })
 })
 
 describe('persistent picker frame', () => {

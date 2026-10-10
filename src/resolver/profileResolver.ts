@@ -8,6 +8,8 @@ import { parseLocation, type ParsedLocation } from './parseLocation'
 import { parseDate, type ParsedDate } from './parseDate'
 import { parseSection, type ParsedSection } from './sectionParser'
 import { findProfileLink, profileEmail, profilePhone, websiteLink } from './profileContacts'
+import { isAlternateIdentityQuestion } from './alternateIdentity'
+import { isNamePronunciationQuestion } from './namePronunciation'
 
 const TEXT_FIELD_TYPES = new Set(['TextInput', 'ContentEditable'])
 const FILE_FIELD_TYPES = new Set(['FileUpload', 'SingleFileUpload', 'MultiFileUpload'])
@@ -124,7 +126,6 @@ const re = {
   middleName: /\bmiddle\s*name\b/i,
   lastName: /\b(last|family|sur)\s*name\b/i,
   fullName: /\b(full|legal|applicant|your)\s*name\b|^\s*name\s*$/i,
-  preferredName: /\b(preferred|nickname|alias)\b/i,
   email: /\bemail\b/i,
   phone: /\b(phone|mobile|cell|telephone|tel)\b/i,
   phoneExclusions: /\b(code|country|prefix|dialing|extension)\b/i,
@@ -181,9 +182,6 @@ const explicitDialCode = (phone: string): string | null => {
   const match = /^\s*\+(\d{1,4})[\s\-.(]/.exec(phone)
   return match ? `+${match[1]}` : null
 }
-
-const isPlaceField = (n: string): boolean =>
-  isLocationField(n) || isCountryField(n) || re.city.test(n) || re.region.test(n)
 
 const isNationalityField = (n: string): boolean =>
   re.nationality.test(n)
@@ -328,9 +326,6 @@ const resolveGeneric = (
       str(profile.profileName ?? '', fullNameConfidence(profile.profileName)),
       'profileName',
     )
-  }
-  if (re.preferredName.test(fieldName) && !isPlaceField(fieldName)) {
-    return withField(str(splitName(profile.profileName).first, 'guess'), 'profileName')
   }
   if (re.email.test(fieldName)) {
     return withField(str(profileEmail(profile)), 'user.email')
@@ -529,7 +524,7 @@ export const resolveField = (
   profile: Profile,
 ): ResolveResult => {
   const trimmed = (fieldName ?? '').trim()
-  if (!trimmed) return unsupported()
+  if (!trimmed || isAlternateIdentityQuestion(trimmed) || isNamePronunciationQuestion(trimmed)) return unsupported()
   if (FILE_FIELD_TYPES.has(fieldType)) return unsupported()
   if (re.coverLetter.test(trimmed)) return unsupported()
 

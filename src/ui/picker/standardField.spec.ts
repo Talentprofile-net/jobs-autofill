@@ -125,7 +125,6 @@ describe('reading standard field evidence from the DOM', () => {
   it('refuses a local-script name path, a generic label on a plain text input and a contact of someone else', () => {
     expect(read('wrap-local', 'Thai Given Name')).toBeNull()
     expect(read('wrap-text-phone', 'Phone')).toBeNull()
-    expect(read('wrap-text-linkedin', 'LinkedIn Profile')).toBeNull()
     expect(read('wrap-tel', 'Phone extension')).toBeNull()
     expect(read('wrap-system', 'Referrer name (if relevant)')).toBeNull()
     expect(read('em-tel', 'Phone')).toBeNull()
@@ -209,5 +208,37 @@ describe('reading standard field evidence from the DOM', () => {
     input.setAttribute('value', 'kept')
     read('first')
     expect(input.getAttribute('value')).toBe('kept')
+  })
+})
+
+describe('alternate identity, reviewed labels and provider links in the DOM', () => {
+  beforeEach(() => {
+    realm(`<html><body><form>
+      <div id="wrap-preferred"><label for="_systemfield_name">Preferred First Name</label><div><input id="_systemfield_name" name="_systemfield_name" type="text"></div></div>
+      <div id="wrap-preferred-full"><label for="pf">Preferred First &amp; Last Name</label><div><input id="pf" name="_systemfield_name" type="text"></div></div>
+      <div id="wrap-legal-diff"><label for="question_64278780">Legal Name (if different than above)</label><input id="question_64278780" type="text" aria-label="Legal Name (if different than above)"></div>
+      <div id="wrap-legal-first"><label for="d9af7dea">Legal First Name</label><div><input id="d9af7dea" name="d9af7dea" type="text"></div></div>
+      <div id="wrap-current-city"><label for="jv-field-yyON2fwV">Current City<span>*</span></label><input id="jv-field-yyON2fwV" type="text"></div>
+      <div id="wrap-text-linkedin"><label for="dbb7e595">LinkedIn Profile</label><input type="text" id="dbb7e595" name="dbb7e595"></div>
+      <div id="wrap-link-textarea"><label for="candidate_answers_attributes_3_text">Please insert link to your LinkedIn, portfolio or equivalent<sup aria-hidden="true">*</sup><span class="sr-only">Required</span></label><textarea id="candidate_answers_attributes_3_text"></textarea></div>
+      <div id="wrap-two-links"><label for="two-links">LinkedIn or GitHub profile URL</label><input id="two-links" type="text"></div>
+    </form></body></html>`)
+  })
+
+  it('refuses preferred and conditional alternate names even on a system name field', () => {
+    expect(read('wrap-preferred', 'Preferred First Name')).toBeNull()
+    expect(read('wrap-preferred-full', 'Preferred First & Last Name')).toBeNull()
+    expect(read('wrap-legal-diff', 'Legal Name (if different than above)')).toBeNull()
+  })
+
+  it('reads reviewed applicant labels', () => {
+    expect(read('wrap-legal-first', 'Legal First Name')).toBe('given-name')
+    expect(read('wrap-current-city', 'Current City*')).toBe('address-level2')
+  })
+
+  it('reads a single-provider link question on a text input or a textarea and refuses two providers', () => {
+    expect(read('wrap-text-linkedin', 'LinkedIn Profile')).toBe('linkedin')
+    expect(read('wrap-link-textarea', 'Please insert link to your LinkedIn, portfolio or equivalent*')).toBe('linkedin')
+    expect(read('wrap-two-links', 'LinkedIn or GitHub profile URL')).toBeNull()
   })
 })

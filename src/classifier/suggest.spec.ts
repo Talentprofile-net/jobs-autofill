@@ -8,9 +8,11 @@ import {
   suggestAnswer,
   type ClassifyRequest,
   type SuggestionDependencies,
+  type SuggestionRequest,
 } from './suggest'
 import { talentAnswer } from './testAnswers'
 import type { ProfileValue } from '~/field/types'
+import { normalizeQuestion } from '~/resolver/normalizeQuestion'
 
 const decision = (over: Partial<Decision> = {}): Decision => ({
   abstentionReason: null,
@@ -350,6 +352,127 @@ describe('standard field suggestions', () => {
       expect(asked).toEqual([])
       expect(result.status === 'standard').toBe(false)
     }
+  })
+})
+
+const fullName: ProfileValue = { confidence: 'exact', kind: 'string', value: 'Audit Tester' }
+const saved = (id: string, questionText: string) =>
+  talentAnswer({ answerText: 'Audit Tester', answerValue: fullName, id, normalizedQuestion: normalizeQuestion(questionText), questionText })
+const traced = () => {
+  const deps = dependencies(decision(), { linked: 'label-education' })
+  const steps: string[] = []
+  return {
+    deps: {
+      ...deps,
+      labelName: async (id: string) => {
+        steps.push(`labelName:${id}`)
+        return id
+      },
+      standardValue: async (field: string) => {
+        steps.push(`standardValue:${field}`)
+        return fullName
+      },
+    },
+    steps,
+  }
+}
+const paths = (questionText: string) => ({
+  classifier: { answers: [saved('linked', 'Full name')], request: { ...request, questionText } },
+  normalized: { answers: [saved('exact', questionText)], request: { ...request, questionText } },
+  overlap: { answers: [saved('overlap', `${questionText} (optional)`)], request: { ...request, questionText } },
+  standard: { answers: [], request: { ...request, questionText, standardField: 'name' as const } },
+})
+const run = async (path: { answers: ReturnType<typeof talentAnswer>[]; request: SuggestionRequest }) => {
+  const { deps, steps } = traced()
+  const result = await suggestAnswer(path.request, path.answers, 'DE', deps)
+  return { calls: deps.calls.length, result, runtimes: deps.runtimes.length, steps }
+}
+
+describe('alternate identity questions', () => {
+  it('offers a suggestion on every path for an allowed applicant name question', async () => {
+    const control = paths('Legal First Name')
+    expect((await run(control.normalized)).result.status).toBe('matched')
+    const overlap = (await run(control.overlap)).result
+    expect(overlap.status === 'matched' ? overlap.method : overlap.status).toBe('jaccard')
+    expect((await run(control.standard)).result.status).toBe('standard')
+    const classified = await run(control.classifier)
+    expect(classified.result.status === 'classified' ? classified.result.answer?.id : classified.result.status).toBe('linked')
+    expect(classified.calls).toBe(1)
+  })
+
+  it.each(['Preferred First Name', 'Preferred First & Last Name', 'Legal Name (if different than above)'])(
+    'refuses %p before word-overlap matching',
+    async (questionText) => {
+      const outcome = await run(paths(questionText).overlap)
+      expect(outcome).toEqual({ calls: 0, result: { reason: 'alternate_identity', status: 'refused' }, runtimes: 0, steps: [] })
+    },
+  )
+
+  it.each([
+    'Preferred First Name',
+    'Preferred First & Last Name',
+    'Legal Name (if different than above)',
+    'Preferred name',
+    'Nickname',
+    'Alias',
+    'Maiden name',
+    'Other names you have used',
+  ])('refuses %p before text matching, the standard field, the classifier and answer linking', async (questionText) => {
+    const refused = { calls: 0, result: { reason: 'alternate_identity', status: 'refused' }, runtimes: 0, steps: [] }
+    const all = paths(questionText)
+    expect(await run(all.normalized)).toEqual(refused)
+    expect(await run(all.standard)).toEqual(refused)
+    expect(await run(all.classifier)).toEqual(refused)
+  })
+})
+
+describe('name pronunciation questions', () => {
+  const PRONUNCIATION = ['How do you pronounce your name?', 'Name pronunciation', 'Phonetic spelling of your name', 'How should we say your name?']
+  const refused = { calls: 0, result: { reason: 'name_pronunciation', status: 'refused' }, runtimes: 0, steps: [] }
+
+  it.each(PRONUNCIATION)('accepts an exact saved answer for %p without the classifier', async (questionText) => {
+    const answer = talentAnswer({ answerText: 'AW-dit', answerValue: { confidence: 'exact', kind: 'string', value: 'AW-dit' }, id: 'exact', normalizedQuestion: normalizeQuestion(questionText), questionText })
+    const outcome = await run({ answers: [answer], request: { ...request, questionText, standardField: 'name' } })
+    expect(outcome.result).toEqual({
+      answer: { answerText: 'AW-dit', id: 'exact', questionText },
+      method: 'normalized_text',
+      status: 'matched',
+      value: { confidence: 'exact', kind: 'string', value: 'AW-dit' },
+    })
+    expect(outcome.calls).toBe(0)
+    expect(outcome.steps).toEqual([])
+  })
+
+  it.each(PRONUNCIATION)('refuses %p without an exact answer and never reaches the standard field or the classifier', async (questionText) => {
+    const all = paths(questionText)
+    expect(await run(all.standard)).toEqual(refused)
+    expect(await run(all.classifier)).toEqual(refused)
+    expect(await run({ answers: [], request: { ...request, questionText } })).toEqual(refused)
+  })
+
+  it('refuses a word-overlap match', async () => {
+    const answer = saved('overlap', 'Phonetic spelling of your full name')
+    expect(await run({ answers: [answer], request: { ...request, questionText: 'Phonetic spelling of your name' } })).toEqual(refused)
+  })
+
+  it('refuses an exact answer whose value is unusable instead of falling back', async () => {
+    const questionText = 'Name pronunciation'
+    const answer = talentAnswer({ answerText: '', answerValue: { confidence: 'exact', kind: 'string', value: '' }, id: 'empty', normalizedQuestion: normalizeQuestion(questionText), questionText })
+    expect(await run({ answers: [answer, saved('linked', 'Full name')], request: { ...request, questionText, standardField: 'name' } })).toEqual(refused)
+  })
+
+  it('keeps the exact saved answer for preferred pronouns', async () => {
+    const questionText = 'Preferred pronouns'
+    const answer = talentAnswer({ answerText: 'they/them', answerValue: { confidence: 'exact', kind: 'string', value: 'they/them' }, id: 'pronouns', normalizedQuestion: normalizeQuestion(questionText), questionText })
+    const outcome = await run({ answers: [answer], request: { ...request, questionText } })
+    expect(outcome.result.status === 'matched' ? [outcome.result.method, outcome.result.answer.id] : outcome.result.status).toEqual(['normalized_text', 'pronouns'])
+  })
+
+  it('keeps every path for an ordinary full name question', async () => {
+    const control = paths('Full name')
+    expect((await run(control.standard)).result.status).toBe('standard')
+    const classified = await run(paths('Your full legal name').classifier)
+    expect(classified.result.status === 'classified' ? classified.result.answer?.id : classified.result.status).toBe('linked')
   })
 })
 

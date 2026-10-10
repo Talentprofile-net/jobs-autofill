@@ -128,7 +128,8 @@ describe('standard field decision', () => {
   ])('maps the applicant name path %p to %p', (name, field) => {
     expect(decideStandardField(evidence({ name }))).toEqual({ field })
     expect(decideStandardField(evidence({ id: name }))).toEqual({ field })
-    expect(decideStandardField(evidence({ id: `name--${name}`, labels: ['Given Name - Western Script'], name }))).toEqual({ field })
+    const label = field === 'given-name' ? 'Given Name - Western Script' : 'Family Name - Western Script'
+    expect(decideStandardField(evidence({ id: `name--${name}`, labels: [label], name }))).toEqual({ field })
   })
 
   it('refuses an applicant name path that disagrees with the rest of the evidence', () => {
@@ -326,5 +327,205 @@ describe('standard field decision', () => {
     expect(isStandardField('url')).toBe(false)
     expect(isStandardField(1)).toBe(false)
     expect(isStandardField(null)).toBe(false)
+  })
+})
+
+describe('alternate identity fields', () => {
+  it.each<[string, Partial<FieldEvidence>]>([
+    ['Preferred First Name', { name: '_systemfield_name' }],
+    ['Preferred First & Last Name', { id: '_systemfield_name', name: '_systemfield_name' }],
+    ['Legal Name (if different than above)', { name: 'full_name' }],
+    ['Preferred name', { autocomplete: 'given-name' }],
+    ['Nickname', { autocomplete: 'name' }],
+    ['Alias', { name: 'full_name' }],
+    ['Full legal name, if different from your preferred name', { name: 'full_name' }],
+    ['Maiden name', { autocomplete: 'family-name' }],
+    ['Name you go by', { name: 'first_name' }],
+  ])('refuses %p even with standard attributes %p', (label, over) => {
+    expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ refused: 'alternate-identity' })
+    expect(decideStandardField(evidence({ inputType: 'email', labels: [label], ...over }))).toEqual({ refused: 'alternate-identity' })
+  })
+
+  it.each<[string, Partial<FieldEvidence>, StandardField]>([
+    ['Legal First Name', { name: 'first_name' }, 'given-name'],
+    ['Legal Last Name', { name: 'last_name' }, 'family-name'],
+    ['Legal name', { name: '_systemfield_name' }, 'name'],
+    ['First name', { autocomplete: 'given-name' }, 'given-name'],
+    ['Last name', { autocomplete: 'family-name' }, 'family-name'],
+    ['Full name', { name: 'full_name' }, 'name'],
+    ['Name', { name: '_systemfield_name' }, 'name'],
+  ])('keeps the applicant name field %p', (label, over, field) => {
+    expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ field })
+  })
+})
+
+describe('name pronunciation fields', () => {
+  it.each<[string, Partial<FieldEvidence>]>([
+    ['How do you pronounce your name?', { autocomplete: 'name' }],
+    ['Name pronunciation', { autocomplete: 'name' }],
+    ['Phonetic spelling of your name', { name: 'full_name' }],
+    ['How should we say your name?', { id: 'fullname' }],
+    ['How do you pronounce your name?', { name: '_systemfield_name' }],
+    ['Name pronunciation', { id: '_systemfield_name', name: '_systemfield_name' }],
+    ['How do you pronounce your name?', { name: 'name' }],
+    ['How do you pronounce your name?', { autocomplete: 'given-name', name: 'first_name' }],
+  ])('refuses %p even with standard attributes %p', (label, over) => {
+    expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ refused: 'name-pronunciation' })
+  })
+
+  it('refuses a pronunciation control named by its attributes alone', () => {
+    expect(decideStandardField(evidence({ autocomplete: 'name', name: 'name_pronunciation' }))).toEqual({ refused: 'name-pronunciation' })
+  })
+
+  it.each<[string, Partial<FieldEvidence>, StandardField]>([
+    ['Full name', { autocomplete: 'name' }, 'name'],
+    ['Legal name', { name: '_systemfield_name' }, 'name'],
+    ['Name', { name: 'full_name' }, 'name'],
+  ])('keeps the full name field %p', (label, over, field) => {
+    expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ field })
+  })
+
+  it('does not treat preferred pronouns as pronunciation', () => {
+    expect(decideStandardField(evidence({ autocomplete: 'name', labels: ['Preferred pronouns'] }))).toEqual({ refused: 'sensitive' })
+  })
+})
+
+describe('reviewed exact applicant labels', () => {
+  it.each<[string[], StandardField]>([
+    [['Legal First Name'], 'given-name'],
+    [['Legal Last Name'], 'family-name'],
+    [['Current City*'], 'address-level2'],
+    [['Where do you live? (City) *'], 'address-level2'],
+    [['Current Title*'], 'organization-title'],
+    [['Current/Most Recent Job Title'], 'organization-title'],
+    [['What country are you based in?'], 'country'],
+    [['What country do you currently live in?'], 'country'],
+    [['Legal First Name', 'Legal First Name'], 'given-name'],
+  ])('resolves %p on a plain text control', (labels, field) => {
+    expect(decideStandardField(evidence({ labels }))).toEqual({ field })
+    expect(decideStandardField(evidence({ inputType: '', labels }))).toEqual({ field })
+  })
+
+  it.each<[string[], Partial<FieldEvidence>]>([
+    [['Legal First Name'], { combobox: true }],
+    [['Current City'], { combobox: true }],
+    [['Current Title'], { combobox: true }],
+    [['Legal First Name'], { control: 'textarea' }],
+    [['Current Title'], { control: 'select', optionLabels: ['Engineer', 'Manager', 'Designer'] }],
+    [['Legal First Name'], { inputType: 'email' }],
+    [['Legal First Name'], { section: 'employment 1' }],
+    [['Current Title'], { section: 'employment 1' }],
+    [['Current City'], { section: 'Emergency contact' }],
+    [['Legal First Name', 'Legal Last Name'], {}],
+    [['Legal First Name'], { name: 'last_name' }],
+    [['Current City'], { autocomplete: 'country' }],
+    [['Legal First Name', 'Contact'], {}],
+    [['Previous job title'], {}],
+    [['Most recent employer'], {}],
+    [['City of birth'], {}],
+    [['What country are you a citizen of?'], {}],
+    [['Which country would you relocate to?'], {}],
+    [['Emergency contact legal first name'], {}],
+    [['Reference current title'], {}],
+  ])('refuses %p with %p', (labels, over) => {
+    expect('refused' in decideStandardField(evidence({ labels, ...over }))).toBe(true)
+  })
+})
+
+describe('worded name tokens and wording conflicts', () => {
+  it('maps the bare name token only with full-name wording', () => {
+    expect(decideStandardField(evidence({ labels: ['What is your full name?'], name: 'name' }))).toEqual({ field: 'name' })
+    expect(decideStandardField(evidence({ id: 'name', labels: ['Full name *'] }))).toEqual({ field: 'name' })
+    expect(decideStandardField(evidence({ name: 'name' }))).toEqual({ refused: 'no-evidence' })
+    expect(decideStandardField(evidence({ labels: ['Name'], name: 'name' }))).toEqual({ refused: 'no-evidence' })
+    expect(decideStandardField(evidence({ labels: ['What is your first name?'], name: 'name' }))).toEqual({ refused: 'no-evidence' })
+    expect(decideStandardField(evidence({ labels: ['Company name'], name: 'name' }))).toEqual({ refused: 'sensitive' })
+    expect(decideStandardField(evidence({ labels: ['Full name or email'], name: 'name' }))).toEqual({ refused: 'no-evidence' })
+  })
+
+  it('reads combined first and last name wording as the full name', () => {
+    for (const label of ['First and Last Name', 'Legal First and Last Name', 'First & Last Name', 'First/Last name']) {
+      expect(decideStandardField(evidence({ labels: [label], name: '_systemfield_name' }))).toEqual({ field: 'name' })
+      expect(decideStandardField(evidence({ labels: [label], name: 'name' }))).toEqual({ field: 'name' })
+    }
+    expect(decideStandardField(evidence({ labels: ['First and Last Name'], name: 'first_name' }))).toEqual({ refused: 'conflict' })
+  })
+
+  it('resolves an exact name token whose unassociated wording agrees', () => {
+    expect(decideStandardField(evidence({ inputType: 'email', labels: ['What is your email?'], name: 'email' }))).toEqual({ field: 'email' })
+    expect(decideStandardField(evidence({ inputType: '', labels: ['What is your phone number?'], name: 'phone' }))).toEqual({ field: 'tel' })
+    expect(decideStandardField(evidence({ inputType: '', labels: ['Phone (include country code)'], name: 'phone' }))).toEqual({ field: 'tel' })
+  })
+
+  it('refuses a token or autocomplete whose wording names a different field', () => {
+    expect(decideStandardField(evidence({ labels: ['What is your phone number?'], name: 'email' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ labels: ['Email address'], name: 'phone' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ labels: ['Legal First Name'], name: '_systemfield_name' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ autocomplete: 'email', labels: ['Your mobile'] }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ labels: ['What country do you live in?'], name: 'city' }))).toEqual({ refused: 'conflict' })
+    expect(decideStandardField(evidence({ labels: ['Given Name - Western Script'], name: 'legalName--lastName' }))).toEqual({ refused: 'conflict' })
+  })
+})
+
+describe('another person', () => {
+  it.each<[string, Partial<FieldEvidence>]>([
+    ['Spouse full name', { name: 'full_name' }],
+    ['Referrer email', { inputType: 'email', name: 'email' }],
+    ['Emergency contact phone', { inputType: 'tel', name: 'phone' }],
+    ['Emergency contact city', { name: 'city' }],
+    ['Reference country', { autocomplete: 'country' }],
+    ['Referrer LinkedIn profile', { inputType: 'url' }],
+    ['Reference GitHub URL', { name: 'github' }],
+    ["Your manager's LinkedIn URL", {}],
+  ])('refuses %p with %p', (label, over) => {
+    expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ refused: 'sensitive' })
+  })
+})
+
+describe('provider link questions', () => {
+  it.each<[string, Partial<FieldEvidence>, StandardField]>([
+    ['If you have a portfolio, GitHub, or other project showcases, please share a link below.', {}, 'github'],
+    ['Portfolio / Github URL', {}, 'github'],
+    ['Please insert link to your LinkedIn, portfolio or equivalent*', { control: 'textarea', inputType: '' }, 'linkedin'],
+    ['Would you like to include your LinkedIn profile, personal website or blog?', {}, 'linkedin'],
+    ['LinkedIn Profile', {}, 'linkedin'],
+    ["What's your GitHub profile?", { inputType: 'url' }, 'github'],
+  ])('maps %p with exactly one provider', (label, over, field) => {
+    expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ field })
+  })
+
+  it.each<[string, Partial<FieldEvidence>]>([
+    ['LinkedIn or GitHub profile URL', {}],
+    ['LinkedIn/GitHub/portfolio link', {}],
+    ['LinkedIn/GitHub/portfolio link', { control: 'textarea', inputType: '' }],
+    ['Portfolio link', {}],
+    ['Personal website URL', {}],
+    ['Website', { inputType: 'url' }],
+    ["Your referrer's LinkedIn profile", {}],
+    ["Your co-founder's GitHub URL", {}],
+    ['LinkedIn profile of the person who referred you', {}],
+    ['Manager LinkedIn URL', {}],
+    ['LinkedIn', {}],
+    ['How did you hear about us? (LinkedIn, Indeed, other)', {}],
+    ['Share 2–3 of your open-source contributions with links (GitHub PRs, issues, or projects you maintain)', { control: 'textarea', inputType: '' }],
+    ['GitHub profiles of your projects', {}],
+    [`Tell us about a project you are proud of, what you built, who you built it with, what was hard about it, and share a link to its GitHub page`, { control: 'textarea', inputType: '' }],
+    ['LinkedIn profile', { combobox: true }],
+    ['LinkedIn profile', { control: 'select', optionLabels: ['Yes', 'No', 'Maybe'] }],
+    ['LinkedIn profile', { inputType: 'email' }],
+    ['LinkedIn profile', { section: 'employment 1' }],
+    ['LinkedIn profile', { name: 'github' }],
+  ])('refuses %p with %p', (label, over) => {
+    expect('refused' in decideStandardField(evidence({ labels: [label], ...over }))).toBe(true)
+  })
+
+  it('needs every label to name the same single provider', () => {
+    expect('refused' in decideStandardField(evidence({ labels: ['GitHub URL', 'LinkedIn URL'] }))).toBe(true)
+    expect('refused' in decideStandardField(evidence({ labels: ['GitHub URL', 'Links'] }))).toBe(true)
+  })
+
+  it('keeps refusing a textarea for every other field', () => {
+    expect(decideStandardField(evidence({ control: 'textarea', inputType: '', labels: ['Email'], name: 'email' }))).toEqual({ refused: 'control' })
+    expect(decideStandardField(evidence({ control: 'textarea', inputType: '', labels: ['Current City'] }))).toEqual({ refused: 'no-evidence' })
   })
 })

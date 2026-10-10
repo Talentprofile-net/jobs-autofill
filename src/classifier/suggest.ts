@@ -3,12 +3,15 @@ import { toCorpusFieldType } from '~/capture/corpusVocabulary'
 import { MAX_OPTIONS } from '~/capture/optionLabels'
 import type { ProfileValue } from '~/field/types'
 import {
+  findExactLearnedAnswer,
   findLearnedAnswer,
   learnedAnswerToProfileValue,
   typesCompatible,
 } from '~/resolver/learnedAnswerMatcher'
 import type { AbstentionReason, AnswerKind, ClassifierInput, Decision } from './contract'
 import { answersForJob } from '~/resolver/countryScopedAnswers'
+import { isAlternateIdentityQuestion } from '~/resolver/alternateIdentity'
+import { isNamePronunciationQuestion } from '~/resolver/namePronunciation'
 import { isRefusedQuestion, isStandardField, type StandardField } from '~/resolver/standardField'
 
 export type SuggestionRequest = {
@@ -27,6 +30,7 @@ export type SuggestedAnswer = {
 
 export type Suggestion =
   | { status: 'disabled' }
+  | { status: 'refused'; reason: 'alternate_identity' | 'name_pronunciation' }
   | { status: 'unavailable'; error: string }
   | {
       status: 'matched'
@@ -171,14 +175,17 @@ export const suggestAnswer = async (
   jobCountry: string,
   dependencies: SuggestionDependencies,
 ): Promise<Suggestion> => {
+  if (isAlternateIdentityQuestion(request.questionText)) return { reason: 'alternate_identity', status: 'refused' }
+  const pronunciation = isNamePronunciationQuestion(request.questionText)
   const answers = answersForJob(allAnswers, request.questionText, jobCountry)
-  const match = findLearnedAnswer(request.questionText, request.fieldType, answers)
+  const match = (pronunciation ? findExactLearnedAnswer : findLearnedAnswer)(request.questionText, request.fieldType, answers)
   if (match && match.method !== 'classifier') {
     const value = learnedAnswerToProfileValue(match, request.fieldType)
     if (isUsableValue(value)) {
       return { answer: summary(match.answer), method: match.method, status: 'matched', value }
     }
   }
+  if (pronunciation) return { reason: 'name_pronunciation', status: 'refused' }
   const standardField = request.standardField
   if (standardField && !isRefusedQuestion(request.questionText)) {
     const value = await dependencies.standardValue(standardField, request.fieldType)

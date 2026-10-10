@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 
 import type { Profile } from '~/api/types'
+import { talentAnswer } from '~/classifier/testAnswers'
+import { resolveLearnedAnswersBatch } from './learnedAnswers'
+import { normalizeQuestion } from './normalizeQuestion'
 import { resolveField } from './profileResolver'
 
 const profile = (location: string | null): Profile => ({
@@ -45,10 +48,59 @@ describe('location for dropdown fields', () => {
 })
 
 describe('preferred name versus preferred location', () => {
-  it('keeps preferred name, nickname and alias on the name heuristic', () => {
-    for (const label of ['Preferred name', 'Preferred first name', 'Nickname', 'Alias']) {
-      expect(resolveField(label, 'TextInput', '', profile('Example City')).profileField).toBe('profileName')
+  it.each([
+    'Preferred First Name',
+    'Preferred First & Last Name',
+    'Preferred Name',
+    'Nickname',
+    'Alias',
+    'Maiden Name',
+    'Other names you have used',
+    'Legal Name (if different than above)',
+  ])('refuses the alternate identity field %p', (label) => {
+    for (const fieldType of ['TextInput', 'SimpleDropdown']) {
+      for (const section of ['', 'employment 1']) {
+        expect(resolveField(label, fieldType, section, profile('Example City'))).toEqual({
+          profileField: null,
+          value: { kind: 'unsupported' },
+        })
+      }
     }
+  })
+
+  it('never fills an alternate identity field from a saved answer, even an exact one', () => {
+    const questions = ['Preferred First Name', 'Preferred First & Last Name', 'Legal Name (if different than above)', 'Nickname']
+    const saved = (questionText: string, i: number) =>
+      talentAnswer({
+        answerText: 'Saved Value',
+        answerValue: { confidence: 'exact', kind: 'string', value: 'Saved Value' },
+        id: `saved-${i}`,
+        normalizedQuestion: normalizeQuestion(questionText),
+        questionText,
+      })
+    const withAnswers = { ...profile('Example City'), talentAnswers: [...questions, 'Legal First Name'].map(saved) }
+    const requests = [...questions, 'Legal First Name'].map((fieldName, i) => ({ fieldName, fieldType: 'TextInput', requestId: `r${i}`, section: '' }))
+    expect(resolveLearnedAnswersBatch(requests, withAnswers, '_unknown').map((result) => [result.value.kind, result.matchedAnswerId])).toEqual([
+      ['unsupported', null],
+      ['unsupported', null],
+      ['unsupported', null],
+      ['unsupported', null],
+      ['string', 'saved-4'],
+    ])
+  })
+
+  it.each([
+    ['Legal First Name', 'Audit'],
+    ['Legal Last Name', 'Tester'],
+    ['Legal Name', 'Audit Tester'],
+    ['First Name', 'Audit'],
+    ['Last Name', 'Tester'],
+    ['Full Name', 'Audit Tester'],
+  ])('keeps the legal name field %p', (label, value) => {
+    expect(resolveField(label, 'TextInput', '', profile('Example City'))).toEqual({
+      profileField: 'profileName',
+      value: { confidence: 'exact', kind: 'string', value },
+    })
   })
 
   it('resolves preferred location and preferred office location from the profile location', () => {
@@ -64,6 +116,30 @@ describe('preferred name versus preferred location', () => {
 
   it('does not route other preferred questions to the location', () => {
     expect(resolveField('Preferred start date', 'TextInput', '', profile('Example City')).profileField).not.toBe('location')
+  })
+})
+
+describe('name pronunciation questions', () => {
+  it.each([
+    'How do you pronounce your name?',
+    'Name pronunciation',
+    'Phonetic spelling of your name',
+    'How should we say your name?',
+  ])('refuses the full name for %p', (label) => {
+    for (const fieldType of ['TextInput', 'TextArea']) {
+      expect(resolveField(label, fieldType, '', profile('Example City'))).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+    }
+  })
+
+  it.each([
+    ['Full Name', 'Audit Tester'],
+    ['Legal Name', 'Audit Tester'],
+    ['Your name', 'Audit Tester'],
+  ])('keeps the full name field %p', (label, value) => {
+    expect(resolveField(label, 'TextInput', '', profile('Example City'))).toEqual({
+      profileField: 'profileName',
+      value: { confidence: 'exact', kind: 'string', value },
+    })
   })
 })
 

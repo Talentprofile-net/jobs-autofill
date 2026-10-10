@@ -273,7 +273,7 @@ const showFrame = (options: {
         middleware: [
           offset(POPOVER_OFFSET),
           flip({ fallbackPlacements: ["bottom-end", "top-start", "bottom-start"] }),
-          shift({ padding: 8 }),
+          shift({ crossAxis: true, padding: 8 }),
           size({
             padding: 8,
             apply({ availableHeight }) {

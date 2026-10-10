@@ -56,6 +56,17 @@ const recording = (enabled: boolean, over: Partial<SuggestionServiceDependencies
 }
 
 describe('suggestion service', () => {
+  it('refuses an alternate identity question without the classifier, labels, linking or the profile value', async () => {
+    const { called, suggest } = recording(true)
+    for (const questionText of ['Preferred First Name', 'Legal Name (if different than above)']) {
+      expect(await suggest({ ...request, questionText, standardField: 'name' }, 7)).toEqual({
+        reason: 'alternate_identity',
+        status: 'refused',
+      })
+    }
+    expect(called.filter((step) => !step.startsWith('answers') && !step.startsWith('jobCountry'))).toEqual([])
+  })
+
   it('does nothing but read the switch while it is off', async () => {
     const { called, suggest } = recording(false)
 

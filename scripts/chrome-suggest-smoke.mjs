@@ -198,6 +198,14 @@ await Bun.write(${JSON.stringify(outfile)}, await result.outputs[0].text())
   return readFile(outfile, 'utf8')
 }
 
+const POPUP_FIELDS = [
+  ['f-full', 'full', 'Full Name'],
+  ['f-pronounce', 'pronounce', 'How do you pronounce your name?'],
+]
+
+const fieldMarkup = ([wrapper, input, label]) =>
+  `    <div class="field" id="${wrapper}"><div class="text-input-wrapper"><label for="${input}">${label}</label><input id="${input}" type="text"></div></div>`
+
 const FIELDS = [
   ['f-first', 'first', PAGE_ACCEPTED.input.questionText],
   ['f-links', 'links', PAGE_ABSTAINED.input.questionText],
@@ -219,7 +227,7 @@ const ATS_PAGE = `<!doctype html>
 </head><body>
 <div class="application--container">
   <div jaf-section="personal">
-${FIELDS.map(([wrapper, input, label]) => `    <div class="field" id="${wrapper}"><div class="text-input-wrapper"><label for="${input}">${label}</label><input id="${input}" type="text"></div></div>`).join('\n')}
+${FIELDS.map(fieldMarkup).join('\n')}
   </div>
   <div class="actions" style="display:flex;gap:8px"><button type="button" id="attach-resume">Attach</button><button type="submit" id="submit-application">Submit application</button></div>
 </div>
@@ -1138,10 +1146,10 @@ try {
     'the handoff page',
   )
 
-  const fieldsReady = (atsSession) =>
+  const fieldsReady = (atsSession, expected = FIELDS.length) =>
     waitFor(
       () => evaluate(browser, atsSession, `document.querySelectorAll('[data-tp-field]').length`, 5_000),
-      (count) => count === FIELDS.length,
+      (count) => count === expected,
       30_000,
       'the adapter to register every field',
     )
@@ -2037,13 +2045,16 @@ try {
       return true`),
   )
   const expectedFill = Object.fromEntries(
-    Object.entries({ exact: '', first: PROFILE.profileName.split(' ')[0], links: '', overlap: '', portfolio: PORTFOLIO_VALUE }).sort(),
+    Object.entries({ exact: EXACT_VALUE, first: PROFILE.profileName.split(' ')[0], links: '', overlap: '', portfolio: PORTFOLIO_VALUE }).sort(),
   )
   const freshApplication = async (name) => {
     await browser.send('Page.navigate', { url: `${ATS}/smoke/jobs/${name}?source=talentprofile` }, uk.atsSession)
     await fieldsReady(uk.atsSession)
   }
   await freshApplication('popup-fill')
+  await evaluate(browser, uk.atsSession, `document.querySelector('[jaf-section="personal"]').insertAdjacentHTML('beforeend', ${JSON.stringify(POPUP_FIELDS.map(fieldMarkup).join('\n'))}); true`, 5_000)
+  await fieldsReady(uk.atsSession, FIELDS.length + POPUP_FIELDS.length)
+  const popupExpected = Object.fromEntries(Object.entries({ ...expectedFill, full: PROFILE.profileName, pronounce: '' }).sort())
   const popupFill = await run(
     CALL(`return await new Promise((done) => {
       const port = chrome.runtime.connect({ name: 'fill-progress' })
@@ -2057,8 +2068,14 @@ try {
     })`),
   )
   const popupValues = await inputValues()
-  check('the popup fill completes', popupFill.kind === 'fill.done' && popupFill.result.counts.filled === 2, JSON.stringify([popupFill, popupValues]))
-  check('the popup fill writes the profile first name and the exact-match saved answer', JSON.stringify(popupValues) === JSON.stringify(expectedFill), JSON.stringify(popupValues))
+  check('the popup fill completes', popupFill.kind === 'fill.done' && popupFill.result.counts.filled === 4, JSON.stringify([popupFill, popupValues]))
+  check('the popup fill writes the profile names and the exact-match saved answer', JSON.stringify(popupValues) === JSON.stringify(popupExpected), JSON.stringify(popupValues))
+  const popupNative = await evaluate(browser, uk.atsSession, `({ submits: window.__submits })`, 5_000)
+  check(
+    'the popup fill leaves the name pronunciation field empty and submits nothing',
+    popupValues.pronounce === '' && popupValues.full === PROFILE.profileName && popupValues.exact === EXACT_VALUE && popupNative.submits === 0,
+    JSON.stringify([popupValues, popupNative]),
+  )
 
   await freshApplication('widget-fill')
   await browser.send('Page.bringToFront', {}, uk.atsSession)

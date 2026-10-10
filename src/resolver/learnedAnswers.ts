@@ -1,7 +1,9 @@
 import type { Profile } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
+import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { answersForJob } from './countryScopedAnswers'
-import { findLearnedAnswer, learnedAnswerToProfileValue } from './learnedAnswerMatcher'
+import { findExactLearnedAnswer, findLearnedAnswer, learnedAnswerToProfileValue } from './learnedAnswerMatcher'
+import { isNamePronunciationQuestion } from './namePronunciation'
 
 export type LearnedAnswerRequest = {
   requestId: string
@@ -31,7 +33,11 @@ export const resolveLearnedAnswersBatch = (
   }
 
   return requests.map((r) => {
-    const match = findLearnedAnswer(r.fieldName, r.fieldType, answersForJob(answers, r.fieldName, jobCountry))
+    if (isAlternateIdentityQuestion(r.fieldName)) {
+      return { requestId: r.requestId, value: { kind: 'unsupported' }, matchedAnswerId: null }
+    }
+    const find = isNamePronunciationQuestion(r.fieldName) ? findExactLearnedAnswer : findLearnedAnswer
+    const match = find(r.fieldName, r.fieldType, answersForJob(answers, r.fieldName, jobCountry))
     if (!match) {
       return {
         requestId: r.requestId,

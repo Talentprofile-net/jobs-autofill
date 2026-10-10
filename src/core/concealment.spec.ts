@@ -70,6 +70,31 @@ describe('BambooHR honeypot', () => {
     expect(isOffCanvas(honeypot)).toBe(false)
   })
 
+  it('keeps a field inside an on-page overlay whose content overflows above the page top', () => {
+    const field = document.getElementById('firstName')!
+    setRect(field.parentElement!, { height: 2850, width: 1280, x: 0, y: -696 })
+    setRect(field, { height: 56, width: 1280, x: 0, y: -526 })
+    expect(isOffCanvas(field)).toBe(false)
+  })
+
+  it('keeps a field scrolled out of view inside an on-page scroll container', () => {
+    const field = document.getElementById('firstName')!
+    const container = field.parentElement!
+    setRect(container, { height: 600, width: 800, x: 100, y: 100 })
+    Object.defineProperties(container, { scrollHeight: { value: 4000 }, scrollTop: { value: 3000 } })
+    setRect(field, { height: 40, width: 360, x: 200, y: -2800 })
+    expect(isOffCanvas(field)).toBe(false)
+  })
+
+  it('still rejects a field displaced out of its on-page container', () => {
+    const field = document.getElementById('firstName')!
+    setRect(field.parentElement!, { height: 2850, width: 1280, x: 0, y: -696 })
+    setRect(field, { height: 40, width: 360, x: 0, y: -9735 })
+    expect(isOffCanvas(field)).toBe(true)
+    setRect(field, { height: 40, width: 360, x: -9935, y: 300 })
+    expect(isOffCanvas(field)).toBe(true)
+  })
+
   it('does not decide on a control with no layout box', () => {
     const field = document.getElementById('firstName')!
     setRect(field, { height: 0, width: 0, x: -9999, y: 0 })
