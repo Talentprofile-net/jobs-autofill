@@ -55,22 +55,38 @@ const findEnclosingSection = (el: HTMLElement): EnclosingSection | null => {
 
 const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6, [role="heading"]'
 
-const precedingHeading = (node: HTMLElement): string | null => {
-  for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
-    const heading = sib.matches(HEADING_SELECTOR) ? sib : Array.from(sib.querySelectorAll(HEADING_SELECTOR)).pop()
-    if (heading) return visibleText(heading)
-  }
-  return null
+const headingLevel = (heading: Element): number => {
+  const tag = /^H([1-6])$/.exec(heading.tagName)
+  if (tag) return Number(tag[1])
+  const level = Number(heading.getAttribute('aria-level'))
+  return Number.isInteger(level) && level > 0 ? level : 2
 }
 
-export const contextSection = (el: HTMLElement): string => {
-  for (const node of composedAncestors(el)) {
-    const legend = containerText(node)
-    if (legend) return isRefusedSection(legend) ? legend : ''
-    const heading = precedingHeading(node)
-    if (heading !== null) return isRefusedSection(heading) ? heading : ''
+function* precedingHeadings(el: HTMLElement): Generator<Element> {
+  for (const node of [el, ...composedAncestors(el)]) {
+    for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+      if (sib.matches(HEADING_SELECTOR)) yield sib
+      else yield* Array.from(sib.querySelectorAll(HEADING_SELECTOR)).reverse()
+    }
   }
-  return ''
+}
+
+const headingOutline = (el: HTMLElement): string[] => {
+  const out: string[] = []
+  let ceiling = Infinity
+  for (const heading of precedingHeadings(el)) {
+    const level = headingLevel(heading)
+    if (level >= ceiling) continue
+    out.push(visibleText(heading))
+    ceiling = level
+    if (level <= 1) break
+  }
+  return out
+}
+
+export const refusedContext = (el: HTMLElement): string => {
+  const containers = composedAncestors(el).map(containerText).filter((text): text is string => Boolean(text))
+  return [...containers, ...headingOutline(el)].find(isRefusedSection) ?? ''
 }
 
 type SectionsCache = {
@@ -133,9 +149,20 @@ const collectAllSectionsOfKind = (kind: SectionKind): HTMLElement[] => {
   return cache[kind]
 }
 
+export const createEntrySectionReader = (): ((el: HTMLElement) => string) => {
+  let peers: SectionsCache | null = null
+  return (el) => {
+    const enclosing = findEnclosingSection(el)
+    if (!enclosing) return ''
+    peers ??= buildCache()
+    const index = peers[enclosing.kind].indexOf(enclosing.container)
+    return index < 0 ? '' : `${enclosing.kind} ${index + 1}`
+  }
+}
+
 export const inferSection = (el: HTMLElement): string => {
   const enclosing = findEnclosingSection(el)
-  if (!enclosing) return contextSection(el)
+  if (!enclosing) return refusedContext(el)
   const { kind, container } = enclosing
 
   const peers = collectAllSectionsOfKind(kind)

@@ -7,11 +7,9 @@ import { WorkdayBaseInput } from './WorkdayBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { fixedFieldName } from './fixedFieldName'
 
 const VERIFY_SETTLE_MS = 80
-
-const DISABILITY_AUTOMATION_ID_SUFFIX = '-disability'
-const DISABILITY_FIELD_NAME = 'disability'
 
 type Choice = { input: HTMLInputElement; label: string }
 
@@ -20,9 +18,7 @@ export class CheckboxesSingle extends WorkdayBaseInput {
   override fieldType = 'MultiCheckbox'
 
   override get fieldName(): string {
-    const id = this.element.getAttribute('data-automation-id') ?? ''
-    if (id.endsWith(DISABILITY_AUTOMATION_ID_SUFFIX)) return DISABILITY_FIELD_NAME
-    return super.fieldName
+    return fixedFieldName(this.element) ?? super.fieldName
   }
 
   private get choices(): Choice[] {

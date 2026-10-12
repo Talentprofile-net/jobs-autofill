@@ -1,37 +1,12 @@
-import { getElement, getElements } from '~/core/getElements'
-
-const SECTION_XPATH = [
-  `.//div`,
-  `[contains(@class, 'education--form')`,
-  ` or contains(@class, 'employment--form')]`,
-].join('')
-
-const sectionTypeOf = (el: HTMLElement): string => {
-  const cls = el.getAttribute('class') ?? ''
-  if (cls.includes('education')) return 'education'
-  if (cls.includes('employment')) return 'employment'
-  return 'section'
-}
+import { getElements } from '~/core/getElements'
+import { SECTION_XPATH, sectionNumbers } from './sectionNumbers'
 
 const REASSIGN_DEBOUNCE_MS = 100
 let reassignTimer: number | null = null
 
 const assignNumbersToSections = (): void => {
-  const grouped = new Map<string, HTMLElement[]>()
-  const sectionElements = getElements(document, SECTION_XPATH)
-  sectionElements.forEach((el) => {
-    const type = sectionTypeOf(el)
-    const list = grouped.get(type) ?? []
-    list.push(el)
-    grouped.set(type, list)
-  })
-  for (const [type, els] of grouped) {
-    els.forEach((el, idx) => {
-      const newValue = `${type} ${idx + 1}`
-      if (el.getAttribute('jaf-section') !== newValue) {
-        el.setAttribute('jaf-section', newValue)
-      }
-    })
+  for (const [el, value] of sectionNumbers()) {
+    if (el.getAttribute('jaf-section') !== value) el.setAttribute('jaf-section', value)
   }
 }
 

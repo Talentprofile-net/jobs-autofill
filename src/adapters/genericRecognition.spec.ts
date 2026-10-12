@@ -1251,3 +1251,21 @@ describe('Lever demographic survey location select', () => {
     expect(resolveField(field.fieldName, field.fieldType, field.section, profile).value).toEqual({ kind: 'unsupported' })
   })
 })
+
+const { claimBoundFields, snapshotFieldAllowlist } = await import('~/bridge/fieldBinding')
+
+describe('confirmed fill allowlist over the recognized fixture forms', () => {
+  it('binds every registered field descriptor that has a name, exactly as the adapter reports it', () => {
+    for (const html of [ASHBY, ASHBY_LOCATION, BUNQ, FILES, LEVER, WORKABLE]) {
+      mount(html)
+      RegisterInputs(document)
+      const allowlist = snapshotFieldAllowlist('generic')
+      const asks = allFields()
+        .filter((field) => field.fieldName.trim() !== '')
+        .map((field) => ({ fieldName: field.fieldName, fieldType: field.fieldType, requestId: field.uuid, section: field.section }))
+      const bound = claimBoundFields(asks, allowlist, new Set())
+      expect(asks.length).toBeGreaterThan(0)
+      expect(asks.filter((_, i) => bound[i] === null)).toEqual([])
+    }
+  })
+})

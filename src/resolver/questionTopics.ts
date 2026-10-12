@@ -31,6 +31,4 @@ const THIRD_PARTY_SECTION = /\b(emergency|next of kin|references?|referees?|refe
 
 const DEMOGRAPHIC_SECTION = /\b(demographic\w*|self[- ]identif\w*|eeo|equal (employment )?opportunity|diversity|voluntary disclosures?)\b/i
 
-export const isThirdPartySection = (section: string): boolean => THIRD_PARTY_SECTION.test(section)
-
-export const isRefusedSection = (section: string): boolean => isThirdPartySection(section) || DEMOGRAPHIC_SECTION.test(section)
+export const isRefusedSection = (section: string): boolean => THIRD_PARTY_SECTION.test(section) || DEMOGRAPHIC_SECTION.test(section)

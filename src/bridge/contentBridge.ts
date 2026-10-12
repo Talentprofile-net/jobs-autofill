@@ -19,7 +19,7 @@ import type { AtsName, ProfileValue } from "~/field/types";
 import type { LearnedAnswerResult } from "~/resolver/learnedAnswers";
 import { stageSubmittedAnswers } from "~/capture/captureStage";
 import { fieldsWithoutProfileValue, mergeFillValues } from "./fillValues";
-import { claimBoundFields, type FieldRequest } from "./fieldBinding";
+import { claimBoundFields, snapshotFieldAllowlist, type FieldAllowlist, type FieldRequest } from "./fieldBinding";
 import { createGestureTracker } from "./trustedGesture";
 import {
   closePicker,
@@ -46,7 +46,7 @@ type Envelope<T> = {
   payload: T;
 };
 
-type Batch = { emit: boolean; valueRequests: number; expiresAt: number; served: Set<string> };
+type Batch = { emit: boolean; valueRequests: number; expiresAt: number; served: Set<string>; allowlist: FieldAllowlist };
 
 const MAIN_WORLD_READY_TIMEOUT_MS = 10_000;
 const MAIN_WORLD_PING_INTERVAL_MS = 100;
@@ -246,8 +246,10 @@ export const startContentBridge = (ats: AtsName): void => {
     emit: boolean,
     requestId: string | null,
     lowScore: boolean,
+    allowlist: FieldAllowlist = snapshotFieldAllowlist(ats),
   ): void => {
     batches.set(batchId, {
+      allowlist,
       emit,
       expiresAt: Date.now() + BATCH_TTL_MS,
       served: new Set(),
@@ -311,6 +313,7 @@ export const startContentBridge = (ats: AtsName): void => {
   };
 
   const runConfirmedFill = async (requestId: string): Promise<void> => {
+    const allowlist = snapshotFieldAllowlist(ats);
     const status = await sendToBackground<AuthStatus>({ kind: "auth.status" });
     if (!status.ok || !status.data?.authenticated) {
       await sendToBackground({ kind: "auth.openConnectPage" });
@@ -320,7 +323,7 @@ export const startContentBridge = (ats: AtsName): void => {
     const summary = await sendToBackground<ProfileSummary>({ kind: "profile.summary" });
     const lowScore =
       !summary.ok || !summary.data || summary.data.profileScore < PROFILE_SCORE_EMPTY_BELOW;
-    startBatch(crypto.randomUUID(), false, requestId, lowScore);
+    startBatch(crypto.randomUUID(), false, requestId, lowScore, allowlist);
   };
 
   const handleCapture = async (records: AnswerCaptureRecord[]): Promise<void> => {
@@ -387,7 +390,7 @@ export const startContentBridge = (ats: AtsName): void => {
         batchId: msg.batchId,
         id: msg.id,
         kind: "fill.values",
-        results: await resolveBoundFillValues(claimBoundFields(msg.fields, batch.served)),
+        results: await resolveBoundFillValues(claimBoundFields(msg.fields, batch.allowlist, batch.served)),
       });
       return;
     }

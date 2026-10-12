@@ -34,4 +34,12 @@ describe('jobCountryFromJsonLd', () => {
   it('stays unknown when a US state shares a country name', () => {
     expect(jobCountryFromJsonLd([posting({ jobLocation: { address: 'Atlanta, Georgia' } })])).toBe('_unknown')
   })
+
+  it('reads Georgia from an explicit structured country but not from free-form address text', () => {
+    expect(jobCountryFromJsonLd([posting({ jobLocation: { address: { '@type': 'PostalAddress', addressCountry: 'Georgia' } } })])).toBe('GE')
+    expect(jobCountryFromJsonLd([posting({ jobLocation: { address: { addressCountry: { '@type': 'Country', name: 'Georgia' } } } })])).toBe('GE')
+    expect(jobCountryFromJsonLd([posting({ applicantLocationRequirements: { '@type': 'Country', name: 'Georgia' } })])).toBe('GE')
+    expect(jobCountryFromJsonLd([posting({ jobLocation: { address: 'Georgia' } })])).toBe('_unknown')
+    expect(jobCountryFromJsonLd([posting({ jobLocation: { address: 'GE' } })])).toBe('GE')
+  })
 })

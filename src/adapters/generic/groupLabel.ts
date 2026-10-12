@@ -38,7 +38,7 @@ const commonAncestor = (members: HTMLElement[]): HTMLElement | null => {
 
 const LEADING_MAX_CHARS = 300
 
-const leadingText = (container: HTMLElement, members: HTMLElement[]): string => {
+export const leadingText = (container: HTMLElement, members: HTMLElement[]): string => {
   for (const child of Array.from(container.children)) {
     if (members.some((m) => child.contains(m))) return ''
     if (containsField(child) || !isRenderedElement(child)) continue

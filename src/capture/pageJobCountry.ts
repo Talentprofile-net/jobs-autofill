@@ -20,12 +20,16 @@ const countryOf = (value: string | null): string | null => {
   if (!value) return null
   const code = normalizeJobCountry(value.toUpperCase())
   if (code !== UNKNOWN_JOB_COUNTRY) return code
-  const named = lookupCountry(value)?.alpha2 ?? parseLocation(value)?.country?.alpha2 ?? null
-  return named && COUNTRIES_NAMED_LIKE_STATES.has(named) ? null : named
+  return lookupCountry(value)?.alpha2 ?? parseLocation(value)?.country?.alpha2 ?? null
+}
+
+const freeFormCountry = (value: string): string | null => {
+  const country = countryOf(value)
+  return country && COUNTRIES_NAMED_LIKE_STATES.has(country) && normalizeJobCountry(value.trim().toUpperCase()) !== country ? null : country
 }
 
 const addressCountry = (address: unknown): string | null =>
-  typeof address === 'string' ? countryOf(address) : countryOf(text(field(address, 'addressCountry')))
+  typeof address === 'string' ? freeFormCountry(address) : countryOf(text(field(address, 'addressCountry')))
 
 const isJobPosting = (node: unknown): boolean =>
   asArray(field(node, '@type')).some((type) => type === 'JobPosting')

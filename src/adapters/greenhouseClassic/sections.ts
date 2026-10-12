@@ -5,8 +5,15 @@ const SECTION_WRAPPER_IDS = `[@id="education_section" or @id="employment_section
 
 const registeredWrappers = new WeakMap<HTMLElement, MutationObserver>()
 
+export const SECTION_WRAPPER_XPATH = `.//div${SECTION_WRAPPER_IDS}`
+
+export const wrapperSectionNumbers = (wrapper: HTMLElement): Map<HTMLElement, string> => {
+  const type = wrapper.id.split('_')[0]
+  return new Map(getElements(wrapper, `.//div${SECTION_CLASSES}`).map((el, index) => [el, `${type} ${index + 1}`]))
+}
+
 export class Sections {
-  static XPATH = `.//div${SECTION_WRAPPER_IDS}`
+  static XPATH = SECTION_WRAPPER_XPATH
   element: HTMLElement
 
   static autoDiscover(node: Node = document): void {
@@ -25,18 +32,10 @@ export class Sections {
     this.observeForChanges()
   }
 
-  private get sectionType(): string {
-    return this.element.id.split('_')[0]
-  }
-
   private registerSections(): void {
-    const sectionElements = getElements(this.element, `.//div${SECTION_CLASSES}`)
-    sectionElements.forEach((el, index) => {
-      const newValue = `${this.sectionType} ${index + 1}`
-      if (el.getAttribute('jaf-section') !== newValue) {
-        el.setAttribute('jaf-section', newValue)
-      }
-    })
+    for (const [el, value] of wrapperSectionNumbers(this.element)) {
+      if (el.getAttribute('jaf-section') !== value) el.setAttribute('jaf-section', value)
+    }
   }
 
   private observeForChanges(): void {
