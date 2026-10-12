@@ -8,9 +8,9 @@ import type {
   ContentScriptRequest,
   ContentToBackground,
   FieldDescriptor,
-  FieldResolveRequest,
   FieldResolveResult,
   FillDenialReason,
+  FillValueResult,
   MainWorldRequest,
   ProfileSummary,
   ResolvedOriginMode,
@@ -19,6 +19,7 @@ import type { AtsName, ProfileValue } from "~/field/types";
 import type { LearnedAnswerResult } from "~/resolver/learnedAnswers";
 import { stageSubmittedAnswers } from "~/capture/captureStage";
 import { fieldsWithoutProfileValue, mergeFillValues } from "./fillValues";
+import { claimBoundFields, type FieldRequest } from "./fieldBinding";
 import { createGestureTracker } from "./trustedGesture";
 import {
   closePicker,
@@ -45,9 +46,7 @@ type Envelope<T> = {
   payload: T;
 };
 
-type FieldRequest = FieldResolveRequest & { requestId: string };
-
-type Batch = { emit: boolean; valueRequests: number; expiresAt: number };
+type Batch = { emit: boolean; valueRequests: number; expiresAt: number; served: Set<string> };
 
 const MAIN_WORLD_READY_TIMEOUT_MS = 10_000;
 const MAIN_WORLD_PING_INTERVAL_MS = 100;
@@ -208,6 +207,15 @@ const resolveFillValues = async (fields: FieldRequest[]) => {
   return mergeFillValues(fields, profile, learned);
 };
 
+const resolveBoundFillValues = async (claimed: Array<FieldRequest | null>): Promise<FillValueResult[]> => {
+  const bound = claimed.filter((field): field is FieldRequest => field !== null);
+  const resolved = new Map((bound.length > 0 ? await resolveFillValues(bound) : []).map((result) => [result.requestId, result]));
+  return claimed.flatMap((field) => {
+    if (!field) return [];
+    return [resolved.get(field.requestId) ?? { matchedAnswerId: null, profileField: null, requestId: field.requestId, value: { kind: "unsupported" } }];
+  });
+};
+
 export const startContentBridge = (ats: AtsName): void => {
   if (bridgeStarted) return;
   bridgeStarted = true;
@@ -242,6 +250,7 @@ export const startContentBridge = (ats: AtsName): void => {
     batches.set(batchId, {
       emit,
       expiresAt: Date.now() + BATCH_TTL_MS,
+      served: new Set(),
       valueRequests: 0,
     });
     gate.send({
@@ -372,13 +381,13 @@ export const startContentBridge = (ats: AtsName): void => {
 
     if (msg.kind === "fill.fields") {
       const batch = liveBatch(msg.batchId);
-      if (!batch || batch.valueRequests >= MAX_VALUE_REQUESTS_PER_BATCH) return;
+      if (!batch || batch.valueRequests >= MAX_VALUE_REQUESTS_PER_BATCH || !Array.isArray(msg.fields)) return;
       batch.valueRequests += 1;
       sendFromContent({
         batchId: msg.batchId,
         id: msg.id,
         kind: "fill.values",
-        results: await resolveFillValues(msg.fields),
+        results: await resolveBoundFillValues(claimBoundFields(msg.fields, batch.served)),
       });
       return;
     }

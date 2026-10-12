@@ -1,6 +1,7 @@
 import { createKeyboardEvent } from '~/core/events'
 import { setNativeInputValue } from '~/core/reactProps'
 import { padToWidth } from '~/core/padToWidth'
+import { activateControl } from '~/core/activate'
 
 const tryNativeFill = (
   el: HTMLInputElement,
@@ -27,7 +28,7 @@ const tryArrowKeyFill = (
   el.dispatchEvent(new InputEvent('input', { bubbles: true }))
   el.dispatchEvent(new Event('change', { bubbles: true }))
   el.dispatchEvent(createKeyboardEvent('keydown', arrowKey))
-  el.click()
+  activateControl(el)
 }
 
 export const fillDatePart = (

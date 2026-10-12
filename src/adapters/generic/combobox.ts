@@ -7,7 +7,8 @@ import { createKeyboardEvent } from '~/core/events'
 import { sleep } from '~/core/verify'
 import { GenericBaseField } from './GenericBaseField'
 import type { ProfileValue } from '~/field/types'
-import { getElementByIdInScope, rootQueryScope } from '~/core/shadowDom'
+import { getElementByIdInScope, querySelectorDeep, rootQueryScope } from '~/core/shadowDom'
+import { activateControl } from '~/core/activate'
 
 const OPEN_SETTLE_MS = 150
 const LISTBOX_WAIT_MS = 600
@@ -165,7 +166,7 @@ const waitForOptions = async (
 
 const findInternalInput = (combobox: HTMLElement): HTMLInputElement | null => {
   if (combobox instanceof HTMLInputElement) return combobox
-  return combobox.querySelector('input') as HTMLInputElement | null
+  return querySelectorDeep<HTMLInputElement>(combobox, 'input')
 }
 
 const isSelectOnly = (el: HTMLElement): boolean =>
@@ -216,7 +217,7 @@ export class GenericCombobox extends GenericBaseField {
 
   private async openMenu(): Promise<HTMLElement | null> {
     if (!isOpen(this.element)) {
-      this.element.click()
+      activateControl(this.element)
       await sleep(OPEN_SETTLE_MS)
     }
     return waitForListboxByRelation(this.element, LISTBOX_WAIT_MS)
@@ -285,7 +286,7 @@ export class GenericCombobox extends GenericBaseField {
             : findUniqueOption(options, (o) => o.innerText, candidate)
           if (!match) continue
 
-          match.click()
+          activateControl(match)
           await sleep(SELECTION_SETTLE_MS)
 
           if (this.isMatched(candidate)) {

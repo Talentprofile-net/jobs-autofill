@@ -1,6 +1,6 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements } from '~/core/getElements'
-import { findOption, xpathLiteral } from '~/core/match'
+import { findUniqueOption, xpathLiteral } from '~/core/match'
 import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
@@ -73,7 +73,7 @@ export class Dropdown extends GreenhouseBaseInput {
         if (!dd) return false
         const items = getElements(dd, './/li')
         for (const candidate of candidates) {
-          const match = findOption(items, (li) => li.innerText, candidate)
+          const match = findUniqueOption(items, (li) => li.innerText, candidate)
           if (!match) continue
           match.dispatchEvent(
             new Event('mouseup', { bubbles: true, cancelable: true }),

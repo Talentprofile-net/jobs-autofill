@@ -1,11 +1,12 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements } from '~/core/getElements'
 import { createKeyboardEvent } from '~/core/events'
-import { findOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
+import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
 import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const CHIP_SETTLE_MS = 80
 
@@ -79,7 +80,7 @@ export class DropdownMulti extends GreenhouseBaseInput {
     const dd = this.dropdownEl
     if (!dd) return false
     const choices = getElements(dd, `.//li`)
-    const target = findOption(choices, (c) => c.innerText, candidate)
+    const target = findUniqueOption(choices, (c) => c.innerText, candidate)
     if (!target) return false
     target.dispatchEvent(new Event('mouseup', { bubbles: true, cancelable: true }))
     await sleep(CHIP_SETTLE_MS)
@@ -90,7 +91,7 @@ export class DropdownMulti extends GreenhouseBaseInput {
     const closeBtn = chipRemoveLink(chip.el)
     if (!closeBtn) return false
     closeBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
-    closeBtn.click()
+    activateControl(closeBtn)
     await sleep(CHIP_SETTLE_MS)
     return !this.selectedChips.some((c) => this.chipMatchesTarget(c, chip.text))
   }
@@ -138,7 +139,7 @@ export class DropdownMulti extends GreenhouseBaseInput {
       }
 
       if (targetsToAdd.length > 0) {
-        if (!this.isOpen) input.click()
+        if (!this.isOpen) activateControl(input)
         const dd = this.dropdownEl
         if (!dd) {
           input.dispatchEvent(createKeyboardEvent('keydown', 'Escape'))
@@ -148,7 +149,7 @@ export class DropdownMulti extends GreenhouseBaseInput {
         if (value.kind === 'choice') {
           finalDesiredTargets.length = 0
           for (const candidate of [value.preferred, ...value.fallbacks]) {
-            if (!this.isOpen) input.click()
+            if (!this.isOpen) activateControl(input)
             if (await this.selectCandidate(candidate)) {
               finalDesiredTargets.push(candidate)
               break
@@ -156,7 +157,7 @@ export class DropdownMulti extends GreenhouseBaseInput {
           }
         } else {
           for (const candidate of targetsToAdd) {
-            if (!this.isOpen) input.click()
+            if (!this.isOpen) activateControl(input)
             await this.selectCandidate(candidate)
           }
         }

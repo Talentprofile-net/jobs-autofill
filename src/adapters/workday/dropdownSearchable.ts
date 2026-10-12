@@ -3,11 +3,12 @@ import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements, waitForElement } from '~/core/getElements'
 import { scrollBack } from '~/core/scroll'
 import { getReactProps, setNativeInputValue } from '~/core/reactProps'
-import { findOption, optionMatches, xpathLiteral } from '~/core/match'
+import { findUniqueOption, optionMatches, xpathLiteral } from '~/core/match'
 import { createKeyboardEvent } from '~/core/events'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const PRE_FILL_SETTLE_MS = 200
 const DROPDOWN_WAIT_MS = 1000
@@ -99,7 +100,7 @@ export class DropdownSearchable extends WorkdayBaseInput {
     const dropdownEl = await this.dropdownElement()
     if (!dropdownEl) return null
     const options = getElements(dropdownEl, ".//div[@data-automation-id='promptOption']")
-    return findOption(options, (o) => o.innerText, candidate)
+    return findUniqueOption(options, (o) => o.innerText, candidate)
   }
 
   private isCandidateSelected(candidate: string): boolean {
@@ -132,7 +133,7 @@ export class DropdownSearchable extends WorkdayBaseInput {
 
               const match = await this.findMatchingOption(candidate)
               if (match) {
-                match.click()
+                activateControl(match)
                 await sleep(SELECTION_SETTLE_MS)
                 if (this.isCandidateSelected(candidate)) return true
               }

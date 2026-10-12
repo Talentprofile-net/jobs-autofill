@@ -14,11 +14,14 @@ const text = (value: unknown): string | null => {
   return typeof name === 'string' ? name.trim() || null : null
 }
 
+const COUNTRIES_NAMED_LIKE_STATES: ReadonlySet<string> = new Set(['GE'])
+
 const countryOf = (value: string | null): string | null => {
   if (!value) return null
   const code = normalizeJobCountry(value.toUpperCase())
   if (code !== UNKNOWN_JOB_COUNTRY) return code
-  return lookupCountry(value)?.alpha2 ?? parseLocation(value)?.country?.alpha2 ?? null
+  const named = lookupCountry(value)?.alpha2 ?? parseLocation(value)?.country?.alpha2 ?? null
+  return named && COUNTRIES_NAMED_LIKE_STATES.has(named) ? null : named
 }
 
 const addressCountry = (address: unknown): string | null =>

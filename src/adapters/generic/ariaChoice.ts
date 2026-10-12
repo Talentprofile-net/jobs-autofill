@@ -1,12 +1,13 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { hasConcealingAncestor, isOffCanvas } from '~/core/concealment'
-import { findOption } from '~/core/match'
+import { findUniqueOption } from '~/core/match'
 import { resolveLabelledByText } from '~/core/labelledBy'
 import { waitUntil } from '~/core/verify'
 import { isInsideRegistered, isVisible } from '~/field/baseField'
 import type { ProfileValue } from '~/field/types'
 import { GenericBaseField } from './GenericBaseField'
 import { blockText, precedingSiblingText } from './labelResolver'
+import { activateControl } from '~/core/activate'
 
 const SETTLE_MS = 600
 const POLL_MS = 25
@@ -71,10 +72,10 @@ export class GenericAriaRadioGroup extends GenericBaseField {
     const candidates = [value.preferred, ...value.fallbacks]
     return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
-        const match = findOption(options, (o) => o.text, candidate)
+        const match = findUniqueOption(options, (o) => o.text, candidate)
         if (!match) continue
         if (isChecked(match.el)) return true
-        match.el.click()
+        activateControl(match.el)
         if (await waitUntil(() => isChecked(match.el), SETTLE_MS, POLL_MS)) return true
       }
       return false
@@ -114,7 +115,7 @@ export class GenericAriaCheckbox extends GenericBaseField {
     if (value.kind !== 'boolean') return false
     if (isChecked(this.element) === value.value) return true
     return fieldFillerQueue.enqueue(async () => {
-      this.element.click()
+      activateControl(this.element)
       return waitUntil(() => isChecked(this.element) === value.value, SETTLE_MS, POLL_MS)
     })
   }
@@ -176,10 +177,10 @@ export class GenericYesNoToggle extends GenericBaseField {
     const candidates = [value.preferred, ...value.fallbacks]
     return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
-        const match = findOption(options, (o) => o.text, candidate)
+        const match = findUniqueOption(options, (o) => o.text, candidate)
         if (!match) continue
         if (isPressed(match.el)) return true
-        match.el.click()
+        activateControl(match.el)
         if (await waitUntil(() => isPressed(match.el), SETTLE_MS, POLL_MS)) return true
       }
       return false

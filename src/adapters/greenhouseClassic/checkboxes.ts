@@ -5,6 +5,7 @@ import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const VERIFY_SETTLE_MS = 80
 
@@ -50,10 +51,10 @@ export class Checkboxes extends GreenhouseBaseInput {
       const plan = planSelection(choices, selected, (c) => c.text, value)
 
       for (const choice of plan.toDeselect) {
-        if (choice.input.checked) choice.label.click()
+        if (choice.input.checked) activateControl(choice.label)
       }
       for (const choice of plan.toSelect) {
-        if (!choice.input.checked) choice.label.click()
+        if (!choice.input.checked) activateControl(choice.label)
       }
 
       await sleep(VERIFY_SETTLE_MS)

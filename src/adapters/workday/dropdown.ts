@@ -3,11 +3,12 @@ import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements, waitForElement } from '~/core/getElements'
 import { scrollBack } from '~/core/scroll'
 import { getReactProps } from '~/core/reactProps'
-import { findOption, xpathLiteral } from '~/core/match'
+import { findUniqueOption, xpathLiteral } from '~/core/match'
 import { verifySelection } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const SELECTION_SETTLE_MS = 150
 
@@ -32,11 +33,11 @@ export class Dropdown extends WorkdayBaseInput {
   }
 
   private openDropdown(): void {
-    if (!this.dropdownIsOpen) this.buttonElement?.click()
+    if (!this.dropdownIsOpen) activateControl(this.buttonElement)
   }
 
   private closeDropdown(): void {
-    if (this.dropdownIsOpen) this.buttonElement?.click()
+    if (this.dropdownIsOpen) activateControl(this.buttonElement)
   }
 
   private async dropdownElement(): Promise<HTMLElement | null> {
@@ -51,7 +52,7 @@ export class Dropdown extends WorkdayBaseInput {
     if (reactProps?.onClick) {
       reactProps.onClick({ preventDefault: () => {} })
     } else {
-      li.click()
+      activateControl(li)
     }
   }
 
@@ -80,7 +81,7 @@ export class Dropdown extends WorkdayBaseInput {
             }))
 
             for (const candidate of candidates) {
-              const match = findOption(itemEntries, (e) => e.text, candidate)
+              const match = findUniqueOption(itemEntries, (e) => e.text, candidate)
               if (!match) continue
               this.selectListItem(match.li)
               await sleep(SELECTION_SETTLE_MS)

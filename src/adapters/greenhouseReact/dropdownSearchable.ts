@@ -6,7 +6,8 @@ import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
-import { findOption } from '~/core/match'
+import { findUniqueOption } from '~/core/match'
+import { activateControl } from '~/core/activate'
 
 const SELECTION_SETTLE_MS = 150
 const DROPDOWN_WAIT_MS = 600
@@ -51,7 +52,7 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
         stopPropagation: () => {},
       })
     } else {
-      trigger.click()
+      activateControl(trigger)
     }
   }
 
@@ -88,7 +89,7 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
 
   private async findInVisible(candidate: string): Promise<HTMLElement | null> {
     const choices = await this.getVisibleChoices()
-    return findOption(choices, (c) => c.innerText, candidate)
+    return findUniqueOption(choices, (c) => c.innerText, candidate)
   }
 
   private async findViaSearch(candidate: string): Promise<HTMLElement | null> {
@@ -96,7 +97,7 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
     const dd = await this.waitForDropdown()
     if (!dd) return null
     const options = getElements(dd, `.//div[starts-with(@class, "select__option")]`)
-    return findOption(options, (o) => o.innerText, candidate)
+    return findUniqueOption(options, (o) => o.innerText, candidate)
   }
 
   private blurInput(): void {
@@ -135,7 +136,7 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
               let match = await this.findInVisible(candidate)
               if (!match) match = await this.findViaSearch(candidate)
               if (!match) continue
-              match.click()
+              activateControl(match)
               await sleep(SELECTION_SETTLE_MS)
               if (
                 await verifySelection(() => this.currentValue(), candidate, 0)

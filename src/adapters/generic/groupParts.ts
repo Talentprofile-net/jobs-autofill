@@ -4,6 +4,7 @@ import { hasConcealingAncestor, isOffCanvas } from '~/core/concealment'
 import { querySelectorAllDeep, rootQueryScope } from '~/core/shadowDom'
 import { isVisible } from '~/field/baseField'
 import { blockText, containsField, resolveOptionLabel } from './labelResolver'
+import { activateControl } from '~/core/activate'
 
 export type ChoiceInput = HTMLInputElement
 
@@ -44,10 +45,11 @@ export const isDistinctNameGroup = (container: HTMLElement | null): boolean => {
   if (boxes.length < 2) return false
   const names = boxes.map((el) => el.name)
   if (names.some((n) => !n) || new Set(names).size !== names.length) return false
-  if (!boxes.every((el) => {
-    const label = resolveOptionLabel(el)
-    return label.length > 0 && label.length <= OPTION_LABEL_MAX
-  })) return false
+  const labels = boxes.map(resolveOptionLabel)
+  if (labels.some((label) => !label)) return false
+  const shortLabels = labels.every((label) => label.length <= OPTION_LABEL_MAX)
+  const namedByLabel = boxes.every((el, i) => el.name.replace(/\s+/g, ' ').trim() === labels[i])
+  if (!shortLabels && !namedByLabel) return false
   return hasLeadingHeading(container)
 }
 
@@ -85,12 +87,12 @@ export const isEligibleOption = isOperableOption
 
 export const activateOption = (el: ChoiceInput): void => {
   if (shownInPage(el)) {
-    el.click()
+    activateControl(el)
     return
   }
   const label = associatedLabel(el)
-  if (label && shownInPage(label)) label.click()
-  else el.click()
+  if (label && shownInPage(label)) activateControl(label)
+  else activateControl(el)
 }
 
 export const sameKeyOptions = (seed: ChoiceInput): ChoiceInput[] => {

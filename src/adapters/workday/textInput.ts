@@ -1,7 +1,7 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement } from '~/core/getElements'
 import { fillReactTextInput, getReactProps } from '~/core/reactProps'
-import { verifyTextValue } from '~/core/verify'
+import { writeVerifiedText } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import type { ProfileValue } from '~/field/types'
 import { xpaths } from './xpaths'
@@ -23,12 +23,13 @@ export class TextInput extends WorkdayBaseInput {
     const input = this.inputElement
     if (!input) return false
     if (input.value === value.value) return true
-    return fieldFillerQueue.enqueue(async () => {
-      fillReactTextInput(input, value.value, { eventName: 'onChange' })
-      const reactProps = getReactProps(input)
-      if (reactProps?.onBlur) reactProps.onBlur({ target: input })
-      else input.blur()
-      return verifyTextValue(input, value.value)
-    })
+    return fieldFillerQueue.enqueue(() =>
+      writeVerifiedText(input, value.value, () => {
+        fillReactTextInput(input, value.value, { eventName: 'onChange' })
+        const reactProps = getReactProps(input)
+        if (reactProps?.onBlur) reactProps.onBlur({ target: input })
+        else input.blur()
+      }),
+    )
   }
 }

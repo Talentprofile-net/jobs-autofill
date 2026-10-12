@@ -1,4 +1,6 @@
 import { resolveLabelledByText } from '~/core/labelledBy'
+import { composedParent, querySelectorAllDeep } from '~/core/shadowDom'
+import { isRefusedSection } from '~/resolver/questionTopics'
 
 type SectionKind = 'employment' | 'education'
 
@@ -12,33 +14,63 @@ type EnclosingSection = {
   container: HTMLElement
 }
 
-const containerSectionKind = (node: HTMLElement): SectionKind | null => {
-  const fieldset = node.tagName.toLowerCase() === 'fieldset' ? node : null
-  const role = node.getAttribute('role')
-  if (!fieldset && role !== 'group') return null
+const visibleText = (el: Element | null): string =>
+  ((el instanceof HTMLElement ? el.innerText : null) ?? el?.textContent ?? '').replace(/\s+/g, ' ').trim()
 
+const containerText = (node: HTMLElement): string | null => {
+  const fieldset = node.tagName.toLowerCase() === 'fieldset' ? node : null
+  if (!fieldset && node.getAttribute('role') !== 'group') return null
   const legend = fieldset
     ? (fieldset.querySelector(':scope > legend') as HTMLElement | null)
     : null
   const ariaLabel = node.getAttribute('aria-label') ?? ''
-  const labelledByText = resolveLabelledByText(node.getAttribute('aria-labelledby'))
-  const text =
-    (legend?.innerText ?? '') + ' ' + ariaLabel + ' ' + labelledByText
+  const labelledByText = resolveLabelledByText(node.getAttribute('aria-labelledby'), node)
+  return `${visibleText(legend)} ${ariaLabel} ${labelledByText}`.replace(/\s+/g, ' ').trim()
+}
 
+const containerSectionKind = (node: HTMLElement): SectionKind | null => {
+  const text = containerText(node)
+  if (!text) return null
   for (const kind of ['employment', 'education'] as const) {
     if (SECTION_PATTERNS[kind].test(text)) return kind
   }
   return null
 }
 
+const composedAncestors = (el: HTMLElement): HTMLElement[] => {
+  const out: HTMLElement[] = []
+  for (let node = composedParent(el); node && node !== document.body; node = composedParent(node)) {
+    if (node instanceof HTMLElement) out.push(node)
+  }
+  return out
+}
+
 const findEnclosingSection = (el: HTMLElement): EnclosingSection | null => {
-  let node: HTMLElement | null = el.parentElement
-  while (node && node !== document.body) {
+  for (const node of composedAncestors(el)) {
     const kind = containerSectionKind(node)
     if (kind) return { kind, container: node }
-    node = node.parentElement
   }
   return null
+}
+
+const HEADING_SELECTOR = 'h1, h2, h3, h4, h5, h6, [role="heading"]'
+
+const precedingHeading = (node: HTMLElement): string | null => {
+  for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+    const heading = sib.matches(HEADING_SELECTOR) ? sib : Array.from(sib.querySelectorAll(HEADING_SELECTOR)).pop()
+    if (heading) return visibleText(heading)
+  }
+  return null
+}
+
+export const contextSection = (el: HTMLElement): string => {
+  for (const node of composedAncestors(el)) {
+    const legend = containerText(node)
+    if (legend) return isRefusedSection(legend) ? legend : ''
+    const heading = precedingHeading(node)
+    if (heading !== null) return isRefusedSection(heading) ? heading : ''
+  }
+  return ''
 }
 
 type SectionsCache = {
@@ -83,10 +115,8 @@ const buildCache = (): SectionsCache => {
   const employment: HTMLElement[] = []
   const education: HTMLElement[] = []
   const seen = new Set<HTMLElement>()
-  const fieldsets = Array.from(document.querySelectorAll<HTMLElement>('fieldset'))
-  const roleGroups = Array.from(
-    document.querySelectorAll<HTMLElement>('[role="group"]'),
-  )
+  const fieldsets = querySelectorAllDeep<HTMLElement>(document, 'fieldset')
+  const roleGroups = querySelectorAllDeep<HTMLElement>(document, '[role="group"]')
   for (const node of [...fieldsets, ...roleGroups]) {
     if (seen.has(node)) continue
     seen.add(node)
@@ -105,7 +135,7 @@ const collectAllSectionsOfKind = (kind: SectionKind): HTMLElement[] => {
 
 export const inferSection = (el: HTMLElement): string => {
   const enclosing = findEnclosingSection(el)
-  if (!enclosing) return ''
+  if (!enclosing) return contextSection(el)
   const { kind, container } = enclosing
 
   const peers = collectAllSectionsOfKind(kind)

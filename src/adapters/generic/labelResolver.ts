@@ -133,6 +133,13 @@ const closestLegend = (input: HTMLElement): string => {
   return legend ? textOf([legend], skipFor(input)) : ''
 }
 
+const NEUTRAL_LEGEND = /^(additional |application |other |general |screening |custom )?(questions?|information|details)\s*[*:]?$/i
+
+const contextLegend = (input: HTMLElement): string => {
+  const legend = closestLegend(input)
+  return NEUTRAL_LEGEND.test(legend) ? '' : legend
+}
+
 const isActionOnly = (el: Element): boolean => el.matches('button, a, [role="button"], [role="link"]')
 
 export const blockText = (el: Element): string =>
@@ -179,7 +186,7 @@ export const associatedLabels = (input: HTMLElement): string[] =>
     labelByAriaLabelledby(input),
     ariaLabel(input),
     shadowHostLabel(input),
-    closestLegend(input),
+    contextLegend(input),
   ].filter((text) => text.length > 0)
 
 export const resolveFieldLabel = (input: HTMLElement): string => {

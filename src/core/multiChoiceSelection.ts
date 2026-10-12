@@ -1,4 +1,4 @@
-import { findOption } from './match'
+import { findUniqueOption } from './match'
 import type { ProfileValue } from '~/field/types'
 
 export type SelectionPlan<T> = {
@@ -24,7 +24,7 @@ const planForMultiChoice = <T>(
 
   const tryCandidates = (candidates: string[]): void => {
     for (const candidate of candidates) {
-      const match = findOption(choices, getText, candidate)
+      const match = findUniqueOption(choices, getText, candidate)
       if (match && !matchedSet.has(match)) {
         matchedSet.add(match)
         matchedOrder.push(match)
@@ -38,7 +38,7 @@ const planForMultiChoice = <T>(
   if (matchedOrder.length < desiredCount && fallbacks.length > 0) {
     for (const candidate of fallbacks) {
       if (matchedOrder.length >= desiredCount) break
-      const match = findOption(choices, getText, candidate)
+      const match = findUniqueOption(choices, getText, candidate)
       if (match && !matchedSet.has(match)) {
         matchedSet.add(match)
         matchedOrder.push(match)
@@ -68,7 +68,7 @@ const planForChoice = <T>(
 ): SelectionPlan<T> => {
   const candidates = [preferred, ...fallbacks]
   for (const candidate of candidates) {
-    const match = findOption(choices, getText, candidate)
+    const match = findUniqueOption(choices, getText, candidate)
     if (!match) continue
 
     const toSelect = selected.has(match) ? [] : [match]

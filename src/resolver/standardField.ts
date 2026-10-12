@@ -1,6 +1,7 @@
 import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { isCountryScopedQuestion } from './countryScopedAnswers'
 import { isNamePronunciationQuestion } from './namePronunciation'
+import { combineNameWording, isOtherPersonQuestion, isScheduleTopic, isSensitiveTopic, isThirdPartyQuestion, withoutConditionalQualifiers } from './questionTopics'
 import { parseSection } from './sectionParser'
 
 export const STANDARD_FIELDS = [
@@ -97,12 +98,10 @@ const WORDING: ReadonlyArray<[StandardField, RegExp]> = [
   ['github', /\bgit ?hub\b/i],
 ]
 
-const COMBINED_NAME = /\b(first|given) ?(and|&|\/|\+) ?(last|family) ?name\b/gi
-
 const wordedFields = (labels: string[]): ReadonlySet<StandardField> =>
   new Set(
     labels
-      .map((text) => text.replace(COMBINED_NAME, 'full name'))
+      .map(combineNameWording)
       .flatMap((text) => WORDING.filter(([, pattern]) => pattern.test(text)).map(([field]) => field)),
   )
 
@@ -156,14 +155,10 @@ const TEXT_ONLY: ReadonlySet<StandardField> = new Set([
 
 const MIN_PLACE_OPTIONS = 3
 
-const REFUSED_TOPICS =
-  /\b(consent|agree|acknowledg\w*|terms|privacy|polic(y|ies)|gender|sex|sexual|race|racial|ethnic\w*|hispanic|latin[oax]|pronouns?|eeo|equal (employment )?opportunity|self[- ]identif\w*|disabilit(y|ies)|disabled|veterans?|military|criminal|convict\w*|felon\w*|offen[cs]es?|background check|arrest\w*|salary|compensation|wages?|pay|remuneration|availab\w*|notice period|start date|earliest start|passports?|birth\w*|demographic\w*)\b/i
-
-const THIRD_PARTY =
-  /\b(referr(er|al|ed)|referee|reference|emergency|next of kin|manager|supervisor|recruiter|spouse|partner|parent|guardian|contact person|company|employer|school|university)\b/i
-
-export const isRefusedQuestion = (text: string): boolean =>
-  REFUSED_TOPICS.test(text) || isCountryScopedQuestion(text) || THIRD_PARTY.test(text)
+export const isRefusedQuestion = (text: string): boolean => {
+  const asked = withoutConditionalQualifiers(text)
+  return isSensitiveTopic(asked) || isScheduleTopic(asked) || isCountryScopedQuestion(asked) || isThirdPartyQuestion(asked)
+}
 
 const normalizeLabel = (text: string): string =>
   text
@@ -243,14 +238,11 @@ const SEVERAL_LINKS = /\b(urls|links|profiles)\b/i
 
 const MAX_LINK_QUESTION = 120
 
-const OTHER_PERSON =
-  /\b((?!(what|that|it|here|there|let|who|where)'s\b)\w+'s|co-?founders?|colleagues?|friends?|teammates?|someone|another person|person who)\b/i
-
 const LINK_TEXT_TYPES: ReadonlySet<string> = new Set(['', 'text', 'url'])
 
 const linkQuestionField = (text: string): StandardField | null => {
-  const flat = text.replace(/\s+/g, ' ').replace(/[\u2018\u2019]/g, "'")
-  if (flat.length > MAX_LINK_QUESTION || !LINK_REQUEST.test(flat) || SEVERAL_LINKS.test(flat) || OTHER_PERSON.test(flat)) return null
+  const flat = text.replace(/\s+/g, ' ')
+  if (flat.length > MAX_LINK_QUESTION || !LINK_REQUEST.test(flat) || SEVERAL_LINKS.test(flat) || isOtherPersonQuestion(flat)) return null
   const found = LINK_PROVIDERS.filter(([, pattern]) => pattern.test(flat))
   return found.length === 1 ? found[0][0] : null
 }
@@ -318,6 +310,7 @@ export const decideStandardField = (evidence: FieldEvidence): StandardFieldDecis
   const typed = INPUT_TYPE[evidence.inputType]
   if (typed && !typed.has(field)) return { refused: 'conflict' }
   if (evidence.control === 'choice' || evidence.control === 'other') return { refused: 'control' }
+  if (evidence.combobox && field === 'address-level2') return { refused: 'control' }
   if (evidence.control === 'textarea' && field !== linked) return { refused: 'control' }
   if (evidence.control === 'select' && (TEXT_ONLY.has(field) || !placeOptions(evidence.optionLabels))) return { refused: 'control' }
   return { field }

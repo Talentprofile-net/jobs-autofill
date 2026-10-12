@@ -8,15 +8,17 @@ import {
 import { isPlaceholderText } from '~/core/match'
 import type { PickerMode, ProfileValue, FillOutcome } from './types'
 import { mountPickerIcon, type WidgetPlacement } from '~/ui/picker/iconMount'
-import { isAttached } from '~/core/shadowDom'
+import { composedParent, isAttached } from '~/core/shadowDom'
 import { UnsupportedFillError } from './unsupportedFill'
 
 export const isRegistered = (el: HTMLElement): boolean =>
   el.hasAttribute(FIELD_MARKER_ATTR)
 
 export const isInsideRegistered = (el: HTMLElement): boolean => {
-  if (el.hasAttribute(FIELD_MARKER_ATTR)) return true
-  return el.closest(`[${FIELD_MARKER_ATTR}]`) !== null
+  for (let node: Node | null = el; node; node = composedParent(node)) {
+    if (node instanceof Element && node.hasAttribute(FIELD_MARKER_ATTR)) return true
+  }
+  return false
 }
 
 export const isVisible = (el: HTMLElement): boolean => {

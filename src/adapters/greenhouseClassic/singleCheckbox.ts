@@ -4,6 +4,7 @@ import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const VERIFY_SETTLE_MS = 80
 
@@ -30,8 +31,8 @@ export class SingleCheckbox extends GreenhouseBaseInput {
     if (cb.checked === value.value) return true
     const label = this.labelEl
     return fieldFillerQueue.enqueue(async () => {
-      if (label) label.click()
-      else cb.click()
+      if (label) activateControl(label)
+      else activateControl(cb)
       await sleep(VERIFY_SETTLE_MS)
       return cb.checked === value.value
     })

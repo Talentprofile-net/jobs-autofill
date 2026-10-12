@@ -1,11 +1,12 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements, waitForElement } from '~/core/getElements'
-import { findOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
+import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
 import { setNativeInputValue } from '~/core/reactProps'
 import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const SELECTION_SETTLE_MS = 100
 
@@ -45,9 +46,9 @@ export class AddressSearchable extends GreenhouseBaseInput {
     await sleep(100)
     await waitForElement(this.element, `.//auto-complete[@open]`, { timeout: 1500 })
     const items = getElements(this.element, `.//ul/li`)
-    const match = findOption(items, (li) => li.innerText, candidate)
+    const match = findUniqueOption(items, (li) => li.innerText, candidate)
     if (!match) return false
-    match.click()
+    activateControl(match)
     await sleep(SELECTION_SETTLE_MS)
     return this.isSelected(candidate)
   }

@@ -25,7 +25,8 @@ const tokenize = (s: string): string[] =>
  * Tries, in order:
  *   1. exact normalized equality
  *   2. equality after stripping parentheticals and text after first comma
- *      (handles "Thailand (TH)" vs "Thailand", "Yes, I am willing" vs "Yes")
+ *      from one side only (handles "Thailand (TH)" vs "Thailand", "Yes, I am
+ *      willing" vs "Yes"); two different qualifiers never match
  *
  * Substring/token-containment matching has been removed to avoid false
  * positives like "York" matching "New York" or "United States" matching
@@ -41,26 +42,12 @@ export const optionMatchesRelaxed = (optionText: string, candidate: string): boo
 
   const aStripped = normalizeOption(stripParenthetical(beforeFirstComma(a)))
   const bStripped = normalizeOption(stripParenthetical(beforeFirstComma(b)))
-  if (aStripped && bStripped && aStripped === bStripped) return true
+  if (aStripped !== a && bStripped !== b) return false
 
   if (aStripped && b && aStripped === b) return true
   if (bStripped && a && bStripped === a) return true
 
   return false
-}
-
-/**
- * Find a matching option in a list, trying exact match across all options
- * first, then relaxed match if no exact match was found.
- */
-export const findOption = <T>(
-  options: T[],
-  getText: (option: T) => string,
-  candidate: string,
-): T | null => {
-  const exact = options.find((o) => optionMatches(getText(o), candidate))
-  if (exact) return exact
-  return options.find((o) => optionMatchesRelaxed(getText(o), candidate)) ?? null
 }
 
 const SAFE_OPTION_VALUE = /^[A-Za-z][A-Za-z .'&()-]*$/

@@ -1,4 +1,5 @@
 import { attachedFileNames, attachFile, hasDisplayedAncestor } from '~/core/fileAttach'
+import { resolveLabelledByText } from '~/core/labelledBy'
 import { composedParent } from '~/core/shadowDom'
 import { CV_FIELD_TYPE, isResumeFieldLabel } from '~/resolver/cvFile'
 import type { CaptureRecord } from '~/field/baseField'
@@ -28,13 +29,24 @@ const nearestQuestion = (input: HTMLElement): string => {
     for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
       if (!isRenderedElement(sib)) continue
       const text = blockText(sib)
-      if (!text || UPLOADER_CHROME.test(text)) continue
+      if (!text || UPLOADER_CHROME.test(text) || GENERIC_FILE_LABEL.test(bare(text))) continue
       if (containsField(sib)) return ''
       if (text.length <= QUESTION_MAX_CHARS) return text
     }
     node = node.parentElement
   }
   return ''
+}
+
+const groupQuestion = (input: HTMLElement): string => {
+  const group = input.closest<HTMLElement>('[role="group"], fieldset')
+  if (!group || hasOtherField(group, input)) return ''
+  const legend = group.tagName === 'FIELDSET' ? group.querySelector<HTMLElement>(':scope > legend') : null
+  const text =
+    (legend ? blockText(legend) : '') ||
+    resolveLabelledByText(group.getAttribute('aria-labelledby'), group) ||
+    (group.getAttribute('aria-label') ?? '').trim()
+  return text.length <= QUESTION_MAX_CHARS && !GENERIC_FILE_LABEL.test(bare(text)) ? text : ''
 }
 
 const plain = (text: string): string => text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
@@ -66,7 +78,7 @@ const uploaderAction = (input: HTMLElement): string => {
 export const fileQuestionLabel = (input: HTMLElement): string => {
   const own = resolveLabel(input)
   if (!GENERIC_FILE_LABEL.test(bare(own))) return own
-  return nearestQuestion(input) || uploaderAction(input) || own
+  return groupQuestion(input) || nearestQuestion(input) || uploaderAction(input) || own
 }
 
 export const isDocumentQuestion = (label: string): boolean =>

@@ -1,4 +1,5 @@
 import { getElement } from '~/core/getElements'
+import { activateControl } from '~/core/activate'
 
 export class CheckboxWrapperContainer {
   element: HTMLElement
@@ -18,9 +19,9 @@ export class CheckboxWrapperContainer {
     return this.inputElement?.checked ?? false
   }
   check(): void {
-    if (!this.checked) this.inputElement?.click()
+    if (!this.checked) activateControl(this.inputElement)
   }
   uncheck(): void {
-    if (this.checked) this.inputElement?.click()
+    if (this.checked) activateControl(this.inputElement)
   }
 }

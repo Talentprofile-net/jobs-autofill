@@ -1,7 +1,7 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements, waitForElement } from '~/core/getElements'
 import { setNativeInputValue } from '~/core/reactProps'
-import { optionMatches, optionMatchesRelaxed, xpathLiteral } from '~/core/match'
+import { findUniqueOption, xpathLiteral } from '~/core/match'
 import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
@@ -84,15 +84,7 @@ export class DropdownSearchable extends GreenhouseBaseInput {
     searchInput.dispatchEvent(new InputEvent('input', { bubbles: true }))
     const results = await resultsPromise
     if (!results) return null
-    return (
-      getElements(results, `./li`).find((el) =>
-        optionMatches(el.innerText, value),
-      ) ??
-      getElements(results, `./li`).find((el) =>
-        optionMatchesRelaxed(el.innerText, value),
-      ) ??
-      null
-    )
+    return findUniqueOption(getElements(results, `./li`), (el) => el.innerText, value)
   }
 
   async fill(value: ProfileValue): Promise<boolean> {

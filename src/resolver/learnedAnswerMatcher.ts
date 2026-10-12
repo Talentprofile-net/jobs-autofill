@@ -51,6 +51,11 @@ const extractKeywords = (normalized: string): Set<string> => {
   return out
 }
 
+const NEGATIONS = new Set(['not', 'no', 'never', 'nor', 'without', 'dont', 'doesnt', 'didnt', 'cannot', 'cant', 'wont', 'isnt', 'arent', 'wasnt', 'werent', 'havent', 'hasnt', 'shouldnt', 'wouldnt', 'couldnt'])
+
+const isNegated = (normalized: string): boolean =>
+  normalized.split(/[-_\s]+/).some((w) => NEGATIONS.has(w))
+
 const jaccard = (a: Set<string>, b: Set<string>): { score: number; shared: number } => {
   if (a.size === 0 && b.size === 0) return { score: 0, shared: 0 }
   let intersection = 0
@@ -113,12 +118,15 @@ export const findLearnedAnswer = (
   const exact = findExactLearnedAnswer(questionText, fieldType, answers)
   if (exact) return exact
 
-  const keywords = extractKeywords(normalizeQuestion(questionText))
+  const normalizedQuestion = normalizeQuestion(questionText)
+  const keywords = extractKeywords(normalizedQuestion)
   if (keywords.size < JACCARD_MIN_SHARED) return null
+  const negated = isNegated(normalizedQuestion)
 
   let best: MatchResult | null = null
   for (const answer of answers) {
     if (!typesCompatible(answer.fieldType, fieldType)) continue
+    if (isNegated(answer.normalizedQuestion) !== negated) continue
     const otherKeywords = extractKeywords(answer.normalizedQuestion)
     const { score, shared } = jaccard(keywords, otherKeywords)
     if (score < JACCARD_MIN_SCORE) continue

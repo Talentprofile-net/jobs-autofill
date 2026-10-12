@@ -1,6 +1,7 @@
 import { isUnrelatedFrameUrl } from './frameOrigins'
 
-const UTILITY_PATH = /(sw_iframe|service[_-]?worker|\/ns\.html|pixel|beacon|\/track|cookie[_-]?sync|getuid|\/sync\b|analytics|tagmanager|\/collect\b|\/rum\b)/i
+const UTILITY_TOKEN =
+  /^([a-z0-9]{1,12}[-_])?(sw[_-]?iframe|service[_-]?worker|ns(?=\.html?$)|pixel|beacon|track(ing)?|cookie[_-]?sync|getuid|sync|analytics|tagmanager|collect|rum)([-_][a-z0-9]{1,12})?(\.[a-z0-9]{1,5})?$/i
 
 export const MIN_FRAME_WIDTH = 240
 export const MIN_FRAME_HEIGHT = 160
@@ -18,7 +19,8 @@ export const isUtilityFrameUrl = (url: string): boolean => {
   if (isUnrelatedFrameUrl(url)) return true
   try {
     const parsed = new URL(url)
-    return UTILITY_PATH.test(`${parsed.pathname}${parsed.search}`)
+    const tokens = [...parsed.pathname.split('/'), ...parsed.searchParams.keys()]
+    return tokens.some((token) => UTILITY_TOKEN.test(token))
   } catch {
     return false
   }
@@ -48,8 +50,16 @@ export const measureIframesInPage = (): Array<{ src: string; width: number; heig
 
 export const countFillableControlsInPage = (): number => {
   const selector = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select, [role="combobox"], [role="radiogroup"]'
-  return Array.from(document.querySelectorAll(selector)).filter((el) => {
-    const rect = el.getBoundingClientRect()
-    return rect.width > 0 && rect.height > 0
-  }).length
+  const scopes: Array<Document | ShadowRoot> = [document]
+  for (let i = 0; i < scopes.length; i++) {
+    for (const el of Array.from(scopes[i].querySelectorAll('*'))) {
+      if (el.shadowRoot) scopes.push(el.shadowRoot)
+    }
+  }
+  return scopes
+    .flatMap((scope) => Array.from(scope.querySelectorAll(selector)))
+    .filter((el) => {
+      const rect = el.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0
+    }).length
 }

@@ -2,7 +2,7 @@ import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements } from '~/core/getElements'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
 import { xpaths } from './xpaths'
-import { findOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
+import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
 import type { ProfileValue } from '~/field/types'
 
 export class Select extends GreenhouseBaseInput {
@@ -33,7 +33,7 @@ export class Select extends GreenhouseBaseInput {
     return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
         if (this.isSelected(candidate)) return true
-        const option = findOption(options, (o) => o.text, candidate)
+        const option = findUniqueOption(options, (o) => o.text, candidate)
         if (!option) continue
         select.selectedIndex = option.index
         select.dispatchEvent(new Event('input', { bubbles: true }))

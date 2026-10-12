@@ -1,10 +1,11 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, getElements } from '~/core/getElements'
-import { findOption } from '~/core/match'
+import { findUniqueOption } from '~/core/match'
 import { sleep, verifySelection } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const TRUE_LABELS = [
   'Yes',
@@ -112,16 +113,16 @@ export class BooleanRadio extends WorkdayBaseInput {
         const expectedValues = value.value ? TRUE_VALUES : FALSE_VALUES
         const byValue = this.findOptionByInputValue(options, expectedValues)
         if (byValue) {
-          byValue.input.click()
+          activateControl(byValue.input)
           await sleep(SELECTION_SETTLE_MS)
           if (byValue.input.checked) return true
         }
       }
 
       for (const candidate of candidates) {
-        const match = findOption(options, (o) => o.label, candidate)
+        const match = findUniqueOption(options, (o) => o.label, candidate)
         if (!match) continue
-        match.input.click()
+        activateControl(match.input)
         await sleep(SELECTION_SETTLE_MS)
         if (await verifySelection(() => this.currentValue(), candidate, 0)) {
           return true
@@ -131,7 +132,7 @@ export class BooleanRadio extends WorkdayBaseInput {
       if (value.kind === 'boolean' && options.length === 2) {
         const target = value.value ? options[0] : options[1]
         if (!target.input.checked) {
-          target.input.click()
+          activateControl(target.input)
           await sleep(SELECTION_SETTLE_MS)
         }
         return target.input.checked

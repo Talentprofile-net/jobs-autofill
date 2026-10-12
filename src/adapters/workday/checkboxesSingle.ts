@@ -6,6 +6,7 @@ import { sleep } from '~/core/async'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 const VERIFY_SETTLE_MS = 80
 
@@ -56,10 +57,10 @@ export class CheckboxesSingle extends WorkdayBaseInput {
           const plan = planSelection(choices, selected, (c) => c.label, value)
 
           for (const choice of plan.toDeselect) {
-            if (choice.input.checked) choice.input.click()
+            if (choice.input.checked) activateControl(choice.input)
           }
           for (const choice of plan.toSelect) {
-            if (!choice.input.checked) choice.input.click()
+            if (!choice.input.checked) activateControl(choice.input)
           }
 
           await sleep(VERIFY_SETTLE_MS)

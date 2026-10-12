@@ -1,5 +1,5 @@
 import fieldFillerQueue from '~/core/asyncQueue'
-import { findOption } from '~/core/match'
+import { findUniqueOption } from '~/core/match'
 import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
 import { resolveOptionLabel } from './labelResolver'
@@ -65,7 +65,7 @@ export class GenericRadioGroup extends GenericBaseField {
 
     return fieldFillerQueue.enqueue(async () => {
       for (const candidate of candidates) {
-        const match = findOption(options, (o) => o.text, candidate)
+        const match = findUniqueOption(options, (o) => o.text, candidate)
         if (!match) continue
         if (match.input.checked) return true
         activateOption(match.input)

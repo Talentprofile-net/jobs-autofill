@@ -6,7 +6,8 @@ import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
-import { findOption } from '~/core/match'
+import { findUniqueOption } from '~/core/match'
+import { activateControl } from '~/core/activate'
 
 const MENU_WAIT_TIMEOUT_MS = 500
 const SELECTION_SETTLE_MS = 150
@@ -51,7 +52,7 @@ export class AddressSearchable extends GreenhouseReactBaseInput {
         stopPropagation: () => {},
       })
     } else {
-      trigger.click()
+      activateControl(trigger)
     }
   }
 
@@ -84,7 +85,7 @@ export class AddressSearchable extends GreenhouseReactBaseInput {
     const dd = await this.waitForMenu()
     if (!dd) return null
     const options = getElements(dd, `.//div[starts-with(@class, "select__option")]`)
-    return findOption(options, (o) => o.innerText, candidate)
+    return findUniqueOption(options, (o) => o.innerText, candidate)
   }
 
   private async searchAndFind(candidate: string): Promise<HTMLElement | null> {
@@ -128,7 +129,7 @@ export class AddressSearchable extends GreenhouseReactBaseInput {
             for (const candidate of candidates) {
               const match = await this.searchAndFind(candidate)
               if (!match) continue
-              match.click()
+              activateControl(match)
               await sleep(SELECTION_SETTLE_MS)
               if (
                 await verifySelection(() => this.currentValue(), candidate, 0)

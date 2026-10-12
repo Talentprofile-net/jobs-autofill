@@ -6,7 +6,8 @@ import { sleep } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
-import { findOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
+import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
+import { activateControl } from '~/core/activate'
 
 const VERIFY_SETTLE_MS = 150
 
@@ -77,7 +78,7 @@ export class DropdownMultiSearchable extends GreenhouseReactBaseInput {
         stopPropagation: () => {},
       })
     } else {
-      trigger.click()
+      activateControl(trigger)
     }
   }
 
@@ -103,7 +104,7 @@ export class DropdownMultiSearchable extends GreenhouseReactBaseInput {
     )
     if (!dd) return null
     const options = getElements(dd, `.//div[starts-with(@class, "select__option")]`)
-    return findOption(options, (o) => o.innerText, candidate)
+    return findUniqueOption(options, (o) => o.innerText, candidate)
   }
 
   private blurInput(): void {
@@ -149,7 +150,7 @@ export class DropdownMultiSearchable extends GreenhouseReactBaseInput {
     this.openDropdown()
     const match = await this.findOptionAfterSearch(candidate)
     if (match) {
-      match.click()
+      activateControl(match)
       await sleep(VERIFY_SETTLE_MS)
       const chips = this.selectedChips
       return chips.some((c) => this.chipMatchesTarget(c, candidate))

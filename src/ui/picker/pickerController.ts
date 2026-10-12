@@ -347,10 +347,12 @@ export const handlePickerAction = (
   if (action.type === "context") return { ok: true, data: current.context };
   if (action.type === "insert") {
     if (!current.target) return { ok: false, error: "Not a field picker" };
+    if (!current.target.field.isConnected) return { ok: false, error: "Field was replaced" };
     return { ok: true, data: insertIntoField(current.target.field, action.text) };
   }
   if (action.type === "fill") {
     if (!current.target) return { ok: false, error: "Not a field picker" };
+    if (!current.target.field.isConnected) return { ok: false, error: "Field was replaced" };
     fillField(current.target.descriptor.fieldUuid, action.value);
     return { ok: true };
   }

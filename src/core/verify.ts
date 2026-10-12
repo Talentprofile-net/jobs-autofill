@@ -1,4 +1,5 @@
 import { optionMatches, optionMatchesRelaxed } from './match'
+import { setNativeInputValue } from './reactProps'
 export { sleep } from './async'
 import { sleep } from './async'
 
@@ -14,14 +15,25 @@ export const verifyTextValue = async (
 ): Promise<boolean> => {
   await sleep(settleMs)
   if (input.value === target) return true
-  const inputNum = parseFloat(input.value)
-  const targetNum = parseFloat(target)
-  if (
-    Number.isFinite(inputNum) &&
-    Number.isFinite(targetNum) &&
-    inputNum === targetNum
-  ) {
-    return true
+  if (!NUMERIC.test(input.value) || !NUMERIC.test(target)) return false
+  return Number(input.value) === Number(target)
+}
+
+const NUMERIC = /^\s*[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?\s*$/i
+
+export const writeVerifiedText = async (
+  input: HTMLInputElement | HTMLTextAreaElement,
+  target: string,
+  write: () => void,
+  settleMs: number = VERIFY_SETTLE_REACT_MS,
+): Promise<boolean> => {
+  const original = input.value
+  write()
+  if (await verifyTextValue(input, target, settleMs)) return true
+  if (input.value !== original) {
+    setNativeInputValue(input, original)
+    input.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
   }
   return false
 }

@@ -3,6 +3,7 @@ import { getElement, waitForElement } from '~/core/getElements'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { activateControl } from '~/core/activate'
 
 export class BooleanCheckbox extends WorkdayBaseInput {
   static XPATH = xpaths.SINGLE_CHECKBOX
@@ -37,7 +38,7 @@ export class BooleanCheckbox extends WorkdayBaseInput {
 
     return fieldFillerQueue.enqueue(async () => {
       const initial = this.currentValue()
-      checkbox.click()
+      activateControl(checkbox)
       await waitForElement(this.element, this.currentStateXpath(!initial), {
         observeAttributes: true,
         attributeFilter: ['aria-checked'],

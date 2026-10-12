@@ -4,6 +4,7 @@ import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { answersForJob } from './countryScopedAnswers'
 import { findExactLearnedAnswer, findLearnedAnswer, learnedAnswerToProfileValue } from './learnedAnswerMatcher'
 import { isNamePronunciationQuestion } from './namePronunciation'
+import { isThirdPartySection } from './questionTopics'
 
 export type LearnedAnswerRequest = {
   requestId: string
@@ -33,7 +34,7 @@ export const resolveLearnedAnswersBatch = (
   }
 
   return requests.map((r) => {
-    if (isAlternateIdentityQuestion(r.fieldName)) {
+    if (isAlternateIdentityQuestion(r.fieldName) || isThirdPartySection(r.section ?? '')) {
       return { requestId: r.requestId, value: { kind: 'unsupported' }, matchedAnswerId: null }
     }
     const find = isNamePronunciationQuestion(r.fieldName) ? findExactLearnedAnswer : findLearnedAnswer

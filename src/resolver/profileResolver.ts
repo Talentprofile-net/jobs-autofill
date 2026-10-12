@@ -10,6 +10,8 @@ import { parseSection, type ParsedSection } from './sectionParser'
 import { findProfileLink, profileEmail, profilePhone, websiteLink } from './profileContacts'
 import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { isNamePronunciationQuestion } from './namePronunciation'
+import { isAuthorizationQuestion } from './countryScopedAnswers'
+import { combineNameWording, isRefusedSection, isSensitiveTopic, isThirdPartyQuestion } from './questionTopics'
 
 const TEXT_FIELD_TYPES = new Set(['TextInput', 'ContentEditable'])
 const FILE_FIELD_TYPES = new Set(['FileUpload', 'SingleFileUpload', 'MultiFileUpload'])
@@ -126,9 +128,10 @@ const re = {
   middleName: /\bmiddle\s*name\b/i,
   lastName: /\b(last|family|sur)\s*name\b/i,
   fullName: /\b(full|legal|applicant|your)\s*name\b|^\s*name\s*$/i,
-  email: /\bemail\b/i,
+  email: /\be-?mail\b/i,
   phone: /\b(phone|mobile|cell|telephone|tel)\b/i,
-  phoneExclusions: /\b(code|country|prefix|dialing|extension)\b/i,
+  phoneExclusions: /\b(code|country|prefix|dialing|extension|ext|device|type)\b/i,
+  phoneIncludesCode: /\b(incl(ude|uding)?|with)\b[^.?!)]*\b(country|dial(ing)?|area)\s*code\b/gi,
   linkedin: /linked\s*in/i,
   github: /\bgithub\b/i,
   website: /\b(website|portfolio|personal\s*site|homepage)\b/i,
@@ -143,6 +146,9 @@ const re = {
   streetAddress: /\baddress\b/i,
   locationExclusions: /\b(code|prefix|dialing|line\s*\d|street|apt|apartment|suite)\b/i,
   relocate: /\brelocat(e|ion)\b/i,
+  relocateTarget: /\b(relocat\w*|move|moving)\s+(to|in|within|near)\b|\bbased in\b/i,
+  origin: /\b(birth\w*|born|passports?)\b/i,
+  salary: /\b(salary|compensation|pay|wages?|remuneration|expectations?|amount)\b/i,
   availability: /\b(availab(le|ility)|open\s*to\s*work)\b/i,
   availabilityExclusions: /\b(date|start|when|day|month|year|time)\b/i,
   summaryProfile: /\b(summary|bio|about\s*you|about\s*me|about\s*yourself|self[\s-]*description)\b/i,
@@ -167,7 +173,7 @@ const re = {
 }
 
 const isPhoneField = (n: string): boolean =>
-  re.phone.test(n) && !re.phoneExclusions.test(n)
+  re.phone.test(n) && !re.phoneExclusions.test(n.replace(re.phoneIncludesCode, ' '))
 
 const isLocationField = (n: string): boolean =>
   re.location.test(n) && !re.locationExclusions.test(n)
@@ -176,7 +182,7 @@ const isCountryField = (n: string): boolean =>
   re.country.test(n) && !re.locationExclusions.test(n)
 
 const isStreetAddressField = (n: string): boolean =>
-  re.streetAddress.test(n) && !re.city.test(n) && !re.country.test(n)
+  re.streetAddress.test(n) || re.postalCode.test(n)
 
 const explicitDialCode = (phone: string): string | null => {
   const match = /^\s*\+(\d{1,4})[\s\-.(]/.exec(phone)
@@ -306,10 +312,12 @@ const skillsOrLanguagesValue = (
 }
 
 const resolveGeneric = (
-  fieldName: string,
+  question: string,
   fieldType: string,
   profile: Profile,
 ): ResolveResult | null => {
+  if (isThirdPartyQuestion(question) || isSensitiveTopic(question)) return withField({ kind: 'unsupported' }, null)
+  const fieldName = combineNameWording(question)
   if (re.firstName.test(fieldName)) {
     const first = splitName(profile.profileName).first
     return withField(str(first, namePartConfidence(profile.profileName, first)), 'profileName')
@@ -357,13 +365,16 @@ const resolveGeneric = (
   if (re.monthlyRate.test(fieldName)) {
     return withField(str(profile.monthlyRate ?? ''), 'monthlyRate')
   }
-  if (re.currency.test(fieldName)) {
+  if (re.currency.test(fieldName) && !re.salary.test(fieldName)) {
     const value = profile.rateCurrency ?? ''
     if (!value) return withField({ kind: 'unsupported' }, null)
     if (TEXT_FIELD_TYPES.has(fieldType)) return withField(str(value), 'rateCurrency')
     return withField(choice(value, []), 'rateCurrency')
   }
   if (isNationalityField(fieldName)) {
+    return withField({ kind: 'unsupported' }, null)
+  }
+  if (isStreetAddressField(fieldName)) {
     return withField({ kind: 'unsupported' }, null)
   }
   if (isCountryField(fieldName)) {
@@ -375,14 +386,11 @@ const resolveGeneric = (
   if (re.region.test(fieldName)) {
     return withField(resolveRegionGeneric(profile, fieldType), 'location')
   }
-  if (isStreetAddressField(fieldName)) {
-    return withField({ kind: 'unsupported' }, null)
-  }
   if (isLocationField(fieldName)) {
     return withField(rawLocationToValue(profile, fieldType), 'location')
   }
   if (re.relocate.test(fieldName)) {
-    if (profile.isInterestedInRelocation === null) {
+    if (profile.isInterestedInRelocation === null || re.relocateTarget.test(fieldName)) {
       return withField({ kind: 'unsupported' }, null)
     }
     return withField(
@@ -525,6 +533,7 @@ export const resolveField = (
 ): ResolveResult => {
   const trimmed = (fieldName ?? '').trim()
   if (!trimmed || isAlternateIdentityQuestion(trimmed) || isNamePronunciationQuestion(trimmed)) return unsupported()
+  if (isAuthorizationQuestion(trimmed) || re.origin.test(trimmed) || isRefusedSection(section ?? '')) return unsupported()
   if (FILE_FIELD_TYPES.has(fieldType)) return unsupported()
   if (re.coverLetter.test(trimmed)) return unsupported()
 

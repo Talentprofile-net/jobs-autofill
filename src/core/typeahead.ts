@@ -2,6 +2,7 @@ import { setNativeInputValue } from './reactProps'
 import { findUniqueOption, normalizeOption, optionMatches, optionMatchesRelaxed } from './match'
 import { getElementByIdInScope } from './shadowDom'
 import { holdsFor, waitUntil } from './verify'
+import { withoutImplicitSubmit } from './activate'
 
 const TYPEAHEAD_HINT = /(dropdown|autocomplete|auto-complete|typeahead|type-ahead|suggest)/i
 const RESULTS_HINT = /(results|options|suggestions|listbox|menu)/i
@@ -142,11 +143,12 @@ const typeValue = (input: HTMLInputElement, text: string): void => {
   input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key }))
 }
 
-const activate = (option: HTMLElement): void => {
-  for (const type of ['mousedown', 'mouseup', 'click']) {
-    option.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }))
-  }
-}
+const activate = (option: HTMLElement): void =>
+  withoutImplicitSubmit(option, () => {
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      option.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }))
+    }
+  })
 
 type Snapshot = { visible: string; hidden: Array<[HTMLInputElement, string]> }
 
