@@ -95,4 +95,33 @@ describe('CV attach goes through the same concealment check in every adapter', (
       })
     })
   }
+
+  it('generic: attaches the CV without clicking the file input or opening the native chooser', async () => {
+    mountCase(adapters[0][2]('ID'), adapters[0][3]('ID'))
+    const input = document.querySelector<HTMLInputElement>('#plain')!
+    let clicks = 0
+    input.addEventListener('click', () => (clicks += 1))
+    Object.assign(input, { showPicker: () => (clicks += 1) })
+    const ok = await new GenericFileInput(input).fill(CV)
+    expect({ clicks, files: input.files?.length ?? 0, ok }).toEqual({ clicks: 0, files: 1, ok: true })
+  })
+
+  it('generic: refuses to attach the PDF CV to an uploader whose accept list excludes PDF', async () => {
+    mountCase('<label id="ID-box">Resume <input id="ID" type="file" accept=".doc,.docx"></label>', 'ID')
+    const input = document.querySelector<HTMLInputElement>('#plain')!
+    input.addEventListener('change', () => changes.push('plain'))
+    const ok = await new GenericFileInput(input).fill(CV)
+    expect({ changes, files: input.files?.length ?? 0, ok }).toEqual({ changes: [], files: 0, ok: false })
+  })
+
+  it('generic: keeps a file the user already attached instead of replacing it with the CV', async () => {
+    mountCase(adapters[0][2]('ID'), adapters[0][3]('ID'))
+    const input = document.querySelector<HTMLInputElement>('#plain')!
+    Object.assign(input, { files: [new File(['x'], 'Own_CV.pdf')] })
+    const outcome = await new GenericFileInput(input).fillFromResolved(CV)
+    expect({ names: Array.from(input.files ?? []).map((file) => file.name), outcome }).toEqual({
+      names: ['Own_CV.pdf'],
+      outcome: { reason: 'has-value', status: 'skipped' },
+    })
+  })
 })

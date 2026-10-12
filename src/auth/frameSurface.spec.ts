@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
-import { isApplicationFrameSurface, isUtilityFrameUrl } from './frameSurface'
+import { installDom, setRect } from '~/core/__fixtures__/domGlobals'
+import { countFillableControlsInPage, isApplicationFrameSurface, isUtilityFrameUrl } from './frameSurface'
 
 const NESTLE_SW = 'https://data-na.nestlejobs.com/_/service_worker/69f0/sw_iframe.html?origin=https%3A%2F%2Fjobdetails.nestle.com&1p=1'
 
@@ -38,5 +39,21 @@ describe('embedded frames offered as application surfaces', () => {
   it('uses discovered control counts when the frame can be inspected', () => {
     expect(isApplicationFrameSurface({ controls: 12, url: 'https://boards.greenhouse.io/acme/jobs/1' })).toBe(true)
     expect(isApplicationFrameSurface({ controls: 1, geometry: { height: 900, visible: true, width: 800 }, url: 'https://boards.greenhouse.io/acme/jobs/1' })).toBe(false)
+  })
+
+  it('accepts an application frame whose job slug contains a utility word', () => {
+    const url = 'https://careers.hostaway.com/o/head-of-product-analytics-100-remote-emea/c/new'
+    expect(isUtilityFrameUrl(url)).toBe(false)
+    expect(isApplicationFrameSurface({ controls: 12, url })).toBe(true)
+  })
+
+  it('counts fillable controls inside open shadow roots', () => {
+    installDom('<html><body><div id="host"></div><input id="light" type="text"></body></html>')
+    const root = document.getElementById('host')!.attachShadow({ mode: 'open' })
+    root.innerHTML = '<input type="text"><input type="email"><select><option>Germany</option></select>'
+    for (const el of [document.getElementById('light')!, ...Array.from(root.querySelectorAll('input, select'))]) setRect(el, { height: 30, width: 300, x: 10, y: 10 })
+    const controls = countFillableControlsInPage()
+    expect(controls).toBe(4)
+    expect(isApplicationFrameSurface({ controls, geometry: { height: 900, visible: true, width: 800 }, url: 'https://apply.example.invalid/form' })).toBe(true)
   })
 })

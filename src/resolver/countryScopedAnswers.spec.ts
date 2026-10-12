@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
 import type { Profile, TalentAnswer } from '~/api/types'
+import { fieldsWithoutProfileValue, mergeFillValues } from '~/bridge/fillValues'
 import { answersForJob, isCountryScopedQuestion } from './countryScopedAnswers'
 import { learnedAnswerToProfileValue } from './learnedAnswerMatcher'
 import { resolveLearnedAnswersBatch } from './learnedAnswers'
+import { resolveField } from './profileResolver'
 
 const answer = (id: string, questionText: string, jobCountry: string | null, value: boolean): TalentAnswer => ({
   answerKind: 'boolean',
@@ -82,6 +84,37 @@ describe('country-scoped answer reuse', () => {
     expect(fill('CA').matchedAnswerId).toBe('ca')
     expect(fill('US').matchedAnswerId).toBe('us')
     expect(fill('GB').value).toEqual({ kind: 'unsupported' })
+  })
+
+  it('fills a residence-worded authorization dropdown from the same-country saved answer instead of the profile country', () => {
+    const question = 'Are you legally authorized to work in the country you reside?'
+    const profile: Profile = {
+      description: null,
+      education: null,
+      experience: null,
+      hourlyRate: null,
+      id: 'p',
+      isAvailableForHire: null,
+      isInterestedInRelocation: null,
+      jobTitle: null,
+      languages: null,
+      links: null,
+      location: 'Example City, Germany',
+      monthlyRate: null,
+      profileName: null,
+      rateCurrency: null,
+      skills: null,
+      talentAnswers: [answer('ca-auth', question, 'CA', true)],
+      talentNotes: null,
+      totalExperience: null,
+      user: null,
+    }
+    const fields = [{ fieldName: question, fieldType: 'SimpleDropdown', requestId: 'r', section: '' }]
+    const fromProfile = fields.map((f) => ({ requestId: f.requestId, ...resolveField(f.fieldName, f.fieldType, f.section, profile) }))
+    const learned = resolveLearnedAnswersBatch(fieldsWithoutProfileValue(fields, fromProfile), profile, 'CA')
+    const result = mergeFillValues(fields, fromProfile, learned)[0]
+    expect(result.matchedAnswerId).toBe('ca-auth')
+    expect(result.value).toEqual({ fallbacks: ['True'], kind: 'choice', preferred: 'Yes' })
   })
 })
 

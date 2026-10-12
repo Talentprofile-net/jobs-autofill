@@ -20,6 +20,11 @@ describe('findUniqueOption', () => {
     expect(pick(options(['Example City, Example Region', 'x'], ['Other Town', 'y']), 'Example City')).toBe('Example City, Example Region')
   })
 
+  it('refuses a relaxed match whose qualifier contradicts the candidate', () => {
+    expect(pick(options(['Example City, Other Region', 'a'], ['Second Town, Example Region', 'b']), 'Example City, Example Region')).toBeNull()
+    expect(pick(options(['Yes', 'y'], ['No, but I will require sponsorship in the future', 'f']), 'No, I do not require sponsorship')).toBeNull()
+  })
+
   it('matches readable option values but never opaque ids', () => {
     expect(pick(options(['Germany', 'DE'], ['United States', 'US']), 'US')).toBe('United States')
     expect(pick(options(['Boston, MA', 'c6eff7ec-798d-4780-b3e4-bfa6c49b47e6']), 'c6eff7ec-798d-4780-b3e4-bfa6c49b47e6')).toBeNull()

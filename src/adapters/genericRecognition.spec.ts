@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 
 import { installDom, setRect } from '~/core/__fixtures__/domGlobals'
+import type { Profile } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
 
 mock.module('../ui/picker/iconMount', () => ({ mountPickerIcon: () => null }))
@@ -20,6 +21,13 @@ const { RegisterInputs } = await import('./generic')
 const { GenericSelect } = await import('./generic/select')
 const { GenericTextInput } = await import('./generic/textInput')
 const { fillTypeahead, typeaheadScope } = await import('~/core/typeahead')
+const { verifyTextValue } = await import('~/core/verify')
+const { Select: ClassicSelect } = await import('./greenhouseClassic/select')
+const { Dropdown: ClassicDropdown } = await import('./greenhouseClassic/dropdown')
+const { AddressSearchable: ClassicAddress } = await import('./greenhouseClassic/addressSearchable')
+const { Dropdown: WorkdayDropdown } = await import('./workday/dropdown')
+const { DropdownSearchable: ReactDropdown } = await import('./greenhouseReact/dropdownSearchable')
+const { AddressSearchable: ReactAddress } = await import('./greenhouseReact/addressSearchable')
 
 const LEVER = `<html><body>
 <form id="application-form">
@@ -302,6 +310,19 @@ describe('field labels without volatile text', () => {
   it('reads a long question from the label block above a select', () => {
     expect(fieldFor(document.getElementById('office'))!.fieldName.startsWith('Are you interested in working out of any of the following office locations?')).toBe(true)
   })
+
+  it('keeps explicit labels and the field count when the form-fill widget host is inserted before the first row', () => {
+    mount('<html><body><form id="f"><div id="row-name"><label for="nm">Full Name</label><input id="nm" type="text"></div><div><label for="em">Email</label><input id="em" type="email"></div></form></body></html>')
+    const host = document.createElement('div')
+    host.setAttribute('data-tp-form-widget', 'true')
+    host.attachShadow({ mode: 'open' }).innerHTML = '<div class="row"><button class="primary" type="button">Fill form</button></div>'
+    document.getElementById('row-name')!.before(host)
+    setRect(host, { height: 20, width: 200, x: 100, y: 100 })
+    RegisterInputs(document)
+    expect(allFields()).toHaveLength(2)
+    expect(fieldFor(document.getElementById('nm'))?.fieldName).toBe('Full Name')
+    expect(fieldFor(document.getElementById('em'))?.fieldName).toBe('Email')
+  })
 })
 
 describe('native select fills only on a unique safe match', () => {
@@ -359,6 +380,225 @@ describe('native select fills only on a unique safe match', () => {
     expect(await second.field.fillFromResolved(choice('Nowhere', ['US']))).toEqual({ status: 'filled' })
     expect(second.el.value).toBe('US')
   })
+
+  it('skips a placeholder-less select that already shows its first real option and leaves it unchanged', async () => {
+    mount('<html><body><form><label for="c">Country</label><select id="c"><option value="AF">Afghanistan</option><option value="DE">Germany</option></select></form></body></html>')
+    const { changes, el, field } = select('c')
+    expect(await field.fillFromResolved(choice('Germany'))).toEqual({ reason: 'has-value', status: 'skipped' })
+    expect(el.value).toBe('AF')
+    expect(changes).toEqual([])
+  })
+})
+
+type Fillable = { fillFromResolved: (value: ProfileValue) => Promise<unknown> }
+type ChoiceWidget = {
+  build: (picks: string[], options: string[]) => { field: Fillable; selected: () => string }
+  markup: (options: string[]) => string
+  name: string
+  xpaths: Record<string, string>
+}
+
+const xpathAsCss = (xpaths: Record<string, string>) => {
+  Object.assign(globalThis, { XPathResult: { FIRST_ORDERED_NODE_TYPE: 9, ORDERED_NODE_SNAPSHOT_TYPE: 7 } })
+  Object.assign(document, {
+    evaluate: (xpath: string, context: ParentNode) => {
+      const css = xpaths[xpath]
+      if (!css) throw new Error(`unshimmed xpath ${xpath}`)
+      const nodes = Array.from(context.querySelectorAll(css))
+      return { singleNodeValue: nodes[0] ?? null, snapshotItem: (i: number) => nodes[i] ?? null, snapshotLength: nodes.length }
+    },
+  })
+}
+
+const REACT_SELECT_XPATHS = {
+  './/div[starts-with(@class, "select-shell")]/div[not(@*)]': ':scope div[class^="select-shell"] > div:not([class])',
+  './/div[starts-with(@class, "select__menu")]': 'div[class^="select__menu"]',
+  './/div[starts-with(@class, "select__option")]': 'div[class^="select__option"]',
+  './/div[starts-with(@class, "select__single-value")]': 'div[class^="select__single-value"]',
+  './/input[@class="select__input"]': 'input[class="select__input"]',
+}
+
+const reactSelectMarkup = (flyout: boolean) => () =>
+  `<form><div class="select" id="field"><label for="place">Location (City)</label><div class="select-shell"><div><div class="select__control"><div class="select__value-container"><div class="select__placeholder">Select...</div><input class="select__input" id="place"></div>${flyout ? '<button type="button" aria-label="Toggle flyout"></button>' : ''}</div></div></div></div></form>`
+
+const reactSelect = (Ctor: new (el: HTMLElement) => Fillable, opensOnClick: boolean) => (picks: string[], options: string[]) => {
+  const root = document.getElementById('field')!
+  const shell = root.querySelector('.select-shell')!
+  const shown = root.querySelector('.select__placeholder')!
+  const input = root.querySelector<HTMLInputElement>('.select__input')!
+  const close = () => root.querySelector('.select__menu')?.remove()
+  const open = () => {
+    close()
+    const menu = document.createElement('div')
+    menu.className = 'select__menu'
+    for (const text of options) {
+      const option = document.createElement('div')
+      option.className = 'select__option'
+      option.textContent = text
+      option.addEventListener('click', () => {
+        shown.className = 'select__single-value'
+        shown.textContent = text
+        picks.push(text)
+        close()
+      })
+      menu.appendChild(option)
+    }
+    shell.appendChild(menu)
+  }
+  if (opensOnClick) shell.firstElementChild!.addEventListener('click', open)
+  input.addEventListener('input', () => (input.value ? open() : close()))
+  return { field: new Ctor(root), selected: () => root.querySelector('.select__single-value')?.textContent ?? '' }
+}
+
+const CHOICE_WIDGETS: ChoiceWidget[] = [
+  {
+    build: (picks) => {
+      const select = document.querySelector('select')!
+      select.addEventListener('change', () => picks.push(select.selectedOptions[0]?.text ?? ''))
+      return { field: new ClassicSelect(document.getElementById('field')!), selected: () => select.selectedOptions[0]?.text ?? '' }
+    },
+    markup: (options) =>
+      `<form><div class="field" id="field"><label for="place">Location (City)</label><select id="place"><option value="">Select...</option>${options.map((text, i) => `<option value="${i + 1}">${text}</option>`).join('')}</select></div></form>`,
+    name: 'Greenhouse Classic native select',
+    xpaths: { './/select': 'select' },
+  },
+  {
+    build: (picks) => {
+      const container = document.querySelector('.select2-container')!
+      const drop = document.querySelector('.select2-drop')!
+      const chosen = document.querySelector('.select2-chosen')!
+      const toggle = (open: boolean) => {
+        container.classList.toggle('select2-dropdown-open', open)
+        drop.classList.toggle('select2-drop-active', open)
+      }
+      container.querySelector('a')!.addEventListener('mousedown', () => toggle(!container.classList.contains('select2-dropdown-open')))
+      for (const li of Array.from(drop.querySelectorAll('li'))) {
+        li.addEventListener('mouseup', () => {
+          chosen.textContent = li.textContent
+          picks.push(li.textContent ?? '')
+          toggle(false)
+        })
+      }
+      return { field: new ClassicDropdown(document.getElementById('field')!), selected: () => chosen.textContent ?? '' }
+    },
+    markup: (options) =>
+      `<form><div class="field" id="field"><label>Location (City)</label><div class="select2-container" id="s2id_place"><a class="select2-choice"><span class="select2-chosen">Select...</span></a><label for="s2id_autogen1" class="select2-offscreen"></label><input class="select2-focusser" id="s2id_autogen1"></div></div></form><div class="select2-drop"><div class="select2-search"><label for="s2id_autogen1_search" class="select2-offscreen"></label><input id="s2id_autogen1_search"></div><ul class="select2-results">${options.map((text) => `<li class="select2-result"><div class="select2-result-label">${text}</div></li>`).join('')}</ul></div>`,
+    name: 'Greenhouse Classic select2 dropdown',
+    xpaths: {
+      ".//div[contains(@class, 'select2-container')]": 'div[class*="select2-container"]',
+      ".//div[contains(@class, 'select2-drop-active')][.//label[@for='s2id_autogen1_search']]": 'div[class*="select2-drop-active"]:has(label[for="s2id_autogen1_search"])',
+      './/a': 'a',
+      './/li': 'li',
+      './label': ':scope > label',
+    },
+  },
+  {
+    build: (picks, options) => {
+      const complete = document.querySelector('auto-complete')!
+      const input = document.querySelector<HTMLInputElement>('#place')!
+      const list = document.querySelector('#place-popup')!
+      input.addEventListener('input', () => {
+        list.innerHTML = ''
+        complete.removeAttribute('open')
+        if (!input.value) return
+        for (const text of options) {
+          const li = document.createElement('li')
+          li.textContent = text
+          li.addEventListener('click', () => {
+            complete.setAttribute('value', text)
+            input.value = text
+            picks.push(text)
+            complete.removeAttribute('open')
+            list.innerHTML = ''
+          })
+          list.appendChild(li)
+        }
+        complete.setAttribute('open', '')
+      })
+      return { field: new ClassicAddress(document.getElementById('field')!), selected: () => complete.getAttribute('value') ?? '' }
+    },
+    markup: () =>
+      '<form><div class="field" id="field"><label for="place">Location (City)</label><auto-complete for="place-popup"><input type="text" id="place"><ul id="place-popup"></ul></auto-complete></div></form>',
+    name: 'Greenhouse Classic address search',
+    xpaths: {
+      ".//input[@type='text']": 'input[type="text"]',
+      './/auto-complete': 'auto-complete',
+      './/auto-complete[@open]': 'auto-complete[open]',
+      './/ul/li': ':scope ul > li',
+    },
+  },
+  {
+    build: (picks, options) => {
+      const button = document.querySelector('button')!
+      button.addEventListener('click', () => {
+        const wasOpen = button.getAttribute('aria-expanded') === 'true'
+        button.setAttribute('aria-expanded', String(!wasOpen))
+        document.getElementById('place-list')?.remove()
+        if (wasOpen) return
+        const list = document.createElement('ul')
+        list.setAttribute('id', 'place-list')
+        list.setAttribute('role', 'listbox')
+        for (const text of options) {
+          const li = document.createElement('li')
+          li.setAttribute('role', 'option')
+          li.innerHTML = `<div>${text}</div>`
+          li.addEventListener('click', () => {
+            button.textContent = text
+            picks.push(text)
+            button.setAttribute('aria-expanded', 'false')
+            list.remove()
+          })
+          list.appendChild(li)
+        }
+        document.body.appendChild(list)
+      })
+      return { field: new WorkdayDropdown(document.getElementById('field')!), selected: () => button.textContent ?? '' }
+    },
+    markup: () =>
+      '<form><div data-automation-id="formField-location" id="field"><label for="place">Location (City)</label><button type="button" id="place" aria-haspopup="listbox" aria-expanded="false" aria-controls="place-list">Select One</button></div></form>',
+    name: 'Workday dropdown',
+    xpaths: {
+      ".//body//ul[@id='place-list']": 'body ul[id="place-list"]',
+      './/button[@aria-haspopup="listbox"]': 'button[aria-haspopup="listbox"]',
+      './/li[.//div]': 'li:has(div)',
+      './div': ':scope > div',
+    },
+  },
+  { build: reactSelect(ReactDropdown, true), markup: reactSelectMarkup(true), name: 'Greenhouse React searchable dropdown', xpaths: REACT_SELECT_XPATHS },
+  { build: reactSelect(ReactAddress, false), markup: reactSelectMarkup(false), name: 'Greenhouse React address search', xpaths: REACT_SELECT_XPATHS },
+]
+
+const NOT_FILLED = [{ reason: 'no-match', status: 'skipped' }, { status: 'unsupported' }]
+
+const RELAXED_ROWS = [
+  { candidate: 'Berlin', options: ['Berlin, NH, United States', 'Berlin, Germany'], outcomes: NOT_FILLED, picked: null },
+  { candidate: 'Congo', options: ['Congo (Republic of the)', 'Congo (Democratic Republic of the)'], outcomes: NOT_FILLED, picked: null },
+  { candidate: 'Berlin, Germany', options: ['Berlin, NH, United States', 'Berlin, Germany'], outcomes: [{ status: 'filled' }], picked: 'Berlin, Germany' },
+  { candidate: 'Congo', options: ['Congo (Republic of the)', 'Germany'], outcomes: [{ status: 'filled' }], picked: 'Congo (Republic of the)' },
+]
+
+describe('ATS single-choice adapters never pick one of several relaxed matches', () => {
+  const choice = (preferred: string): ProfileValue => ({ fallbacks: [], kind: 'choice', preferred })
+
+  for (const widget of CHOICE_WIDGETS) {
+    it(`${widget.name}: selects nothing when two options relax-match the value, and still picks a unique match`, async () => {
+      for (const row of RELAXED_ROWS) {
+        const dom = mount(`<html><body>${widget.markup(row.options)}</body></html>`)
+        Object.assign(dom.window, { scrollTo: () => {} })
+        xpathAsCss(widget.xpaths)
+        const picks: string[] = []
+        const { field, selected } = widget.build(picks, row.options)
+        const before = selected()
+        const outcome = await field.fillFromResolved(choice(row.candidate))
+        expect(row.outcomes.map((o) => JSON.stringify(Object.entries(o).sort()))).toContain(JSON.stringify(Object.entries(Object(outcome)).sort()))
+        expect({ candidate: row.candidate, picks, selected: selected() }).toEqual({
+          candidate: row.candidate,
+          picks: row.picked ? [row.picked] : [],
+          selected: row.picked ?? before,
+        })
+      }
+    })
+  }
 })
 
 type Suggest = { results: string[]; delayMs?: number; sync?: boolean; revertAfterMs?: number }
@@ -480,11 +720,43 @@ describe('typeahead text inputs (Lever location)', () => {
     expect(selected.value).toBe('old-place-id')
   })
 
+  it('never dispatches Enter while typing, selecting or restoring a typeahead value', async () => {
+    const rows: [string[], boolean][] = [
+      [['Example City, Example Region'], true],
+      [[], false],
+    ]
+    for (const [results, filled] of rows) {
+      mount()
+      const { input } = leverTypeahead({ results })
+      const keys: string[] = []
+      input.addEventListener('keydown', (e) => keys.push(e.key))
+      expect(await fillTypeahead(input, typeaheadScope(input)!, ['Example City'], FAST)).toBe(filled)
+      expect(keys.length).toBeGreaterThan(0)
+      expect(keys).not.toContain('Enter')
+    }
+  })
+
+  it('refuses a lone suggestion whose region conflicts with the requested region', async () => {
+    const { input, selected } = leverTypeahead({ results: ['Example City, Other Region'] })
+    expect(await fillTypeahead(input, typeaheadScope(input)!, ['Example City, Example Region'], FAST)).toBe(false)
+    expect(input.value).toBe('')
+    expect(selected.value).toBe('')
+  })
+
   it('still fills an ordinary text input directly', async () => {
     const input = document.getElementById('email') as HTMLInputElement
     const field = new GenericTextInput(input)
     expect(await field.fillFromResolved({ confidence: 'exact', kind: 'string', value: 'audit.tester@example.invalid' })).toEqual({ status: 'filled' })
     expect(input.value).toBe('audit.tester@example.invalid')
+  })
+
+  it('restores the original value and does not report filled when the page truncates a typed email', async () => {
+    mount('<html><body><form><label for="em">Email</label><input id="em" type="email"></form></body></html>')
+    const input = document.querySelector<HTMLInputElement>('#em')!
+    input.addEventListener('input', () => (input.value = input.value.slice(0, 10)))
+    const outcome = await new GenericTextInput(input).fillFromResolved({ confidence: 'exact', kind: 'string', value: 'audit.tester@example.invalid' })
+    expect(outcome.status).not.toBe('filled')
+    expect(input.value).toBe('')
   })
 })
 
@@ -575,6 +847,38 @@ describe('Ashby: visually hidden native options and Yes/No toggles (26 options)'
     const toggle = allFields().find((f) => f.fieldName.startsWith('Will you now'))!
     expect(await toggle.fillFromResolved({ fallbacks: [], kind: 'choice', preferred: 'No' })).toEqual({ status: 'filled' })
     expect(document.querySelector('#sponsor-yesno [data-option="no"]')!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('refuses a bare "No" multi-choice when two work-model checkbox options share the "No," head', async () => {
+    const options = ['Yes, I’m based in this location and able to work from the office 3 days per week', 'No, I’m not based in this location but willing to relocate', 'No, I’m only able to work remotely', 'Other (optional context)']
+    mount(`<html><body><div id="root"><div class="ashby-application-form-container"><div data-field-path="model"><fieldset class="ashby-application-form-input-checkbox-group">
+      <label class="ashby-application-form-question-title" for="model">Are you currently based in the listed location and able to work in person 3 days per week?</label>
+      ${options.map((o, i) => `<div class="option"><span class="box"><input type="checkbox" id="model-c${i}" name="${o}" class="native"></span><label for="model-c${i}">${o}</label></div>`).join('')}
+    </fieldset></div></div></div></body></html>`)
+    hideNative('input.native')
+    labelActivates()
+    RegisterInputs(document)
+    const group = allFields().find((f) => f.fieldType === 'MultiCheckbox')!
+    const outcome = await group.fillFromResolved({ fallbacks: [], kind: 'multiChoice', preferred: ['No'] })
+    expect(outcome.status).not.toBe('filled')
+    expect(Array.from(document.querySelectorAll<HTMLInputElement>('input.native')).some((el) => el.checked)).toBe(false)
+  })
+
+  it('refuses a bare "No" when two office-location radio options share the "No," head', async () => {
+    const rows: [string, string[]][] = [
+      ['Are you located within 50 miles of one of the following office hubs', ['San Francisco (Union Square)', 'New York (Manhattan)', 'Seattle, Washington', 'London, UK', 'No, but willing to relocate', 'No, and not willing to relocate']],
+      ['Are you currently based in the listed location and able to work in person 3 days per week?', ['Yes, I’m based in this location and able to work from the office 3 days per week', 'No, I’m not based in this location but willing to relocate', 'No, I’m only able to work remotely', 'Other (optional context)']],
+    ]
+    for (const [heading, options] of rows) {
+      mount(`<html><body><div id="root"><div class="ashby-application-form-container">${ashbyRadioGroup('reloc', heading, options)}</div></div></body></html>`)
+      hideNative('input.native')
+      labelActivates()
+      RegisterInputs(document)
+      const group = allFields().find((f) => f.fieldType === 'RadioGroup')!
+      const outcome = await group.fillFromResolved({ fallbacks: ['False'], kind: 'choice', preferred: 'No' })
+      expect(outcome.status).not.toBe('filled')
+      expect(Array.from(document.querySelectorAll<HTMLInputElement>('input.native')).some((el) => el.checked)).toBe(false)
+    }
   })
 })
 
@@ -698,6 +1002,19 @@ describe('button-only document uploaders', () => {
     page('<div class="entry"><input id="other"><button type="button">Upload CV</button><input type="file" id="n" style="display:none"></div>')
     expect(fieldFor(document.getElementById('n')) === undefined).toBe(true)
   })
+
+  it('does not register the Ashby autofill-from-resume parser uploader whose heading follows the input', () => {
+    page('<div class="ashby-application-form-autofill-pane"><div role="presentation" class="ashby-application-form-autofill-input-root"><input id="parser" type="file" accept="application/pdf,.pdf" tabindex="-1"><div class="ashby-application-form-autofill-input-base-layer"><div><div><h3>Autofill from resume</h3></div><p>Upload your resume here to autofill key application fields.</p><div><button>Upload file</button></div></div></div></div></div>')
+    expect(fieldFor(document.getElementById('parser')) === undefined).toBe(true)
+  })
+
+  it('names a Greenhouse React attach widget from its labelled group heading instead of the hidden Attach label', () => {
+    mount('<html><body><form><div class="field-wrapper"><div role="group" aria-labelledby="upload-label-resume" class="file-upload"><div id="upload-label-resume" class="label upload-label">Resume/CV<span class="required">*</span></div><div class="file-upload__wrapper"><div class="button-container"><div class="secondary-button"><div><button type="button">Attach</button><label class="visually-hidden" for="resume">Attach</label><input id="resume" class="visually-hidden" type="file" accept=".pdf,.doc,.docx,.txt,.rtf"></div></div><div class="secondary-button"><button type="button">Dropbox</button></div><div class="secondary-button"><button type="button">Google Drive</button></div><div class="secondary-button"><div><button type="button">Enter manually</button><label class="visually-hidden" for="resume_text">Enter manually</label></div></div><p class="file-upload__filetypes">Accepted file types: pdf, doc, docx, txt, rtf</p></div></div></div></div></form></body></html>')
+    RegisterInputs(document)
+    const field = fieldFor(document.getElementById('resume'))
+    expect(field?.fieldType).toBe('FileUpload')
+    expect(field?.fieldName).toBe('Resume/CV*')
+  })
 })
 
 describe('dial-code selectors and site-provided dial prefixes', () => {
@@ -734,9 +1051,23 @@ describe('dial-code selectors and site-provided dial prefixes', () => {
     expect(await field.fillFromResolved({ confidence: 'exact', kind: 'string', value: '+15555550123' })).toEqual({ reason: 'has-value', status: 'skipped' })
     expect(input.value).toBe('+1')
   })
+
+  it('does not verify a text value that kept only the numeric dial prefix', async () => {
+    mount('<html><body><form><label for="ph">Phone</label><input id="ph" type="tel"></form></body></html>')
+    const input = document.querySelector<HTMLInputElement>('#ph')!
+    const rows: [string, boolean][] = [
+      ['+49', false],
+      ['+49 30 1234567', true],
+    ]
+    for (const [value, verified] of rows) {
+      input.value = value
+      expect(await verifyTextValue(input, '+49 30 1234567', 0)).toBe(verified)
+    }
+  })
 })
 
 const { readStandardField } = await import('../ui/picker/standardField')
+const { resolveField } = await import('~/resolver/profileResolver')
 
 const BUNQ = `<html><body><div id="page"><button>Apply now</button>
 <div id="overlay"><div id="sheet">
@@ -807,5 +1138,116 @@ describe('Recruitee bunq: unassociated wording inside an overlay that overflows 
       return readStandardField(field.element, { fieldName: field.fieldName, section: field.section }, null)
     }
     expect(['name', 'email', 'phone', '4415333', '4415340'].map(standard)).toEqual(['name', 'email', 'tel', 'country', null])
+  })
+
+  it('names a label-less control from its name token and maps first_name to the given name', () => {
+    mount('<html><body><form><div><input id="nm" name="first_name" type="text"></div><div><input id="ph" name="name" type="text" placeholder="Audit Tester"></div></form></body></html>')
+    RegisterInputs(document)
+    const field = fieldFor(document.getElementById('nm'))!
+    expect(field.fieldName).toBe('first name')
+    expect(readStandardField(field.element, { fieldName: field.fieldName, section: field.section }, null)).toBe('given-name')
+  })
+
+  it('takes an example-value placeholder as the name but never maps a bare name token without full-name wording', () => {
+    mount('<html><body><form><div><input id="nm" name="first_name" type="text"></div><div><input id="ph" name="name" type="text" placeholder="Audit Tester"></div></form></body></html>')
+    RegisterInputs(document)
+    const field = fieldFor(document.getElementById('ph'))!
+    expect(field.fieldName).toBe('Audit Tester')
+    expect(readStandardField(field.element, { fieldName: field.fieldName, section: field.section }, null)).toBeNull()
+  })
+})
+
+describe('entry sections inside an open shadow root', () => {
+  it('names the Education entry section of a shadow-root field and refuses it as the applicant city', () => {
+    mount('<html><body><form><div id="host"></div></form></body></html>')
+    const root = document.getElementById('host')!.attachShadow({ mode: 'open' })
+    root.innerHTML = '<fieldset><legend>Education</legend><label for="edu-city">City</label><input id="edu-city" name="city" type="text"></fieldset>'
+    for (const el of Array.from(root.querySelectorAll('*'))) setRect(el, { height: 20, width: 200, x: 100, y: 100 })
+    RegisterInputs(document)
+    const field = fieldFor(root.querySelector('#edu-city'))!
+    expect(field.section).toBe('education 1')
+    expect(readStandardField(field.element, { fieldName: field.fieldName, section: field.section }, null)).toBeNull()
+  })
+})
+
+describe('contenteditable answers', () => {
+  it('registers a labelled contenteditable answer as a notes-only field that never fills', () => {
+    mount('<html><body><form><div class="q"><span id="note-l">Additional notes</span><div id="note" contenteditable="true" aria-labelledby="note-l"></div></div></form></body></html>')
+    RegisterInputs(document)
+    const field = fieldFor(document.getElementById('note'))
+    expect(field?.fieldType).toBe('ContentEditable')
+    expect(field?.isFillable()).toBe(false)
+    expect(field?.pickerMode).toBe('notesOnly')
+  })
+})
+
+const ASHBY_LOCATION = `<html><body><form>
+  <div data-field-path="_systemfield_email"><label for="_systemfield_email">Email</label><div><input placeholder="hello@example.com..." name="_systemfield_email" id="_systemfield_email" type="email"></div></div>
+  <div data-field-path="_systemfield_location"><label for="_systemfield_location">Location</label><div><input placeholder="Start typing..." aria-autocomplete="list" aria-expanded="false" aria-haspopup="listbox" role="combobox"><button type="button">v</button></div></div>
+</form></body></html>`
+
+describe('Ashby id-less location combobox next to the email field', () => {
+  beforeEach(() => {
+    mount(ASHBY_LOCATION)
+    RegisterInputs(document)
+  })
+
+  it('registers the id-less location combobox as its own dropdown named from its unmatched block label', () => {
+    const combo = fieldFor(document.querySelector('[role="combobox"]'))
+    expect(combo).not.toBe(undefined)
+    expect(combo?.fieldType).toBe('SimpleDropdown')
+    expect(combo?.fieldName).toBe('Location')
+  })
+
+  it('keeps the email field off the neighbouring location combobox and gives the combobox no standard meaning', () => {
+    const email = fieldFor(document.getElementById('_systemfield_email'))!
+    const combo = fieldFor(document.querySelector('[role="combobox"]'))!
+    const standard = (field: typeof email) => readStandardField(field.element, { fieldName: field.fieldName, section: field.section }, null)
+    expect(email).not.toBe(combo)
+    expect(email.fieldName).toBe('Email')
+    expect([standard(email), standard(combo)]).toEqual(['email', null])
+  })
+})
+
+describe('shadow-host comboboxes', () => {
+  it('registers a role=combobox shadow host and the text input inside its open shadow root as one field', () => {
+    mount('<html><body><form><x-select id="host" role="combobox" aria-haspopup="listbox"></x-select></form></body></html>')
+    const host = document.getElementById('host')!
+    const root = host.attachShadow({ mode: 'open' })
+    root.innerHTML = '<input id="inner" type="text">'
+    const inner = root.querySelector('#inner')!
+    setRect(inner, { height: 20, width: 200, x: 100, y: 100 })
+    RegisterInputs(document)
+    expect(allFields().filter((f) => f.element === host || f.element === inner)).toHaveLength(1)
+  })
+})
+
+describe('Lever demographic survey location select', () => {
+  it('resolves no bulk-fill value for "What is your location?" under a Demographic Survey heading', () => {
+    mount('<html><body><form><div class="section page-centered application-form"><hr><h4>Demographic Survey</h4><div class="application-question"><label><div class="application-label">What is your location?</div><div class="application-field"><div class="application-dropdown"><select class="candidate-location" data-qa="candidate-location-select"><option value="">Select...</option><option value="AF">Afghanistan</option><option value="DE">Germany</option><option value="FR">France</option></select></div></div></label></div></div></form></body></html>')
+    RegisterInputs(document)
+    const field = fieldFor(document.querySelector('select'))!
+    const profile: Profile = {
+      description: null,
+      education: null,
+      experience: null,
+      hourlyRate: null,
+      id: 'audit-profile',
+      isAvailableForHire: null,
+      isInterestedInRelocation: null,
+      jobTitle: null,
+      languages: null,
+      links: null,
+      location: 'Example City, Germany',
+      monthlyRate: null,
+      profileName: 'Audit Tester',
+      rateCurrency: null,
+      skills: null,
+      talentAnswers: null,
+      talentNotes: null,
+      totalExperience: null,
+      user: { email: 'audit.tester@example.invalid', phoneNumber: null },
+    }
+    expect(resolveField(field.fieldName, field.fieldType, field.section, profile).value).toEqual({ kind: 'unsupported' })
   })
 })

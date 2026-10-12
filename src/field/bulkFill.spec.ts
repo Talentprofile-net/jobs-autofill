@@ -76,7 +76,7 @@ mock.module('~/bridge/mainBridge', () => ({
   },
 }))
 
-const { allFields, startObserver } = await import('./registry')
+const { allFields, fillFormContainer, startObserver } = await import('./registry')
 
 const LABELS = [
   ['first', 'First Name'],
@@ -183,5 +183,86 @@ describe('bulk fill through the real resolvers', () => {
     }
     expect(resultFor('Name pronunciation')?.matchedAnswerId).toBe(`saved-${ALTERNATE.length}`)
     expect(resultFor('Preferred pronouns')?.matchedAnswerId).toBe(`saved-${ALTERNATE.length + 2}`)
+  })
+
+  it('leaves fields under a third-party legend empty in bulk fill and still fills the applicant field outside it', async () => {
+    const rows = [
+      {
+        form: '<form id="application"><fieldset><legend>Emergency contact</legend><div class="entry"><label for="ec-name">Name</label><input id="ec-name" type="text"></div><div class="entry"><label for="ec-email">Email</label><input id="ec-email" type="text"></div></fieldset><div class="entry"><label for="own-email">Email</label><input id="own-email" type="text"></div></form>',
+        thirdParty: ['ec-name', 'ec-email'],
+      },
+      {
+        form: '<form id="application"><fieldset><legend>Emergency contact</legend><div class="entry"><label for="em-email">Email</label><input id="em-email" type="text"></div><div class="entry"><label for="em-name">Full Name</label><input id="em-name" type="text"></div></fieldset><div class="entry"><label for="own-email">Email</label><input id="own-email" type="text"></div></form>',
+        thirdParty: ['em-email', 'em-name'],
+      },
+    ]
+    for (const [index, { form, thirdParty }] of rows.entries()) {
+      mountPage()
+      document.body.innerHTML = form
+      for (const el of querySelectorAllDeep(document, '*')) setRect(el, { height: 30, width: 300, x: 100, y: 100 })
+      const handlers: Array<(msg: ContentScriptRequest) => void> = []
+      stop = startObserver({
+        getOriginMode: () => Promise.resolve<ResolvedOriginMode>('application'),
+        onBridgeMessage: (handler) => {
+          handlers.push(handler)
+          return () => handlers.splice(handlers.indexOf(handler), 1)
+        },
+      })
+      await tick()
+
+      for (const handler of [...handlers]) handler({ batchId: `bulk-ec-${index}`, emit: false, id: `run-ec-${index}`, kind: 'fill.run', lowScore: false, requestId: null })
+      for (let waited = 0; waited < 5_000 && value('own-email') === ''; waited += 50) await tick(50)
+      const ids = [...thirdParty, 'own-email']
+      const snapshot = () => JSON.stringify(ids.map((id) => value(id)))
+      for (let waited = 0, last = snapshot(), still = 0; waited < 20_000 && still < 1_500; waited += 100) {
+        await tick(100)
+        const next = snapshot()
+        still = next === last ? still + 100 : 0
+        last = next
+      }
+
+      expect(ids.map((id) => [id, value(id)])).toEqual([...thirdParty.map((id) => [id, '']), ['own-email', 'audit.tester@example.invalid']])
+      stop?.()
+      stop = null
+      results.length = 0
+    }
+  }, 30_000)
+
+  it('fills a question revealed by an earlier fill in the next pass of the same run', async () => {
+    mountPage()
+    stop = startObserver({
+      getOriginMode: () => Promise.resolve<ResolvedOriginMode>('application'),
+      onBridgeMessage: () => () => {},
+    })
+    await tick()
+    document.getElementById('last')!.addEventListener(
+      'change',
+      () => {
+        const row = document.createElement('div')
+        row.className = 'entry'
+        row.innerHTML = '<label for="late-email">Email</label><input id="late-email" type="email">'
+        document.getElementById('application')!.append(row)
+        for (const el of [row, ...Array.from(row.querySelectorAll('*'))]) setRect(el, { height: 30, width: 300, x: 100, y: 100 })
+      },
+      { once: true },
+    )
+
+    const counts = await fillFormContainer('bulk-late', document.getElementById('application')!)
+
+    expect(value('late-email')).toBe('audit.tester@example.invalid')
+    expect(counts.filled).toBe(10)
+  })
+
+  it('reports nine filled and six unsupported fields from one bulk fill of the name form', async () => {
+    mountPage()
+    stop = startObserver({
+      getOriginMode: () => Promise.resolve<ResolvedOriginMode>('application'),
+      onBridgeMessage: () => () => {},
+    })
+    await tick()
+
+    const counts = await fillFormContainer('bulk-counts', document.getElementById('application')!)
+
+    expect(counts).toEqual({ failed: 0, filled: 9, skipped: 0, unsupported: 6 })
   })
 })

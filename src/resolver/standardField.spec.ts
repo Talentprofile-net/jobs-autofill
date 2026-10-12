@@ -159,6 +159,13 @@ describe('standard field decision', () => {
     expect('refused' in decideStandardField(evidence({ labels: ['First name'], name }))).toBe(true)
   })
 
+  it.each<[string, Partial<FieldEvidence>]>([
+    ['Thai Given Name', { name: 'first_name' }],
+    ['Thai Family Name', { autocomplete: 'family-name' }],
+  ])('refuses the local-script name label %p with %p', (label, over) => {
+    expect('refused' in decideStandardField(evidence({ labels: [label], ...over }))).toBe(true)
+  })
+
   it.each([
     ['_systemfield_name', 'name'],
     ['_systemfield_email', 'email'],
@@ -220,6 +227,11 @@ describe('standard field decision', () => {
     [['Country of residence'], { section: 'Demographic Survey' }],
   ])('refuses the place label %p with %p', (labels, over) => {
     expect('refused' in decideStandardField(evidence({ labels, ...over }))).toBe(true)
+  })
+
+  it('refuses an async city combobox even when name or autocomplete says city', () => {
+    expect('refused' in decideStandardField(evidence({ combobox: true, labels: ['City'], name: 'city' }))).toBe(true)
+    expect('refused' in decideStandardField(evidence({ autocomplete: 'address-level2', combobox: true, labels: ['City'] }))).toBe(true)
   })
 
   it.each([
@@ -344,6 +356,14 @@ describe('alternate identity fields', () => {
   ])('refuses %p even with standard attributes %p', (label, over) => {
     expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ refused: 'alternate-identity' })
     expect(decideStandardField(evidence({ inputType: 'email', labels: [label], ...over }))).toEqual({ refused: 'alternate-identity' })
+  })
+
+  it.each<[string, Partial<FieldEvidence>]>([
+    ['Chosen name', { name: '_systemfield_name' }],
+    ['What should we call you?', { name: 'first_name' }],
+    ['Name you would like us to use', { autocomplete: 'name' }],
+  ])('refuses the chosen-name wording %p even with standard attributes %p', (label, over) => {
+    expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ refused: 'alternate-identity' })
   })
 
   it.each<[string, Partial<FieldEvidence>, StandardField]>([
@@ -480,6 +500,14 @@ describe('another person', () => {
   ])('refuses %p with %p', (label, over) => {
     expect(decideStandardField(evidence({ labels: [label], ...over }))).toEqual({ refused: 'sensitive' })
   })
+
+  it.each<[string, Partial<FieldEvidence>]>([
+    ["Your friend's email", { inputType: 'email', name: 'email' }],
+    ["Colleague's full name", { name: 'full_name' }],
+    ["Co-founder's email", { autocomplete: 'email' }],
+  ])('refuses the possessive label %p with %p', (label, over) => {
+    expect('refused' in decideStandardField(evidence({ labels: [label], ...over }))).toBe(true)
+  })
 })
 
 describe('provider link questions', () => {
@@ -527,5 +555,9 @@ describe('provider link questions', () => {
   it('keeps refusing a textarea for every other field', () => {
     expect(decideStandardField(evidence({ control: 'textarea', inputType: '', labels: ['Email'], name: 'email' }))).toEqual({ refused: 'control' })
     expect(decideStandardField(evidence({ control: 'textarea', inputType: '', labels: ['Current City'] }))).toEqual({ refused: 'no-evidence' })
+  })
+
+  it('maps a single-provider link question that asks only if available', () => {
+    expect(decideStandardField(evidence({ control: 'textarea', inputType: '', labels: ['LinkedIn Profile, if available'] }))).toEqual({ field: 'linkedin' })
   })
 })

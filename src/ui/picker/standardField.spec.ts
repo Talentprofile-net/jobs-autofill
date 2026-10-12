@@ -242,3 +242,29 @@ describe('alternate identity, reviewed labels and provider links in the DOM', ()
     expect(read('wrap-two-links', 'LinkedIn or GitHub profile URL')).toBeNull()
   })
 })
+
+const NEUTRAL_LEGEND_FIELDS: Array<[string, string]> = [
+  [`<fieldset><legend>Questions</legend><p>Please fill in additional questions</p><div><input type="hidden" name="candidate.openQuestionAnswers.7623253.openQuestionId"><div id="wrap-live"><label for="live-city">Where do you live? (City)<span aria-hidden="true">&nbsp;<span title="This field is required and can not be left empty.">*</span></span></label><input type="text" id="live-city" required maxlength="255" autocomplete="on" name="candidate.openQuestionAnswers.7623253.content"></div></div></fieldset>`, 'wrap-live'],
+  [`<fieldset><legend>Questions</legend><div><input type="hidden" value="" name="candidate.openQuestionAnswers.1.openQuestionId"><div><label for="input-candidate.openQuestionAnswers.1.content-18">Where do you live? (City)<span aria-hidden="true">&nbsp;<span title="This field is required and can not be left empty.">*</span></span></label><input type="text" id="input-candidate.openQuestionAnswers.1.content-18" required maxlength="255" autocomplete="on" name="candidate.openQuestionAnswers.1.content"></div></div></fieldset>`, 'input-candidate.openQuestionAnswers.1.content-18'],
+]
+
+describe('neutral legends in the DOM', () => {
+  it('keeps an exact applicant city label inside a neutral questions legend', () => {
+    for (const [html, id] of NEUTRAL_LEGEND_FIELDS) {
+      realm(`<html><body><form>${html}</form></body></html>`)
+      expect(read(id, 'Where do you live? (City) *')).toBe('address-level2')
+    }
+  })
+})
+
+describe('Greenhouse phone country selector in the DOM', () => {
+  beforeEach(() => {
+    realm(`<html><body><form>
+      <fieldset class="phone-input"><legend class="visually-hidden">Phone</legend><div class="phone-input__country"><div class="select__container"><label id="country-label" for="country">Country<span aria-hidden="true">*</span></label><div class="select__input-container"><input class="select__input" id="country" type="text" role="combobox" aria-autocomplete="list" aria-labelledby="country-label" autocomplete="off"></div></div></div></fieldset>
+    </form></body></html>`)
+  })
+
+  it('refuses the phone dial-code country selector with the real country id', () => {
+    expect(read('country', 'Country*')).toBeNull()
+  })
+})

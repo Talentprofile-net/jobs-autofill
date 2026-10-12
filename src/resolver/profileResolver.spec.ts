@@ -45,6 +45,26 @@ describe('location for dropdown fields', () => {
   it('keeps a text location as plain text', () => {
     expect(resolveField('Current location', 'TextInput', '', profile('Example City')).value).toEqual({ confidence: 'exact', kind: 'string', value: 'Example City' })
   })
+
+  it.each([
+    'Are you legally authorized to work permanently in the country where you are applying?',
+    "*Are you legally authorized to work permanently in the country where you're applying for this position?",
+    'Will you now or in the future require employment visa sponsorship to work in the country in which the job you are applying for is located?*',
+    'What is your current citizenship? + Do you require a work permit or visa to work at the mentioned office location?*Required',
+    'Country of citizenship',
+    'Passport Country',
+    'Country of birth',
+    'Work authorization country',
+    'City of birth',
+  ])('refuses the profile location for the authorization, citizenship or birthplace question %p', (label) => {
+    for (const fieldType of ['TextInput', 'SimpleDropdown']) {
+      expect(resolveField(label, fieldType, '', profile('Example City, Germany'))).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+    }
+  })
+
+  it('does not answer a place-specific relocation question from the relocation flag', () => {
+    expect(resolveField('Are you currently based in or willing to relocate to the Bay Area for this position?', 'SimpleDropdown', '', { ...profile('Example City'), isInterestedInRelocation: true })).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+  })
 })
 
 describe('preferred name versus preferred location', () => {
@@ -117,6 +137,13 @@ describe('preferred name versus preferred location', () => {
   it('does not route other preferred questions to the location', () => {
     expect(resolveField('Preferred start date', 'TextInput', '', profile('Example City')).profileField).not.toBe('location')
   })
+
+  it.each(['Legal First and Last Name', 'First & Last Name', 'First/Last name'])('fills the combined first and last name field %p with the full name', (label) => {
+    expect(resolveField(label, 'TextInput', '', profile('Example City'))).toEqual({
+      profileField: 'profileName',
+      value: { confidence: 'exact', kind: 'string', value: 'Audit Tester' },
+    })
+  })
 })
 
 describe('name pronunciation questions', () => {
@@ -141,6 +168,14 @@ describe('name pronunciation questions', () => {
       value: { confidence: 'exact', kind: 'string', value },
     })
   })
+
+  it.each(['Thai Given Name', 'Thai Family Name', 'Full name (Katakana)', 'Your name in native script', 'How is your name spoken?'])('refuses the Latin profile name for the name representation field %p', (label) => {
+    expect(resolveField(label, 'TextInput', '', profile('Example City'))).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+  })
+
+  it('refuses the full name for a say-your-name question without "how"', () => {
+    expect(resolveField("What's the correct way to say your name?", 'TextInput', '', profile('Example City'))).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+  })
 })
 
 const withPhone = (phoneNumber: string): Profile => ({ ...profile('Example City'), user: { email: 'audit.tester@example.invalid', phoneNumber } })
@@ -160,6 +195,25 @@ describe('address questions', () => {
 
   it('keeps the email and website meaning of "address"', () => {
     expect(resolveField('Email address', 'TextInput', '', profile('Example City')).profileField).toBe('user.email')
+  })
+
+  it('does not send the applicant city to employer or school city questions outside a section', () => {
+    for (const label of ['Company city', 'University city']) {
+      expect(resolveField(label, 'TextInput', '', profile('Example City')).value).toEqual({ kind: 'unsupported' })
+    }
+  })
+
+  it('leaves a compound street, city, postal code and country question unsupported', () => {
+    expect(resolveField('Please provide your street address, city, postal/zip code and country?', 'TextInput', '', profile('Example City, Germany')).value).toEqual({ kind: 'unsupported' })
+  })
+
+  it('resolves the hyphenated and confirm wordings of the email address', () => {
+    for (const label of ['E-mail address', 'Confirm email address']) {
+      expect(resolveField(label, 'TextInput', '', profile('Example City'))).toEqual({
+        profileField: 'user.email',
+        value: { confidence: 'exact', kind: 'string', value: 'audit.tester@example.invalid' },
+      })
+    }
   })
 })
 
@@ -203,6 +257,21 @@ describe('phone fields rendered as dropdowns', () => {
   it('leaves ordinary phone text inputs unchanged and keeps country-code labels off the phone', () => {
     expect(resolveField('Phone', 'TextInput', '', withPhone('+15555550123')).value).toEqual({ confidence: 'exact', kind: 'string', value: '+15555550123' })
     expect(resolveField('Telephone country code', 'SimpleDropdown', '', withPhone('+15555550123')).profileField).not.toBe('user.phoneNumber')
+  })
+
+  it('keeps the phone number off device type and extension fields', () => {
+    expect(resolveField('Phone Device Type', 'SimpleDropdown', '', withPhone('+44 20 7946 0000')).value).toEqual({ kind: 'unsupported' })
+    expect(resolveField('Phone Extension', 'TextInput', '', withPhone('+44 20 7946 0000')).value).toEqual({ kind: 'unsupported' })
+  })
+
+  it('fills the full international number into a phone input that asks to include the country code but never into a country code field', () => {
+    const p = withPhone('+44 20 7946 0000')
+    expect(resolveField('Phone (include country code)', 'TextInput', '', p).value).toEqual({ confidence: 'exact', kind: 'string', value: '+44 20 7946 0000' })
+    for (const fieldType of ['TextInput', 'SimpleDropdown']) {
+      const value = resolveField('Telephone country code', fieldType, '', p).value
+      const answered = value.kind === 'string' ? value.value : value.kind === 'choice' ? value.preferred : null
+      expect(answered).not.toBe('+44 20 7946 0000')
+    }
   })
 })
 
@@ -248,5 +317,52 @@ describe('contacts from the own-profile read', () => {
 
   it('falls back to GitHub for a website when no other link exists', () => {
     expect(text('Website')).toEqual({ confidence: 'exact', kind: 'string', value: 'https://github.com/audit-tester' })
+  })
+
+  it.each(['Who referred you for this position?', 'Has someone at Example referred you for this role? If so, please include their name here'])('refuses the referral question %p', (label) => {
+    expect(resolveField(label, 'TextInput', '', profile('Example City'))).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+  })
+
+  it.each([
+    'Referrer email',
+    'Emergency contact phone',
+    'Reference full name',
+    "Your emergency contact's full name",
+    "Manager's email",
+    'Referrer LinkedIn profile',
+    'Emergency contact city',
+    "Your referrer's LinkedIn profile",
+    'Reference phone number',
+    'Emergency contact full name',
+  ])('refuses the third-party contact field %p', (label) => {
+    const p: Profile = { ...withPhone('+44 20 7946 0000'), links: [{ id: 'l', label: 'linkedin', url: 'https://www.linkedin.com/in/audit-tester' }] }
+    expect(resolveField(label, 'TextInput', '', p)).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+  })
+
+  it.each(['X', 'X / Twitter profile', 'Replit Profile URL', 'Other URL', 'Link to This Job'])('leaves the non-provider link field %p unsupported', (label) => {
+    const p: Profile = {
+      ...profile('Example City, Germany'),
+      links: [
+        { id: 'g', label: 'github', url: 'https://github.com/audit-tester' },
+        { id: 'l', label: 'linkedin', url: 'https://www.linkedin.com/in/audit-tester' },
+      ],
+    }
+    expect(resolveField(label, 'TextInput', '', p)).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+  })
+})
+
+describe('salary questions', () => {
+  it('never answers a salary amount question with only the rate currency code', () => {
+    const value = resolveField('Salary expectations (please include currency)', 'TextInput', '', { ...profile('Example City'), rateCurrency: 'EUR' }).value
+    const answered = value.kind === 'string' ? value.value.trim() : value.kind === 'choice' ? value.preferred.trim() : null
+    expect(answered).not.toBe('EUR')
+  })
+})
+
+describe('demographic option labels', () => {
+  it.each(['Asian', 'White', 'Man', 'Woman', 'Trans', 'Disabled Veteran', 'Prefer not to disclose', 'Hearing', 'Visual', 'Parent', 'I do not identify as a person with a disability'])('refuses the demographic option label %p', (label) => {
+    for (const fieldType of ['SingleCheckbox', 'TextInput']) {
+      expect(resolveField(label, fieldType, '', profile('Example City'))).toEqual({ profileField: null, value: { kind: 'unsupported' } })
+    }
   })
 })

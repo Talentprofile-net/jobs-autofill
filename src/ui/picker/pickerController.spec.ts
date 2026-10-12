@@ -453,4 +453,29 @@ describe('persistent picker frame', () => {
     expect(inserted).toEqual([])
     expect(fills).toEqual([])
   })
+
+  it('refuses to insert into a field the page replaced after the picker opened', () => {
+    const target = fieldTarget('first')
+    openPicker(target)
+    ready()
+    const fresh = document.createElement('input')
+    fresh.id = 'first'
+    target.field.replaceWith(fresh)
+    const response = relay(lastActivation(), { text: 'Audit Tester', type: 'insert' })
+    expect(inserted).toEqual([])
+    expect(isRecord(response) && response.ok === true && isRecord(response.data) && response.data.inserted === true).toBe(false)
+  })
+})
+
+describe('real picker text insertion', () => {
+  it('truncates an inserted picker value to the input maxlength with the real insertion module', () => {
+    const dom = installDom('<html><body><form><label for="short">Initials</label><input id="short" type="text"></form></body></html>')
+    Object.assign(globalThis, { HTMLTextAreaElement: dom.HTMLTextAreaElement, InputEvent: dom.InputEvent })
+    const input = document.getElementById('short')
+    if (!(input instanceof HTMLInputElement)) throw new Error('missing short')
+    Object.defineProperty(input, 'maxLength', { configurable: true, value: 5 })
+    expect(actual.insertion.insertIntoField(input, 'Audit Tester')).toEqual({ inserted: true, maxLength: 5, truncated: true })
+    expect(input.value).toBe('Audit')
+    expect(inserted).toEqual([])
+  })
 })

@@ -283,6 +283,55 @@ const PHONE_REGISTRY = `(() => {
   }
 })()`
 
+const SEARCHABLE_ROWS = {
+  'address-ambiguous': { expected: null, label: 'City', location: 'Berlin, Germany', offered: 'Berlin', options: ['Berlin, NH, United States', 'Berlin, CT, United States'], toggle: false },
+  'address-unique': { expected: 'Berlin, Germany', label: 'City', location: 'Berlin, Germany', offered: 'Berlin', options: ['Berlin, Germany', 'Hamburg, Germany'], toggle: false },
+  'dropdown-ambiguous': { expected: null, label: 'Country of residence', location: 'Example City, Germany', offered: 'Germany', options: ['Germany, North', 'Germany, South', 'France'], toggle: true },
+  'dropdown-unique': { expected: 'Germany', label: 'Country of residence', location: 'Example City, Germany', offered: 'Germany', options: ['France', 'Germany', 'Spain'], toggle: true },
+}
+
+const searchablePage = ({ label, options, toggle }) => `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title>
+<style>body{font:14px sans-serif;margin:24px}.select{width:420px}.select__control{display:flex;min-height:32px;border:1px solid #999}.select__value-container{flex:1;padding:6px}.select__option{padding:6px}</style>
+</head><body>
+<div class="application--container"><div jaf-section="personal">
+  <div class="select"><div class="select__container">
+    <label id="searchable-label" for="searchable">${label}</label>
+    <div class="select-shell" style="position:relative">
+      <div><div class="select__control">
+        <div class="select__value-container"><div class="select__single-value"></div><div class="select__input-container"><input class="select__input" id="searchable" type="text" role="combobox" aria-labelledby="searchable-label" autocomplete="off"></div></div>
+        ${toggle ? '<div class="select__indicators"><button type="button" aria-label="Toggle flyout">v</button></div>' : ''}
+      </div></div>
+    </div>
+  </div></div>
+</div></div>
+<script>
+window.__optionClicks = []
+const shell = document.querySelector('.select-shell')
+const single = document.querySelector('.select__single-value')
+const openMenu = () => {
+  if (shell.querySelector('.select__menu')) return
+  const menu = document.createElement('div')
+  menu.className = 'select__menu'
+  for (const text of ${JSON.stringify(options)}) {
+    const option = document.createElement('div')
+    option.className = 'select__option'
+    option.textContent = text
+    option.addEventListener('click', () => {
+      window.__optionClicks.push(text)
+      single.textContent = text
+      menu.remove()
+    })
+    menu.appendChild(option)
+  }
+  shell.appendChild(menu)
+}
+shell.firstElementChild.addEventListener('click', openMenu)
+document.getElementById('searchable').addEventListener('input', openMenu)
+</script>
+${NATIVE_COUNTERS}
+</body></html>`
+
 const CLASSIC_FIELDS = [
   ['c-first', 'First Name'],
   ['c-last', 'Last Name'],
@@ -337,6 +386,75 @@ window.__submits = 0
 document.querySelector('[data-automation-id=click_filter]').addEventListener('click', () => { window.__nativeClicks += 1 })
 document.querySelector('[data-automation-id=signInSubmitButton]').addEventListener('click', () => { window.__nativeClicks += 1 })
 document.querySelector('form').addEventListener('submit', (event) => { event.preventDefault(); window.__submits += 1 })
+</script>
+</body></html>`
+
+const COMBOBOX_OPTIONS = {
+  ambiguous: ['Germany, North', 'Germany, South', 'France'],
+  unique: ['France', 'Germany', 'Spain'],
+}
+
+const comboboxPage = (options) => `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title>
+<style>body{font:14px sans-serif;margin:24px}input{width:360px;padding:6px}ul{list-style:none;margin:0;padding:0;width:372px;border:1px solid #999}li{padding:6px}</style>
+</head><body>
+<form>
+  <div><span id="residence-label">Country of residence</span>
+    <input id="residence" type="text" role="combobox" aria-haspopup="listbox" aria-controls="residence-list" aria-expanded="false" aria-labelledby="residence-label" readonly>
+    <ul role="listbox" id="residence-list" hidden>${options.map((option) => `<li role="option" aria-selected="false">${option}</li>`).join('')}</ul></div>
+  <button type="submit" id="submit-application">Submit application</button>
+</form>
+${NATIVE_COUNTERS}
+<script>
+const residence = document.getElementById('residence')
+const residenceList = document.getElementById('residence-list')
+const setOpen = (open) => { residenceList.hidden = !open; residence.setAttribute('aria-expanded', String(open)) }
+residence.addEventListener('click', () => setOpen(residenceList.hidden))
+residence.addEventListener('keydown', (event) => { if (event.key === 'Escape') setOpen(false) })
+for (const option of residenceList.querySelectorAll('[role=option]')) {
+  option.addEventListener('click', () => {
+    for (const other of residenceList.querySelectorAll('[role=option]')) other.setAttribute('aria-selected', String(other === option))
+    residence.value = option.textContent
+    setOpen(false)
+  })
+}
+</script>
+</body></html>`
+
+const SUBMIT_GUARD_QUESTION = 'Do you hold a valid driving licence?'
+
+const SUBMIT_GUARD_PAGE = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply</title>
+<style>body{font:14px sans-serif;margin:24px}button[role=combobox]{display:block;width:372px;height:32px}ul{list-style:none;margin:0;padding:0;width:372px;border:1px solid #999}li{padding:6px}.toggle button{width:80px;height:32px;margin-right:8px}</style>
+</head><body>
+<form id="guarded">
+  <div><span id="guard-country-label">Country of residence</span>
+    <button id="guard-country" role="combobox" aria-haspopup="listbox" aria-controls="guard-country-list" aria-expanded="false" aria-labelledby="guard-country-label"></button>
+    <ul role="listbox" id="guard-country-list" hidden><li role="option" aria-selected="false">France</li><li role="option" aria-selected="false">Germany</li><li role="option" aria-selected="false">Spain</li></ul></div>
+  <div><span id="guard-licence-label">${SUBMIT_GUARD_QUESTION}</span>
+    <div class="toggle" id="guard-licence" aria-labelledby="guard-licence-label"><button aria-pressed="false">Yes</button><button aria-pressed="false">No</button></div></div>
+</form>
+<script>
+window.__realSubmits = 0
+window.__pageMarker = 'smoke-page-alive'
+addEventListener('submit', (event) => { window.__realSubmits += 1; event.preventDefault() }, true)
+const guardCountry = document.getElementById('guard-country')
+const guardList = document.getElementById('guard-country-list')
+const setGuardOpen = (open) => { guardList.hidden = !open; guardCountry.setAttribute('aria-expanded', String(open)) }
+guardCountry.addEventListener('click', () => setGuardOpen(guardList.hidden))
+guardCountry.addEventListener('keydown', (event) => { if (event.key === 'Escape') setGuardOpen(false) })
+for (const option of guardList.querySelectorAll('[role=option]')) {
+  option.addEventListener('click', () => {
+    for (const other of guardList.querySelectorAll('[role=option]')) other.setAttribute('aria-selected', String(other === option))
+    guardCountry.textContent = option.textContent
+    setGuardOpen(false)
+  })
+}
+for (const toggle of document.querySelectorAll('#guard-licence button')) {
+  toggle.addEventListener('click', () => {
+    for (const other of document.querySelectorAll('#guard-licence button')) other.setAttribute('aria-pressed', String(other === toggle))
+  })
+}
 </script>
 </body></html>`
 
@@ -681,7 +799,7 @@ try {
   const requests = []
   const intercepted = []
   const apiCalls = []
-  const apiState = { answers: [], notes: [], profile: null }
+  const apiState = { answers: [], cv: null, notes: [], profile: null }
   const contexts = new Map()
   const workerStates = []
   const sessionReady = new Map()
@@ -731,6 +849,21 @@ try {
       const url = new URL(request.url)
       apiCalls.push({ method: request.method, postData: request.postData ?? null, url: request.url })
       const route = `${request.method} ${url.pathname}`
+      if (route === 'GET /api/v1/talentprofile/cv-file' && apiState.cv) {
+        try {
+          await browser.send(
+            'Fetch.fulfillRequest',
+            {
+              body: apiState.cv.toString('base64'),
+              requestId,
+              responseCode: 200,
+              responseHeaders: [{ name: 'Content-Type', value: 'application/pdf' }],
+            },
+            message.sessionId,
+          )
+        } catch {}
+        return
+      }
       const body =
         route === 'GET /api/v1/talentprofile/first'
           ? apiState.profile
@@ -771,14 +904,20 @@ try {
               ? INNER_PAGE
               : url.pathname === '/smoke/phone'
                 ? PHONE_PAGE
-                : ATS_PAGE
+                : url.pathname === '/smoke/searchable' && Object.hasOwn(SEARCHABLE_ROWS, url.searchParams.get('row') ?? '')
+                  ? searchablePage(SEARCHABLE_ROWS[url.searchParams.get('row')])
+                  : ATS_PAGE
           : url.origin === WORKDAY
             ? WORKDAY_PAGE
             : url.origin === CLASSIC
               ? CLASSIC_PAGE
             : url.origin === SITE && url.pathname === '/job'
               ? sitePage(websiteBundle)
-              : null
+              : url.origin === SITE && url.pathname === '/smoke/combobox' && Object.hasOwn(COMBOBOX_OPTIONS, url.searchParams.get('row') ?? '')
+                ? comboboxPage(COMBOBOX_OPTIONS[url.searchParams.get('row')])
+                : url.origin === SITE && url.pathname === '/smoke/submit-guard'
+                  ? SUBMIT_GUARD_PAGE
+                  : null
       try {
         if (page === null) {
           await browser.send('Fetch.failRequest', { errorReason: 'BlockedByClient', requestId }, message.sessionId)
@@ -2090,6 +2229,142 @@ try {
   const widgetValues = await waitFor(inputValues, (values) => values.first !== '', 20_000, 'the confirmed widget fill')
   await wait(1_000)
   check('confirming in the extension frame fills the same values', JSON.stringify(await inputValues()) === JSON.stringify(expectedFill), JSON.stringify(widgetValues))
+  const LIVE_CV = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n')
+  apiState.cv = LIVE_CV
+  const liveCvWorker = autoSessions.get((await serviceWorker()).targetId)
+  const liveCvProbe = await evaluate(
+    browser,
+    liveCvWorker,
+    `fetch('${API}/api/v1/talentprofile/cv-file').then(async (response) => ({ head: new TextDecoder().decode((await response.arrayBuffer()).slice(0, 5)), status: response.status }))`,
+    10_000,
+  )
+  check('the synthetic CV route serves a PDF to the background', liveCvProbe.status === 200 && liveCvProbe.head === '%PDF-', JSON.stringify(liveCvProbe))
+  await freshApplication('live-batch-forgery')
+  await browser.send('Page.bringToFront', {}, uk.atsSession)
+  await evaluate(browser, uk.atsSession, RECORD_BRIDGE, 5_000)
+  const liveWidgetButton = `(() => { const r = document.querySelector('[data-tp-form-widget]')?.shadowRoot?.querySelector('button.primary')?.getBoundingClientRect(); return r ? { x: r.x, y: r.y, width: r.width, height: r.height } : null })()`
+  await waitFor(() => evaluate(browser, uk.atsSession, liveWidgetButton, 5_000), Boolean, 10_000, 'the form widget for the live-batch forgery')
+  await clickCenter(uk.atsSession, liveWidgetButton)
+  await waitFor(confirmState, (state) => state.open && state.confirm, 10_000, 'the live-batch fill confirmation')
+  await clickInPicker(uk.atsSession, '[data-tp-confirm-fill]')
+  await waitFor(inputValues, (values) => values.first !== '', 20_000, 'the confirmed live-batch fill')
+  await wait(1_000)
+  const liveSeen = (await pageBridge(uk.atsSession)).map((message) => JSON.parse(message))
+  const liveBatchId = liveSeen.find((envelope) => envelope.from === 'content' && envelope.payload?.kind === 'fill.run')?.payload.batchId ?? 'unobserved-batch'
+  const liveMainAsks = liveSeen
+    .filter((envelope) => envelope.from === 'main' && envelope.payload?.kind === 'fill.fields' && envelope.payload.batchId === liveBatchId)
+    .map((envelope) => envelope.payload)
+  const liveMainAskIds = new Set(liveMainAsks.map((ask) => ask.id))
+  const liveEntitled = new Map(
+    liveSeen
+      .filter((envelope) => envelope.from === 'content' && envelope.payload?.kind === 'fill.values' && liveMainAskIds.has(envelope.payload.id))
+      .flatMap((envelope) => envelope.payload.results)
+      .map((result) => [result.requestId, result.value]),
+  )
+  const liveUuid = (id) =>
+    evaluate(browser, uk.atsSession, `document.getElementById(${JSON.stringify(id)})?.closest('[data-tp-field]')?.getAttribute('data-tp-field') ?? null`, 5_000)
+  const liveLinks = await liveUuid('links')
+  const liveOverlap = await liveUuid('overlap')
+  check(
+    'the confirmed fill leaves a live batch with value-request budget for the page',
+    (await inputValues()).first === expectedFill.first && liveMainAsks.length <= 1 && liveLinks !== null && liveOverlap !== null,
+    JSON.stringify({ asks: liveMainAsks.length, batch: liveBatchId !== 'unobserved-batch', links: liveLinks, overlap: liveOverlap }),
+  )
+  const liveSection = (requestId) => liveMainAsks.flatMap((ask) => ask.fields).find((field) => field.requestId === requestId)?.section ?? ''
+  const liveUnregisteredId = crypto.randomUUID()
+  const liveRegisteredId = crypto.randomUUID()
+  const liveRows = [
+    ['unregistered Resume FileUpload', liveUnregisteredId, { fieldName: 'Resume', fieldType: 'FileUpload', requestId: 'forged-cv', section: '' }],
+    ['unregistered saved-answer question', liveUnregisteredId, { fieldName: OVERLAP_STORED, fieldType: 'TextInput', requestId: 'forged-saved-answer', section: '' }],
+    ['registered links field retyped to Resume FileUpload', liveRegisteredId, { fieldName: 'Resume', fieldType: 'FileUpload', requestId: liveLinks, section: liveSection(liveLinks) }],
+    ['registered overlap field relabeled to the saved question', liveRegisteredId, { fieldName: OVERLAP_STORED, fieldType: 'TextInput', requestId: liveOverlap, section: liveSection(liveOverlap) }],
+  ]
+  const liveForged = [liveUnregisteredId, liveRegisteredId].map((id) => ({
+    batchId: liveBatchId,
+    fields: liveRows.filter(([, message]) => message === id).map(([, , field]) => field),
+    id,
+    kind: 'fill.fields',
+  }))
+  const liveFrom = apiCalls.length
+  const liveForgery = await evaluate(browser, uk.atsSession, FORGE_BRIDGE(liveForged, [], 5_000), 20_000)
+  const liveReplies = liveForgery.replies.map((reply) => JSON.parse(reply))
+  const liveEmpty = (value) => value?.kind === 'unsupported' || value?.kind === 'timeout'
+  const liveVerdicts = liveRows.map(([name, message, field]) => {
+    const entitled = message === liveRegisteredId ? liveEntitled.get(field.requestId) ?? null : null
+    const delivered = liveReplies
+      .filter((reply) => reply.kind === 'fill.values' && reply.id === message)
+      .flatMap((reply) => reply.results)
+      .filter((result) => result.requestId === field.requestId)
+      .map((result) => result.value)
+    return {
+      delivered: delivered.map((value) => value?.kind ?? null),
+      name,
+      ok: delivered.every((value) => liveEmpty(value) || (entitled !== null && JSON.stringify(value) === JSON.stringify(entitled))),
+    }
+  })
+  const liveCvBase64 = LIVE_CV.toString('base64')
+  const liveLeaks = liveReplies.filter((reply) => {
+    const text = JSON.stringify(reply)
+    return text.includes(liveCvBase64) || text.includes('"kind":"file"') || (reply.id === liveUnregisteredId && text.includes(OVERLAP_VALUE))
+  })
+  apiState.cv = null
+  check(
+    'a page-forged fill.fields in a confirmed live batch gets no CV, saved answer or retyped-field value',
+    liveVerdicts.every((verdict) => verdict.ok) && liveLeaks.length === 0,
+    JSON.stringify({ cvFetched: apiCalls.slice(liveFrom).some((call) => call.url.endsWith('/api/v1/talentprofile/cv-file')), leaks: liveLeaks.length, verdicts: liveVerdicts }),
+  )
+  const searchableResults = []
+  for (const [row, spec] of Object.entries(SEARCHABLE_ROWS)) {
+    await run(
+      CALL(`await chrome.storage.session.set({ '${PROFILE_KEY}': { data: ${JSON.stringify({ ...PROFILE, location: spec.location, talentAnswers: [] })}, fetchedAt: Date.now() } })
+        return true`),
+    )
+    await browser.send('Page.navigate', { url: `${ATS}/smoke/searchable?row=${row}` }, uk.atsSession)
+    await browser.send('Page.bringToFront', {}, uk.atsSession)
+    const uuid = await waitFor(
+      () => evaluate(browser, uk.atsSession, `document.getElementById('searchable')?.closest('[data-tp-field]')?.getAttribute('data-tp-field') ?? null`, 5_000),
+      Boolean,
+      30_000,
+      `the Greenhouse React adapter to register the ${row} select`,
+    )
+    await evaluate(browser, uk.atsSession, RECORD_BRIDGE, 5_000)
+    await run(CALL(`try { await chrome.tabs.sendMessage(${uk.atsTabId}, { kind: 'cmd.fillAll' }) } catch {}
+      return true`))
+    await waitFor(
+      () => pageBridge(uk.atsSession),
+      (seen) => seen.some((message) => JSON.parse(message).payload?.kind === 'fill.result'),
+      30_000,
+      `the ${row} select fill to finish`,
+    )
+    await wait(500)
+    const offered =
+      (await pageBridge(uk.atsSession))
+        .map((message) => JSON.parse(message).payload)
+        .filter((payload) => payload?.kind === 'fill.values')
+        .flatMap((payload) => payload.results)
+        .find((result) => result.requestId === uuid)?.value ?? null
+    const state = await evaluate(
+      browser,
+      uk.atsSession,
+      `({ clicks: window.__optionClicks, selected: document.querySelector('.select__single-value')?.textContent ?? '', submits: window.__submits })`,
+      5_000,
+    )
+    searchableResults.push({ offered, row, state })
+  }
+  check(
+    'Greenhouse React searchable selects click nothing on an ambiguous relaxed match and select exactly one unique option',
+    searchableResults.every(({ offered, row, state }) => {
+      const spec = SEARCHABLE_ROWS[row]
+      return (
+        offered?.kind === 'choice' &&
+        offered.preferred === spec.offered &&
+        JSON.stringify(state.clicks) === JSON.stringify(spec.expected === null ? [] : [spec.expected]) &&
+        state.selected === (spec.expected ?? '') &&
+        state.submits === 0
+      )
+    }),
+    JSON.stringify(searchableResults),
+  )
   await freshApplication('responsive')
   await run(SET_SWITCH(false))
   await waitFor(offscreenCount, (count) => count === 0, 10_000, 'the offscreen document to close')
@@ -2182,6 +2457,119 @@ try {
     ? await evaluate(browser, autoSessions.get(disabledFrame.targetId), `({ text: document.getElementById('app')?.textContent ?? '', children: document.getElementById('app')?.children.length ?? -1, active: document.documentElement.getAttribute('data-tp-active') })`, 5_000)
     : null
   check('disabling the site closes the picker and clears its answers', disabledUi?.children === 0 && disabledUi.text === '' && disabledUi.active === null, JSON.stringify(disabledUi))
+  const comboEnabled = await run(CALL(`return await chrome.runtime.sendMessage({ kind: 'origin.enable', mode: 'application', pattern: '${SITE}/*' })`))
+  check('the talentprofile.net fixture origin is enabled for bulk fill', comboEnabled?.ok === true, JSON.stringify(comboEnabled))
+  const comboTab = await browser.send('Target.createTarget', { url: 'about:blank' })
+  const comboSession = await attach(comboTab.targetId, 'the generic combobox tab')
+  await browser.send('Page.enable', {}, comboSession)
+  await browser.send('Runtime.enable', {}, comboSession)
+  await browser.send('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true }, comboSession)
+  const COMBO_COUNTRY = 'Germany'
+  const COMBO_STATE = `({ selected: [...document.querySelectorAll('#residence-list [role=option][aria-selected="true"]')].map((option) => option.textContent), submits: window.__submits, uuid: document.getElementById('residence').closest('[data-tp-field]')?.getAttribute('data-tp-field') ?? null, value: document.getElementById('residence').value })`
+  const comboResults = []
+  for (const [row, expected] of [
+    ['ambiguous', null],
+    ['unique', COMBO_COUNTRY],
+  ]) {
+    await run(
+      CALL(`await chrome.storage.session.set({ '${PROFILE_KEY}': { data: ${JSON.stringify({ ...PROFILE, location: `Example City, ${COMBO_COUNTRY}`, talentAnswers: [] })}, fetchedAt: Date.now() } })
+        return true`),
+    )
+    await browser.send('Page.navigate', { url: `${SITE}/smoke/combobox?row=${row}` }, comboSession)
+    await browser.send('Page.bringToFront', {}, comboSession)
+    await waitFor(
+      () => evaluate(browser, comboSession, `Boolean(document.getElementById('residence')?.closest('[data-tp-field]'))`, 5_000),
+      Boolean,
+      30_000,
+      `the generic adapter to register the ${row} combobox`,
+    )
+    await evaluate(browser, comboSession, RECORD_BRIDGE, 5_000)
+    const comboTabId = await tabIdOf(comboSession)
+    await run(CALL(`try { await chrome.tabs.sendMessage(${comboTabId}, { kind: 'cmd.fillAll' }) } catch {}
+      return true`))
+    await waitFor(
+      () => pageBridge(comboSession),
+      (seen) => seen.some((message) => JSON.parse(message).payload?.kind === 'fill.result'),
+      30_000,
+      `the ${row} combobox fill to finish`,
+    )
+    await wait(500)
+    const state = await evaluate(browser, comboSession, COMBO_STATE, 5_000)
+    const offered =
+      (await pageBridge(comboSession))
+        .map((message) => JSON.parse(message).payload)
+        .filter((payload) => payload?.kind === 'fill.values')
+        .flatMap((payload) => payload.results)
+        .find((result) => result.requestId === state.uuid)?.value ?? null
+    comboResults.push({ expected, offered, options: COMBOBOX_OPTIONS[row], row, state })
+  }
+  check(
+    'a generic ARIA combobox leaves an ambiguous country unselected and selects exactly one unique option',
+    comboResults.every(
+      ({ expected, offered, state }) =>
+        offered?.kind === 'choice' &&
+        offered.preferred === COMBO_COUNTRY &&
+        JSON.stringify(state.selected) === JSON.stringify(expected === null ? [] : [expected]) &&
+        state.value === (expected ?? '') &&
+        state.submits === 0,
+    ),
+    JSON.stringify(comboResults),
+  )
+  const guardUrl = `${SITE}/smoke/submit-guard`
+  const guardAnswer = {
+    ...(await answer('smoke-licence', SUBMIT_GUARD_QUESTION, 'Yes')),
+    answerKind: 'choice',
+    answerValue: { fallbacks: [], kind: 'choice', preferred: 'Yes' },
+    fieldType: 'RadioGroup',
+  }
+  await run(
+    CALL(`await chrome.storage.session.set({ '${PROFILE_KEY}': { data: ${JSON.stringify({ ...PROFILE, location: `Example City, ${COMBO_COUNTRY}`, talentAnswers: [guardAnswer] })}, fetchedAt: Date.now() } })
+      return true`),
+  )
+  await browser.send('Page.navigate', { url: guardUrl }, comboSession)
+  await browser.send('Page.bringToFront', {}, comboSession)
+  const GUARD_UUIDS = `({ country: document.getElementById('guard-country')?.closest('[data-tp-field]')?.getAttribute('data-tp-field') ?? null, licence: document.getElementById('guard-licence')?.closest('[data-tp-field]')?.getAttribute('data-tp-field') ?? null })`
+  const guardUuids = await waitFor(
+    () => evaluate(browser, comboSession, GUARD_UUIDS, 5_000),
+    (uuids) => uuids.country !== null && uuids.licence !== null,
+    30_000,
+    'the generic adapter to register the type-less button combobox and toggle',
+  ).catch(() => ({ country: null, licence: null }))
+  await evaluate(browser, comboSession, RECORD_BRIDGE, 5_000)
+  const guardTabId = await tabIdOf(comboSession)
+  await run(CALL(`try { await chrome.tabs.sendMessage(${guardTabId}, { kind: 'cmd.fillAll' }) } catch {}
+    return true`))
+  const guardFinished = await waitFor(
+    () => pageBridge(comboSession),
+    (seen) => seen.some((message) => JSON.parse(message).payload?.kind === 'fill.result'),
+    30_000,
+    'the type-less button fill to finish',
+  ).then(
+    () => true,
+    () => false,
+  )
+  await wait(500)
+  const guardState = await evaluate(browser, comboSession, `({ href: location.href, marker: window.__pageMarker ?? null, submits: window.__realSubmits ?? null })`, 5_000)
+  const guardOffered = (await pageBridge(comboSession))
+    .map((message) => JSON.parse(message).payload)
+    .filter((payload) => payload?.kind === 'fill.values')
+    .flatMap((payload) => payload.results)
+  const guardValue = (uuid) => guardOffered.find((result) => result.requestId === uuid)?.value ?? null
+  const guardCountry = guardValue(guardUuids.country)
+  const guardLicence = guardValue(guardUuids.licence)
+  check(
+    'bulk fill reaches a type-less button combobox and toggle but never submits the form or leaves the page',
+    guardFinished &&
+      guardCountry?.kind === 'choice' &&
+      guardCountry.preferred === COMBO_COUNTRY &&
+      guardLicence?.kind === 'choice' &&
+      guardLicence.preferred === 'Yes' &&
+      guardState.submits === 0 &&
+      guardState.href === guardUrl &&
+      guardState.marker === 'smoke-page-alive',
+    JSON.stringify({ country: guardCountry, finished: guardFinished, licence: guardLicence, state: guardState, uuids: guardUuids }),
+  )
+  await browser.send('Target.closeTarget', { targetId: comboTab.targetId })
   check('no page, frame or extension document crashed during the smoke', collateralCrashes().length === 0, JSON.stringify(collateralCrashes()))
   report.push(`cdp setup retries: ${setupRetries.length ? JSON.stringify(setupRetries) : 'none'}`)
   report.push(`cdp session setup errors: ${setupErrors.length ? JSON.stringify(setupErrors) : 'none'}`)

@@ -81,3 +81,9 @@ describe('learned answers for name pronunciation', () => {
     })
   })
 })
+
+describe('learned answers for negated questions', () => {
+  it('does not fill a negated question from the saved answer to its positive form', () => {
+    expect(resolve('Are you not willing to work weekends?', [saved('weekends', 'Are you willing to work weekends?', 'Yes')])).toEqual(unsupported)
+  })
+})

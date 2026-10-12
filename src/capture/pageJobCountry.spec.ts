@@ -30,4 +30,8 @@ describe('jobCountryFromJsonLd', () => {
     expect(jobCountryFromJsonLd([posting({ jobLocation: { address: 'Anywhere' } })])).toBe('_unknown')
     expect(jobCountryFromJsonLd([])).toBe('_unknown')
   })
+
+  it('stays unknown when a US state shares a country name', () => {
+    expect(jobCountryFromJsonLd([posting({ jobLocation: { address: 'Atlanta, Georgia' } })])).toBe('_unknown')
+  })
 })

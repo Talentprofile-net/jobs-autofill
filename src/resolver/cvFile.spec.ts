@@ -51,6 +51,10 @@ describe('isCvFileRequest', () => {
     expect(isCvFileRequest({ fieldName: 'Resume/CV', fieldType: 'TextInput' })).toBe(false)
     expect(isCvFileRequest({ fieldName: 'Cover letter', fieldType: 'FileUpload' })).toBe(false)
   })
+
+  it('does not treat a multi-file uploader as the CV field', () => {
+    expect(isCvFileRequest({ fieldName: 'Resume', fieldType: 'MultiFileUpload' })).toBe(false)
+  })
 })
 
 describe('toCvFileValue', () => {
