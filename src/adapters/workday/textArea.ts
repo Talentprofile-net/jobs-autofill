@@ -4,11 +4,12 @@ import { fillReactTextInput } from '~/core/reactProps'
 import { writeVerifiedText } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
 import type { ProfileValue } from '~/field/types'
-import { xpaths } from './xpaths'
+import { specs } from './specs'
 
 export class TextArea extends WorkdayBaseInput {
-  static XPATH = xpaths.TEXT_AREA
-  override fieldType = 'TextInput'
+  static XPATH = specs.textArea.xpath
+  override fieldType = specs.textArea.fieldType
+  protected override readonly spec = specs.textArea
 
   get inputElement(): HTMLTextAreaElement | null {
     return getElement(this.element, './/textarea') as HTMLTextAreaElement | null

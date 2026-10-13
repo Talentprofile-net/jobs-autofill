@@ -1,3 +1,4 @@
+import { hasDisplayedAncestor } from '~/core/fileAttach'
 import { resolveLabelledByText } from '~/core/labelledBy'
 import { composedParent } from '~/core/shadowDom'
 import { isResumeFieldLabel } from '~/resolver/cvFile'
@@ -79,3 +80,8 @@ export const fileQuestionLabel = (input: HTMLElement): string => {
 
 export const isDocumentQuestion = (label: string): boolean =>
   isResumeFieldLabel(label) || COVER_LETTER_LABEL.test(label)
+
+export const FILE_INPUT_SELECTOR = 'input[type="file"]'
+
+export const isDocumentFileInput = (el: HTMLElement): boolean =>
+  el instanceof HTMLInputElement && !el.disabled && hasDisplayedAncestor(el) && isDocumentQuestion(fileQuestionLabel(el))

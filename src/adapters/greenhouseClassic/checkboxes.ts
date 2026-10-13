@@ -3,23 +3,18 @@ import { getElement, getElements } from '~/core/getElements'
 import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 80
 
 type Choice = { input: HTMLInputElement; label: HTMLElement; text: string }
 
 export class Checkboxes extends GreenhouseBaseInput {
-  static XPATH = xpaths.MULTI_CHECKBOX
-  override fieldType = 'MultiCheckbox'
-
-  override get fieldName(): string {
-    const directLabel = getElement(this.element, "./label[normalize-space(text())]")
-    if (directLabel?.innerText?.trim()) return directLabel.innerText.trim()
-    return super.fieldName
-  }
+  static XPATH = specs.checkboxes.xpath
+  override fieldType = specs.checkboxes.fieldType
+  protected override readonly spec = specs.checkboxes
 
   private get choices(): Choice[] {
     const labels = getElements(

@@ -4,17 +4,18 @@ import { scrollBack } from '~/core/scroll'
 import { getReactProps } from '~/core/reactProps'
 import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { findUniqueOption } from '~/core/match'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const MENU_WAIT_TIMEOUT_MS = 500
 const SELECTION_SETTLE_MS = 150
 
 export class AddressSearchable extends GreenhouseReactBaseInput {
-  static XPATH = xpaths.ADDRESS_SEARCHABLE
-  override fieldType = 'SimpleDropdown'
+  static XPATH = specs.addressSearchable.xpath
+  override fieldType = specs.addressSearchable.fieldType
+  protected override readonly spec = specs.addressSearchable
 
   private get searchInput(): HTMLInputElement | null {
     return getElement(

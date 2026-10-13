@@ -4,17 +4,18 @@ import { scrollBack } from '~/core/scroll'
 import { getReactProps } from '~/core/reactProps'
 import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { findUniqueOption } from '~/core/match'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const SELECTION_SETTLE_MS = 150
 const DROPDOWN_WAIT_MS = 600
 
 export class DropdownSearchable extends GreenhouseReactBaseInput {
-  static XPATH = xpaths.DROPDOWN_SEARCHABLE
-  override fieldType = 'SimpleDropdown'
+  static XPATH = specs.dropdownSearchable.xpath
+  override fieldType = specs.dropdownSearchable.fieldType
+  protected override readonly spec = specs.dropdownSearchable
 
   private get menuOpenTriggerDiv(): HTMLElement | null {
     return getElement(

@@ -1,20 +1,21 @@
-import { GenericTextInput } from './textInput'
-import { GenericTextarea } from './textarea'
-import { GenericSelect } from './select'
+import { FIELD_MARKER_ATTR } from '~/config'
+import type { BaseField } from '~/field/baseField'
+import { domClaims } from '~/field/claims'
+import { fieldByUuid } from '~/field/registry'
+import { GenericAriaCheckbox, GenericAriaRadioGroup, GenericYesNoToggle } from './ariaChoice'
 import { GenericCheckboxBoolean } from './checkboxBoolean'
 import { GenericCheckboxMulti } from './checkboxMulti'
-import { GenericRadioGroup } from './radioGroup'
-import { GenericDateGroup } from './dateGroup'
-import { GenericContentEditable } from './contentEditable'
-import { isCandidateControl, querySelectorAllInNode } from './dom'
-import { isConcealedControl } from '~/core/concealment'
-import { isInsideRegistered, isVisible } from '~/field/baseField'
-import { discoverRadioGroups, discoverCheckboxGroups } from './groups'
-import { isGroupPart, isOperableOption } from './groupParts'
-import { discoverDateGroups } from './dateGroups'
 import { GenericCombobox } from './combobox'
+import { GenericContentEditable } from './contentEditable'
+import { GenericDateGroup } from './dateGroup'
 import { GenericFileInput } from './fileInput'
-import { GenericAriaCheckbox, GenericAriaRadioGroup, GenericYesNoToggle } from './ariaChoice'
+import { claimParts, dropStalePart } from './groupParts'
+import type { GroupHooks } from './groups'
+import { genericCandidates, type GenericCandidate } from './plan'
+import { GenericRadioGroup } from './radioGroup'
+import { GenericSelect } from './select'
+import { GenericTextarea } from './textarea'
+import { GenericTextInput } from './textInput'
 
 const ensureRoot = (node: Node): ParentNode => {
   if (node instanceof Element) return node
@@ -24,107 +25,53 @@ const ensureRoot = (node: Node): ParentNode => {
   return document
 }
 
-const registerSimple = (
-  root: ParentNode,
-  selector: string,
-  Ctor: new (el: HTMLElement) => { init: () => void },
-): void => {
-  const elements = querySelectorAllInNode(root as Node, selector)
-  for (const el of elements) {
-    if (!isCandidateControl(el)) continue
-    new Ctor(el).init()
-  }
+const registryGroupHooks: GroupHooks = {
+  adoptRegistered: (anchor, seed, eligible, out) => {
+    const uuid = anchor.getAttribute(FIELD_MARKER_ATTR) ?? ''
+    const field = fieldByUuid(uuid)
+    if (field?.fieldType === 'MultiCheckbox' || field?.fieldType === 'RadioGroup') {
+      claimParts(anchor, uuid)
+      return
+    }
+    if (field && seed.type === 'checkbox' && eligible.length > 1) {
+      field.destroy()
+      out.groups.push({ anchor: eligible[0] })
+    }
+  },
+  dropStalePart,
 }
 
-const registerComboboxes = (root: ParentNode): void => {
-  const elements = querySelectorAllInNode(root as Node, GenericCombobox.SELECTOR)
-  for (const el of elements) {
-    if (isInsideRegistered(el)) continue
-    if (!isVisible(el)) continue
-    if (isConcealedControl(el)) continue
-    if (!GenericCombobox.qualifies(el)) continue
-    new GenericCombobox(el).init()
-  }
-}
-
-const registerDateGroups = (root: ParentNode): void => {
-  const groups = discoverDateGroups(root)
-  for (const group of groups) {
-    if (isInsideRegistered(group.anchor)) continue
-    new GenericDateGroup(group.anchor, group.parts, group.container).init()
-  }
-}
-
-const registerAriaChoices = (root: ParentNode): void => {
-  for (const group of querySelectorAllInNode(root as Node, GenericAriaRadioGroup.SELECTOR)) {
-    if (GenericAriaRadioGroup.qualifies(group)) new GenericAriaRadioGroup(group).init()
-  }
-  for (const box of querySelectorAllInNode(root as Node, GenericAriaCheckbox.SELECTOR)) {
-    if (GenericAriaCheckbox.qualifies(box)) new GenericAriaCheckbox(box).init()
-  }
-  const toggleContainers = new Set<HTMLElement>()
-  for (const button of querySelectorAllInNode(root as Node, GenericYesNoToggle.SELECTOR)) {
-    const container = GenericYesNoToggle.containerOf(button)
-    if (container) toggleContainers.add(container)
-  }
-  for (const container of toggleContainers) {
-    if (GenericYesNoToggle.qualifies(container)) new GenericYesNoToggle(container).init()
-  }
-}
-
-const registerRadioGroups = (root: ParentNode): void => {
-  const groups = discoverRadioGroups(root)
-  for (const group of groups) {
-    if (isInsideRegistered(group.anchor)) continue
-    new GenericRadioGroup(group.anchor).init()
-  }
-}
-
-const registerCheckboxes = (root: ParentNode): void => {
-  const { singles, groups } = discoverCheckboxGroups(root)
-  for (const cb of singles) {
-    if (isInsideRegistered(cb) || isGroupPart(cb) || !isOperableOption(cb)) continue
-    new GenericCheckboxBoolean(cb).init()
-  }
-  for (const group of groups) {
-    if (isInsideRegistered(group.anchor)) continue
-    new GenericCheckboxMulti(group.anchor).init()
-  }
-}
-
-const registerContentEditables = (root: ParentNode): void => {
-  const elements = querySelectorAllInNode(
-    root as Node,
-    GenericContentEditable.SELECTOR,
-  )
-  for (const el of elements) {
-    if (isInsideRegistered(el)) continue
-    if (!isVisible(el)) continue
-    if (isConcealedControl(el)) continue
-    if (!GenericContentEditable.qualifies(el)) continue
-    new GenericContentEditable(el).init()
-  }
-}
-
-const registerFileInputs = (root: ParentNode): void => {
-  const elements = querySelectorAllInNode(root as Node, GenericFileInput.SELECTOR)
-  for (const el of elements) {
-    if (isInsideRegistered(el)) continue
-    if (!GenericFileInput.qualifies(el)) continue
-    new GenericFileInput(el).init()
+const createField = (candidate: GenericCandidate): BaseField => {
+  switch (candidate.kind) {
+    case 'combobox':
+      return new GenericCombobox(candidate.element)
+    case 'date':
+      return new GenericDateGroup(candidate.element, candidate.group.parts, candidate.group.container)
+    case 'text':
+      return new GenericTextInput(candidate.element)
+    case 'textarea':
+      return new GenericTextarea(candidate.element)
+    case 'select':
+      return new GenericSelect(candidate.element)
+    case 'ariaRadioGroup':
+      return new GenericAriaRadioGroup(candidate.element)
+    case 'ariaCheckbox':
+      return new GenericAriaCheckbox(candidate.element)
+    case 'yesNoToggle':
+      return new GenericYesNoToggle(candidate.element)
+    case 'radioGroup':
+      return new GenericRadioGroup(candidate.element)
+    case 'singleCheckbox':
+      return new GenericCheckboxBoolean(candidate.element)
+    case 'checkboxGroup':
+      return new GenericCheckboxMulti(candidate.element)
+    case 'contentEditable':
+      return new GenericContentEditable(candidate.element)
+    case 'file':
+      return new GenericFileInput(candidate.element)
   }
 }
 
 export const RegisterInputs = (node: Node = document): void => {
-  const root = ensureRoot(node)
-  registerComboboxes(root)
-  registerDateGroups(root)
-  registerSimple(root, GenericTextInput.SELECTOR, GenericTextInput)
-  registerSimple(root, GenericTextarea.SELECTOR, GenericTextarea)
-  registerSimple(root, GenericSelect.SELECTOR, GenericSelect)
-  registerAriaChoices(root)
-  registerRadioGroups(root)
-  registerCheckboxes(root)
-  registerContentEditables(root)
-  registerFileInputs(root)
+  for (const candidate of genericCandidates(ensureRoot(node), domClaims, registryGroupHooks)) createField(candidate).init()
 }

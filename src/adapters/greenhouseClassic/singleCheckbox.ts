@@ -2,15 +2,16 @@ import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement } from '~/core/getElements'
 import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 80
 
 export class SingleCheckbox extends GreenhouseBaseInput {
-  static XPATH = xpaths.SINGLE_CHECKBOX
-  override fieldType = 'SingleCheckbox'
+  static XPATH = specs.singleCheckbox.xpath
+  override fieldType = specs.singleCheckbox.fieldType
+  protected override readonly spec = specs.singleCheckbox
 
   private get checkbox(): HTMLInputElement | null {
     return getElement(this.element, ".//input[@type='checkbox']") as HTMLInputElement | null

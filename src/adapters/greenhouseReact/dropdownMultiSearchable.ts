@@ -4,10 +4,10 @@ import { scrollBack } from '~/core/scroll'
 import { getReactProps } from '~/core/reactProps'
 import { sleep } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 150
 
@@ -31,8 +31,9 @@ const findChipRemoveBtn = (chip: HTMLElement): HTMLElement | null =>
   getElement(chip, `.//div[starts-with(@class, "select__multi-value__remove")]`)
 
 export class DropdownMultiSearchable extends GreenhouseReactBaseInput {
-  static XPATH = xpaths.DROPDOWN_MULTI_SEARCHABLE
-  override fieldType = 'MultiSearchableDropdown'
+  static XPATH = specs.dropdownMultiSearchable.xpath
+  override fieldType = specs.dropdownMultiSearchable.fieldType
+  protected override readonly spec = specs.dropdownMultiSearchable
 
   private get searchInput(): HTMLInputElement | null {
     return getElement(

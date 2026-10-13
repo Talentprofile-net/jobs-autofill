@@ -149,6 +149,11 @@ const collectAllSectionsOfKind = (kind: SectionKind): HTMLElement[] => {
   return cache[kind]
 }
 
+export const createSectionReader = (): ((el: HTMLElement) => string) => {
+  const entry = createEntrySectionReader()
+  return (el) => entry(el) || refusedContext(el)
+}
+
 export const createEntrySectionReader = (): ((el: HTMLElement) => string) => {
   let peers: SectionsCache | null = null
   return (el) => {

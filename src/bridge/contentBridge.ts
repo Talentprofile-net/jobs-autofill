@@ -1,4 +1,4 @@
-import { BRIDGE_MAGIC, FIELD_MARKER_ATTR, PROFILE_SCORE_EMPTY_BELOW } from "~/config";
+import { BRIDGE_MAGIC, PROFILE_SCORE_EMPTY_BELOW } from "~/config";
 import { resolveAutoModeFromDom } from "~/auth/autoModeHeuristic";
 import { createAutoModeWatcher, createDocumentTreeObserver, type AutoModeWatcher } from "~/auth/autoModeWatcher";
 import type {
@@ -19,7 +19,7 @@ import type { AtsName, ProfileValue } from "~/field/types";
 import type { LearnedAnswerResult } from "~/resolver/learnedAnswers";
 import { stageSubmittedAnswers } from "~/capture/captureStage";
 import { fieldsWithoutProfileValue, mergeFillValues } from "./fillValues";
-import { claimBoundFields, snapshotFieldAllowlist, type FieldAllowlist, type FieldRequest } from "./fieldBinding";
+import { claimBoundFields, createServedFields, isStillBound, snapshotFieldAllowlist, type FieldAllowlist, type FieldRequest, type ServedFields } from "./fieldBinding";
 import { createGestureTracker } from "./trustedGesture";
 import {
   closePicker,
@@ -46,7 +46,7 @@ type Envelope<T> = {
   payload: T;
 };
 
-type Batch = { emit: boolean; valueRequests: number; expiresAt: number; served: Set<string>; allowlist: FieldAllowlist };
+type Batch = { emit: boolean; valueRequests: number; expiresAt: number; served: ServedFields; allowlist: FieldAllowlist };
 
 const MAIN_WORLD_READY_TIMEOUT_MS = 10_000;
 const MAIN_WORLD_PING_INTERVAL_MS = 100;
@@ -207,13 +207,16 @@ const resolveFillValues = async (fields: FieldRequest[]) => {
   return mergeFillValues(fields, profile, learned);
 };
 
-const resolveBoundFillValues = async (claimed: Array<FieldRequest | null>): Promise<FillValueResult[]> => {
+const resolveBoundFillValues = async (
+  claimed: Array<FieldRequest | null>,
+  releasable: () => (field: FieldRequest) => boolean,
+): Promise<FillValueResult[]> => {
   const bound = claimed.filter((field): field is FieldRequest => field !== null);
-  const resolved = new Map((bound.length > 0 ? await resolveFillValues(bound) : []).map((result) => [result.requestId, result]));
-  return claimed.flatMap((field) => {
-    if (!field) return [];
-    return [resolved.get(field.requestId) ?? { matchedAnswerId: null, profileField: null, requestId: field.requestId, value: { kind: "unsupported" } }];
-  });
+  if (bound.length === 0) return [];
+  const resolved = new Map((await resolveFillValues(bound)).map((result) => [result.requestId, result]));
+  return bound
+    .filter(releasable())
+    .map((field) => resolved.get(field.requestId) ?? { matchedAnswerId: null, profileField: null, requestId: field.requestId, value: { kind: "unsupported" } });
 };
 
 export const startContentBridge = (ats: AtsName): void => {
@@ -252,7 +255,7 @@ export const startContentBridge = (ats: AtsName): void => {
       allowlist,
       emit,
       expiresAt: Date.now() + BATCH_TTL_MS,
-      served: new Set(),
+      served: createServedFields(),
       valueRequests: 0,
     });
     gate.send({
@@ -390,7 +393,13 @@ export const startContentBridge = (ats: AtsName): void => {
         batchId: msg.batchId,
         id: msg.id,
         kind: "fill.values",
-        results: await resolveBoundFillValues(claimBoundFields(msg.fields, batch.allowlist, batch.served)),
+        results: await resolveBoundFillValues(
+          claimBoundFields(msg.fields, batch.allowlist, snapshotFieldAllowlist(ats), batch.served),
+          () => {
+            const latest = snapshotFieldAllowlist(ats);
+            return (field) => isStillBound(field, batch.allowlist, latest);
+          },
+        ),
       });
       return;
     }

@@ -1,17 +1,14 @@
 import { getElement } from '~/core/getElements'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import type { CaptureRecord } from '~/field/baseField'
 import { attachFile } from '~/core/fileAttach'
+import { specs } from './specs'
 
 export class File extends GreenhouseBaseInput {
-  static XPATH = xpaths.SINGLE_FILE_UPLOAD
-  override fieldType = 'SingleFileUpload'
-
-  protected override canFill(): boolean {
-    return this.fileInput !== null
-  }
+  static XPATH = specs.file.xpath
+  override fieldType = specs.file.fieldType
+  protected override readonly spec = specs.file
 
   private get fileInput(): HTMLInputElement | null {
     return this.element.querySelector<HTMLInputElement>('input[type="file"]')

@@ -1,4 +1,5 @@
-import { getElement, getElements } from '~/core/getElements'
+import { getElements } from '~/core/getElements'
+import { nearestMapped } from '~/field/describe/atsSpec'
 
 const SECTION_CLASSES = `[@class="education" or @class="employment"]`
 const SECTION_WRAPPER_IDS = `[@id="education_section" or @id="employment_section"]`
@@ -11,6 +12,11 @@ export const wrapperSectionNumbers = (wrapper: HTMLElement): Map<HTMLElement, st
   const type = wrapper.id.split('_')[0]
   return new Map(getElements(wrapper, `.//div${SECTION_CLASSES}`).map((el, index) => [el, `${type} ${index + 1}`]))
 }
+
+export const classicSectionNumbers = (): Map<HTMLElement, string> =>
+  new Map(getElements(document, SECTION_WRAPPER_XPATH).flatMap((wrapper) => [...wrapperSectionNumbers(wrapper)]))
+
+export const classicSection = (element: HTMLElement): string => nearestMapped(element, classicSectionNumbers())
 
 export class Sections {
   static XPATH = SECTION_WRAPPER_XPATH

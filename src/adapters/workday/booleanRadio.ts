@@ -3,9 +3,9 @@ import { getElement, getElements } from '~/core/getElements'
 import { findUniqueOption } from '~/core/match'
 import { sleep, verifySelection } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const TRUE_LABELS = [
   'Yes',
@@ -45,12 +45,9 @@ const normalize = (s: string): string =>
   s.replace(/\s+/g, ' ').trim().toLowerCase()
 
 export class BooleanRadio extends WorkdayBaseInput {
-  static XPATH = xpaths.BOOLEAN_RADIO
-  override fieldType = 'BooleanRadio'
-
-  override get fieldName(): string {
-    return getElement(this.element, './/legend')?.innerText ?? ''
-  }
+  static XPATH = specs.booleanRadio.xpath
+  override fieldType = specs.booleanRadio.fieldType
+  protected override readonly spec = specs.booleanRadio
 
   private get radioOptions(): RadioOption[] {
     const wrappers = getElements(

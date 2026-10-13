@@ -1,13 +1,13 @@
 import fieldFillerQueue from '~/core/asyncQueue'
-import { getElement, getElements } from '~/core/getElements'
+import { getElements } from '~/core/getElements'
 import { setNativeInputValue } from '~/core/reactProps'
 import { padToWidth } from '~/core/padToWidth'
 import { isValidMonth, isValidYear } from '~/core/dateValidation'
 import { widthFor } from '~/core/dateUtils'
 import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 100
 
@@ -33,8 +33,9 @@ const identifyPart = (input: HTMLInputElement): 'month' | 'year' | null => {
 }
 
 export class MonthYear extends GreenhouseBaseInput {
-  static XPATH = xpaths.MONTH_YEAR
-  override fieldType = 'MonthYear'
+  static XPATH = specs.monthYear.xpath
+  override fieldType = specs.monthYear.fieldType
+  protected override readonly spec = specs.monthYear
 
   private get partInputs(): {
     month: HTMLInputElement | null

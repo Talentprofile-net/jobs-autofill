@@ -4,15 +4,16 @@ import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/ma
 import { setNativeInputValue } from '~/core/reactProps'
 import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const SELECTION_SETTLE_MS = 100
 
 export class AddressSearchable extends GreenhouseBaseInput {
-  static XPATH = xpaths.ADDRESS_SEARCH_FIELD
-  override fieldType = 'SimpleDropdown'
+  static XPATH = specs.addressSearchable.xpath
+  override fieldType = specs.addressSearchable.fieldType
+  protected override readonly spec = specs.addressSearchable
 
   private get inputElement(): HTMLInputElement | null {
     return getElement(this.element, ".//input[@type='text']") as HTMLInputElement | null

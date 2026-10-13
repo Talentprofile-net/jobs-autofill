@@ -1,4 +1,5 @@
 import { getElements } from '~/core/getElements'
+import { nearestMapped } from '~/field/describe/atsSpec'
 
 export const SECTION_XPATH = [
   `.//div`,
@@ -24,3 +25,5 @@ export const sectionNumbers = (): Map<HTMLElement, string> => {
   }
   return out
 }
+
+export const reactSection = (element: HTMLElement): string => nearestMapped(element, sectionNumbers())

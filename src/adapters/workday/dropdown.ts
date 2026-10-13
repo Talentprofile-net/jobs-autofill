@@ -6,15 +6,16 @@ import { getReactProps } from '~/core/reactProps'
 import { findUniqueOption, xpathLiteral } from '~/core/match'
 import { verifySelection } from '~/core/verify'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const SELECTION_SETTLE_MS = 150
 
 export class Dropdown extends WorkdayBaseInput {
-  static XPATH = xpaths.SIMPLE_DROPDOWN
-  override fieldType = 'SimpleDropdown'
+  static XPATH = specs.dropdown.xpath
+  override fieldType = specs.dropdown.fieldType
+  protected override readonly spec = specs.dropdown
 
   private get buttonElement(): HTMLElement | null {
     return getElement(this.element, './/button[@aria-haspopup="listbox"]')

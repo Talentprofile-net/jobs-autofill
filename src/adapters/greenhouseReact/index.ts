@@ -1,4 +1,3 @@
-import { getElement, getElements } from '~/core/getElements'
 import { TextInput } from './textInput'
 import { Textarea } from './textarea'
 import { NumberInput } from './numberInput'
@@ -9,14 +8,16 @@ import { CheckboxBoolean } from './checkboxBoolean'
 import { CheckboxMulti } from './checkboxMulti'
 import { File } from './file'
 import { Section } from './section'
-import { BaseField, isInsideRegistered, isVisible } from '~/field/baseField'
+import { BaseField, isInsideRegistered } from '~/field/baseField'
+import { walkAtsCandidates } from '~/field/describe/atsSpec'
+import { hasApplicationContainer, SPEC_ORDER } from './specs'
 
 type FieldClass = {
   XPATH: string
   new (el: HTMLElement): BaseField
 }
 
-const adapters: FieldClass[] = [
+export const ADAPTER_CLASSES: FieldClass[] = [
   TextInput,
   Textarea,
   NumberInput,
@@ -28,22 +29,9 @@ const adapters: FieldClass[] = [
   File,
 ]
 
-const discoverAdapter = (Ctor: FieldClass, root: ParentNode): void => {
-  const elements = getElements(root as Node, Ctor.XPATH)
-  for (const el of elements) {
-    if (isInsideRegistered(el) || !isVisible(el)) continue
-    const instance = new Ctor(el)
-    instance.init()
-  }
-}
-
 export const RegisterInputs = (node: Node = document): void => {
-  const applicationContainer = getElement(
-    document,
-    `.//div[contains(concat(' ', normalize-space(@class), ' '), ' application--container ')]`,
-  )
-  if (!applicationContainer) return
+  if (!hasApplicationContainer()) return
   Section.autoDiscover(node)
   const root = node instanceof Element || node instanceof DocumentFragment ? node : document
-  for (const Ctor of adapters) discoverAdapter(Ctor, root)
+  walkAtsCandidates(SPEC_ORDER, root, isInsideRegistered, (index, el) => new ADAPTER_CLASSES[index](el).init())
 }

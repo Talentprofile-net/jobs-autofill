@@ -3,12 +3,13 @@ import { getElement } from '~/core/getElements'
 import { fillReactTextInput } from '~/core/reactProps'
 import { writeVerifiedText } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 export class NumberInput extends GreenhouseReactBaseInput {
-  static XPATH = xpaths.NUMBER_INPUT
-  override fieldType = 'TextInput'
+  static XPATH = specs.numberInput.xpath
+  override fieldType = specs.numberInput.fieldType
+  protected override readonly spec = specs.numberInput
 
   get inputElement(): HTMLInputElement | null {
     return getElement(this.element, './/input') as HTMLInputElement | null

@@ -1,17 +1,24 @@
-import { getElement } from '~/core/getElements'
 import { BaseField } from '~/field/baseField'
+import type { AtsFieldSpec } from '~/field/describe/atsSpec'
 import type { WidgetPlacement } from '~/ui/picker/iconMount'
+import { reactSection } from './sectionNumbers'
 
 export abstract class GreenhouseReactBaseInput extends BaseField {
   protected override get widgetPlacement(): WidgetPlacement {
     return 'field'
   }
 
+  protected abstract readonly spec: AtsFieldSpec
+
+  override get fieldName(): string {
+    return this.spec.fieldName(this.element)
+  }
+
+  protected override canFill(): boolean {
+    return this.spec.fillable(this.element)
+  }
+
   override get section(): string {
-    const sectionEl = getElement(
-      this.element,
-      `ancestor::div[@jaf-section][1]`,
-    )
-    return sectionEl?.getAttribute('jaf-section') ?? ''
+    return reactSection(this.element)
   }
 }

@@ -3,16 +3,15 @@ import { CV_FIELD_TYPE } from '~/resolver/cvFile'
 import type { CaptureRecord } from '~/field/baseField'
 import type { ProfileValue } from '~/field/types'
 import { GenericBaseField } from './GenericBaseField'
-import { fileQuestionLabel, isDocumentQuestion } from './fileLabel'
+import { FILE_INPUT_SELECTOR, fileQuestionLabel, isDocumentFileInput } from './fileLabel'
 
 export class GenericFileInput extends GenericBaseField {
   override fieldType = CV_FIELD_TYPE
 
-  static SELECTOR = 'input[type="file"]'
+  static SELECTOR = FILE_INPUT_SELECTOR
 
   static qualifies(el: HTMLElement): boolean {
-    if (!(el instanceof HTMLInputElement) || el.disabled) return false
-    return hasDisplayedAncestor(el) && isDocumentQuestion(fileQuestionLabel(el))
+    return isDocumentFileInput(el)
   }
 
   get inputElement(): HTMLInputElement {

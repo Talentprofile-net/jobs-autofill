@@ -2,8 +2,9 @@ import { FIELD_MARKER_ATTR } from '~/config'
 import { PART_MARKER_ATTR } from '~/core/dateUtils'
 import { hasConcealingAncestor, isOffCanvas } from '~/core/concealment'
 import { querySelectorAllDeep, rootQueryScope } from '~/core/shadowDom'
-import { isVisible } from '~/field/baseField'
-import { blockText, containsField, resolveOptionLabel } from './labelResolver'
+import { isVisible } from '~/field/fieldVisibility'
+import { blockText, containsField, resolveLabel, resolveOptionLabel } from './labelResolver'
+import { groupHeading } from './groupLabel'
 import { activateControl } from '~/core/activate'
 
 export type ChoiceInput = HTMLInputElement
@@ -115,8 +116,7 @@ export const dropStalePart = (el: Element): void => {
 }
 
 export const claimParts = (anchor: ChoiceInput, uuid: string): void => {
-  for (const member of liveMembers(anchor)) {
-    if (member === anchor || member.hasAttribute(FIELD_MARKER_ATTR)) continue
+  for (const member of groupPartsOf(anchor, (el) => el.hasAttribute(FIELD_MARKER_ATTR))) {
     if (member.getAttribute(PART_MARKER_ATTR) !== uuid) member.setAttribute(PART_MARKER_ATTR, uuid)
   }
 }
@@ -131,3 +131,10 @@ export const isGroupPart = (el: Element): boolean => el.hasAttribute(PART_MARKER
 
 export const ownsMemberEvent = (anchor: ChoiceInput, target: Element): boolean =>
   liveMembers(anchor).some((member) => member === target || member.contains(target))
+
+export const groupFieldName = (anchor: ChoiceInput): string => groupHeading(liveMembers(anchor)) || resolveLabel(anchor)
+
+export const groupShown = (anchor: ChoiceInput): boolean => liveMembers(anchor).some(isOperableOption)
+
+export const groupPartsOf = (anchor: ChoiceInput, isMarked: (el: Element) => boolean): ChoiceInput[] =>
+  liveMembers(anchor).filter((member) => member !== anchor && !isMarked(member))

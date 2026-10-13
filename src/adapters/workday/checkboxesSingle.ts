@@ -4,22 +4,18 @@ import { scrollBack } from '~/core/scroll'
 import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { sleep } from '~/core/async'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
-import { fixedFieldName } from './fixedFieldName'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 80
 
 type Choice = { input: HTMLInputElement; label: string }
 
 export class CheckboxesSingle extends WorkdayBaseInput {
-  static XPATH = xpaths.MULTI_CHECKBOX
-  override fieldType = 'MultiCheckbox'
-
-  override get fieldName(): string {
-    return fixedFieldName(this.element) ?? super.fieldName
-  }
+  static XPATH = specs.checkboxesSingle.xpath
+  override fieldType = specs.checkboxesSingle.fieldType
+  protected override readonly spec = specs.checkboxesSingle
 
   private get choices(): Choice[] {
     const cells = getElements(this.element, ".//div[@role='cell']")

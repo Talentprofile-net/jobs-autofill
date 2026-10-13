@@ -1,23 +1,12 @@
 import { GenericBaseField } from './GenericBaseField'
+import { CONTENT_EDITABLE_SELECTOR, isContentEditableLike } from './dom'
 import type { PickerMode, ProfileValue } from '~/field/types'
 
-const SELECTOR =
-  '[contenteditable="true"], [contenteditable=""], [role="textbox"]'
-
-const TAG_BLACKLIST = new Set(['INPUT', 'TEXTAREA'])
-
-const isContentEditableLike = (el: HTMLElement): boolean => {
-  if (TAG_BLACKLIST.has(el.tagName)) return false
-  if (el.isContentEditable) return true
-  const role = el.getAttribute('role')
-  if (role === 'textbox') return true
-  return false
-}
 
 export class GenericContentEditable extends GenericBaseField {
   override fieldType = 'ContentEditable'
 
-  static SELECTOR = SELECTOR
+  static SELECTOR = CONTENT_EDITABLE_SELECTOR
 
   static qualifies(el: HTMLElement): boolean {
     return isContentEditableLike(el)

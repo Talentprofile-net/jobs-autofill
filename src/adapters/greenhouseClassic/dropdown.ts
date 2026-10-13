@@ -3,14 +3,15 @@ import { getElement, getElements } from '~/core/getElements'
 import { findUniqueOption, xpathLiteral } from '~/core/match'
 import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 const SELECTION_SETTLE_MS = 100
 
 export class Dropdown extends GreenhouseBaseInput {
-  static XPATH = xpaths.SIMPLE_DROPDOWN
-  override fieldType = 'SimpleDropdown'
+  static XPATH = specs.dropdown.xpath
+  override fieldType = specs.dropdown.fieldType
+  protected override readonly spec = specs.dropdown
 
   private get select2ContainerElement(): HTMLElement | null {
     return getElement(

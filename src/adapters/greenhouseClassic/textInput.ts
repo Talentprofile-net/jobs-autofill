@@ -3,14 +3,15 @@ import { getElement } from '~/core/getElements'
 import { setNativeInputValue } from '~/core/reactProps'
 import { writeVerifiedText } from '~/core/verify'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 100
 
 export class TextInput extends GreenhouseBaseInput {
-  static XPATH = xpaths.TEXT_FIELD
-  override fieldType = 'TextInput'
+  static XPATH = specs.textInput.xpath
+  override fieldType = specs.textInput.fieldType
+  protected override readonly spec = specs.textInput
 
   get inputElement(): HTMLInputElement | null {
     return getElement(this.element, ".//input[@type='text']") as HTMLInputElement | null

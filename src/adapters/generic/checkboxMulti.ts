@@ -3,8 +3,7 @@ import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
 import { resolveOptionLabel } from './labelResolver'
-import { groupHeading } from './groupLabel'
-import { activateOption, claimParts, formOwner, isOperableOption, liveMembers, ownsMemberEvent, releaseParts } from './groupParts'
+import { activateOption, claimParts, formOwner, groupFieldName, groupShown, liveMembers, ownsMemberEvent, releaseParts } from './groupParts'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 100
@@ -50,11 +49,11 @@ export class GenericCheckboxMulti extends GenericBaseField {
   }
 
   override isDisplayed(): boolean {
-    return this.inputs.some(isOperableOption)
+    return groupShown(this.element as HTMLInputElement)
   }
 
   override get fieldName(): string {
-    return groupHeading(this.inputs) || super.fieldName
+    return groupFieldName(this.element as HTMLInputElement)
   }
 
   private get choices(): Choice[] {

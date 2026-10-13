@@ -1,14 +1,11 @@
 import { WorkdayBaseInput } from './WorkdayBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 export class Password extends WorkdayBaseInput {
-  static XPATH = xpaths.PASSWORD_INPUT
-  override fieldType = 'PasswordInput'
-
-  protected override canFill(): boolean {
-    return false
-  }
+  static XPATH = specs.password.xpath
+  override fieldType = specs.password.fieldType
+  protected override readonly spec = specs.password
 
   currentValue(): string {
     return ''

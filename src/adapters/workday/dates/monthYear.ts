@@ -5,15 +5,16 @@ import { isValidMonth, isValidYear } from '~/core/dateValidation'
 import { widthFor } from '~/core/dateUtils'
 import { sleep } from '~/core/async'
 import { WorkdayBaseInput } from '../WorkdayBaseInput'
-import { xpaths } from '../xpaths'
 import { fillDatePart } from './utils'
 import type { ProfileValue } from '~/field/types'
+import { specs } from '../specs'
 
 const VERIFY_SETTLE_MS = 100
 
 export class MonthYear extends WorkdayBaseInput {
-  static XPATH = xpaths.MONTH_YEAR
-  override fieldType = 'MonthYear'
+  static XPATH = specs.monthYear.xpath
+  override fieldType = specs.monthYear.fieldType
+  protected override readonly spec = specs.monthYear
 
   private get monthInputElement(): HTMLInputElement | null {
     return getElement(this.element, ".//input[@aria-label='Month']") as HTMLInputElement | null

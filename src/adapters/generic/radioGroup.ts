@@ -3,8 +3,7 @@ import { findUniqueOption } from '~/core/match'
 import { sleep } from '~/core/async'
 import { GenericBaseField } from './GenericBaseField'
 import { resolveOptionLabel } from './labelResolver'
-import { groupHeading } from './groupLabel'
-import { activateOption, claimParts, formOwner, isOperableOption, liveMembers, ownsMemberEvent, releaseParts } from './groupParts'
+import { activateOption, claimParts, formOwner, groupFieldName, groupShown, liveMembers, ownsMemberEvent, releaseParts } from './groupParts'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 100
@@ -42,11 +41,11 @@ export class GenericRadioGroup extends GenericBaseField {
   }
 
   override isDisplayed(): boolean {
-    return this.radios.some(isOperableOption)
+    return groupShown(this.element as HTMLInputElement)
   }
 
   override get fieldName(): string {
-    return groupHeading(this.radios) || super.fieldName
+    return groupFieldName(this.element as HTMLInputElement)
   }
 
   currentValue(): string {

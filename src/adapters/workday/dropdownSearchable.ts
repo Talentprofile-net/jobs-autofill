@@ -6,9 +6,9 @@ import { getReactProps, setNativeInputValue } from '~/core/reactProps'
 import { findUniqueOption, optionMatches, xpathLiteral } from '~/core/match'
 import { createKeyboardEvent } from '~/core/events'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const PRE_FILL_SETTLE_MS = 200
 const DROPDOWN_WAIT_MS = 1000
@@ -16,8 +16,9 @@ const SELECTION_SETTLE_MS = 100
 const CLOSE_SETTLE_MS = 80
 
 export class DropdownSearchable extends WorkdayBaseInput {
-  static XPATH = xpaths.SEARCHABLE_SINGLE_DROPDOWN
-  override fieldType = 'SimpleDropdown'
+  static XPATH = specs.dropdownSearchable.xpath
+  override fieldType = specs.dropdownSearchable.fieldType
+  protected override readonly spec = specs.dropdownSearchable
 
   private get inputElement(): HTMLInputElement | null {
     return getElement(this.element, './/input') as HTMLInputElement | null

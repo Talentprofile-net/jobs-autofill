@@ -8,33 +8,16 @@ import {
 import { isPlaceholderText } from '~/core/match'
 import type { PickerMode, ProfileValue, FillOutcome } from './types'
 import { mountPickerIcon, type WidgetPlacement } from '~/ui/picker/iconMount'
-import { composedParent, isAttached } from '~/core/shadowDom'
+import { isAttached } from '~/core/shadowDom'
+import { domClaims } from './claims'
+import { isVisible } from './fieldVisibility'
 import { UnsupportedFillError } from './unsupportedFill'
 
-export const isRegistered = (el: HTMLElement): boolean =>
-  el.hasAttribute(FIELD_MARKER_ATTR)
+export { isVisible } from './fieldVisibility'
 
-export const isInsideRegistered = (el: HTMLElement): boolean => {
-  for (let node: Node | null = el; node; node = composedParent(node)) {
-    if (node instanceof Element && node.hasAttribute(FIELD_MARKER_ATTR)) return true
-  }
-  return false
-}
+export const isRegistered = (el: HTMLElement): boolean => domClaims.isMarked(el)
 
-export const isVisible = (el: HTMLElement): boolean => {
-  if (typeof (el as any).checkVisibility === 'function') {
-    return (el as any).checkVisibility({
-      visibilityProperty: true,
-      opacityProperty: true,
-    })
-  }
-  const rect = el.getBoundingClientRect()
-  if (rect.height <= 0 || rect.width <= 0) return false
-  const style = window.getComputedStyle(el)
-  if (style.visibility === 'hidden' || style.display === 'none') return false
-  if (parseFloat(style.opacity || '1') === 0) return false
-  return true
-}
+export const isInsideRegistered = (el: HTMLElement): boolean => domClaims.isInside(el)
 
 const normalize = (s: string): string =>
   s.replace(/\s+/g, ' ').trim().toLowerCase()

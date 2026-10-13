@@ -1,14 +1,9 @@
-import { FIELD_MARKER_ATTR } from '~/config'
-import { fieldByUuid } from '~/field/registry'
-import { isInsideRegistered } from '~/field/baseField'
+import type { Claims } from '~/field/claims'
 import { querySelectorAllDeep } from '~/core/shadowDom'
 import {
-  claimParts,
-  dropStalePart,
   explicitGroup,
   groupKeyOf,
   isEligibleOption,
-  isGroupPart,
   sameKeyOptions,
   type ChoiceInput,
 } from './groupParts'
@@ -17,34 +12,34 @@ export type ChoiceGroup = {
   anchor: ChoiceInput
 }
 
-type Discovery = { singles: ChoiceInput[]; groups: ChoiceGroup[] }
+export type Discovery = { singles: ChoiceInput[]; groups: ChoiceGroup[] }
 
-const ownedByOtherField = (el: ChoiceInput): boolean =>
-  !el.hasAttribute(FIELD_MARKER_ATTR) && !isGroupPart(el) && isInsideRegistered(el)
+export type GroupHooks = {
+  dropStalePart: (el: ChoiceInput) => void
+  adoptRegistered: (anchor: ChoiceInput, seed: ChoiceInput, eligible: ChoiceInput[], out: Discovery) => void
+}
 
-const registeredAnchor = (options: ChoiceInput[]): ChoiceInput | null =>
-  options.find((o) => o.hasAttribute(FIELD_MARKER_ATTR) && o.isConnected) ?? null
+export const pureGroupHooks: GroupHooks = {
+  adoptRegistered: () => {},
+  dropStalePart: () => {},
+}
 
-const reconcile = (seed: ChoiceInput, out: Discovery): void => {
+const ownedByOtherField = (el: ChoiceInput, claims: Claims): boolean =>
+  !claims.isMarked(el) && !claims.isPart(el) && claims.isInside(el)
+
+const registeredAnchor = (options: ChoiceInput[], claims: Claims): ChoiceInput | null =>
+  options.find((o) => claims.isMarked(o) && o.isConnected) ?? null
+
+const reconcile = (seed: ChoiceInput, out: Discovery, claims: Claims, hooks: GroupHooks): void => {
   const options = sameKeyOptions(seed)
-  for (const option of options) dropStalePart(option)
-  const eligible = options.filter((o) => isEligibleOption(o) && !ownedByOtherField(o))
-  const anchor = registeredAnchor(options)
+  for (const option of options) hooks.dropStalePart(option)
+  const eligible = options.filter((o) => isEligibleOption(o) && !ownedByOtherField(o, claims))
+  const anchor = registeredAnchor(options, claims)
   if (anchor) {
-    const uuid = anchor.getAttribute(FIELD_MARKER_ATTR)!
-    const field = fieldByUuid(uuid)
-    const isGroupField = field?.fieldType === 'MultiCheckbox' || field?.fieldType === 'RadioGroup'
-    if (isGroupField) {
-      claimParts(anchor, uuid)
-      return
-    }
-    if (field && seed.type === 'checkbox' && eligible.length > 1) {
-      field.destroy()
-      out.groups.push({ anchor: eligible[0] })
-    }
+    hooks.adoptRegistered(anchor, seed, eligible, out)
     return
   }
-  const free = eligible.filter((o) => !isGroupPart(o))
+  const free = eligible.filter((o) => !claims.isPart(o))
   if (free.length > 1) {
     out.groups.push({ anchor: free[0] })
   } else if (free.length === 1 && seed.type === 'checkbox') {
@@ -52,33 +47,33 @@ const reconcile = (seed: ChoiceInput, out: Discovery): void => {
   }
 }
 
-const discoverNamed = (root: ParentNode, type: 'checkbox' | 'radio', out: Discovery): void => {
+const discoverNamed = (root: ParentNode, type: 'checkbox' | 'radio', out: Discovery, claims: Claims, hooks: GroupHooks): void => {
   const seen = new Set<string>()
   for (const option of querySelectorAllDeep<ChoiceInput>(root as Node, `input[type="${type}"]`)) {
     if (!option.name) continue
-    dropStalePart(option)
-    if (!isEligibleOption(option) || ownedByOtherField(option)) continue
+    hooks.dropStalePart(option)
+    if (!isEligibleOption(option) || ownedByOtherField(option, claims)) continue
     const key = groupKeyOf(option)
     if (seen.has(key)) continue
     seen.add(key)
-    reconcile(option, out)
+    reconcile(option, out, claims, hooks)
   }
 }
 
-export const discoverRadioGroups = (root: ParentNode): ChoiceGroup[] => {
+export const discoverRadioGroups = (root: ParentNode, claims: Claims, hooks: GroupHooks): ChoiceGroup[] => {
   const out: Discovery = { groups: [], singles: [] }
-  discoverNamed(root, 'radio', out)
+  discoverNamed(root, 'radio', out, claims, hooks)
   return out.groups
 }
 
-export const discoverCheckboxGroups = (root: ParentNode): Discovery => {
+export const discoverCheckboxGroups = (root: ParentNode, claims: Claims, hooks: GroupHooks): Discovery => {
   const out: Discovery = { groups: [], singles: [] }
-  discoverNamed(root, 'checkbox', out)
+  discoverNamed(root, 'checkbox', out, claims, hooks)
   const unnamedByContainer = new Map<HTMLElement, ChoiceInput[]>()
   for (const cb of querySelectorAllDeep<ChoiceInput>(root as Node, 'input[type="checkbox"]')) {
     if (cb.name) continue
-    dropStalePart(cb)
-    if (isInsideRegistered(cb) || isGroupPart(cb) || !isEligibleOption(cb)) continue
+    hooks.dropStalePart(cb)
+    if (claims.isInside(cb) || claims.isPart(cb) || !isEligibleOption(cb)) continue
     const container = explicitGroup(cb)
     if (!container) {
       out.singles.push(cb)

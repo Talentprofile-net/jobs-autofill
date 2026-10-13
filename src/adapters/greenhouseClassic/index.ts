@@ -10,15 +10,16 @@ import { MonthYear } from './monthYear'
 import { AddressSearchable } from './addressSearchable'
 import { File } from './file'
 import { Sections } from './sections'
-import { BaseField, isRegistered, isVisible } from '~/field/baseField'
-import { getElements } from '~/core/getElements'
+import { BaseField, isRegistered } from '~/field/baseField'
+import { walkAtsCandidates } from '~/field/describe/atsSpec'
+import { SPEC_ORDER } from './specs'
 
 type FieldClass = {
   XPATH: string
   new (el: HTMLElement): BaseField
 }
 
-const adapters: FieldClass[] = [
+export const ADAPTER_CLASSES: FieldClass[] = [
   TextInput,
   Textarea,
   Select,
@@ -32,16 +33,7 @@ const adapters: FieldClass[] = [
   File,
 ]
 
-const discoverAdapter = (Ctor: FieldClass, node: Node): void => {
-  const elements = getElements(node, Ctor.XPATH)
-  for (const el of elements) {
-    if (isRegistered(el) || !isVisible(el)) continue
-    const instance = new Ctor(el)
-    instance.init()
-  }
-}
-
 export const RegisterInputs = (node: Node = document): void => {
   Sections.autoDiscover(node)
-  for (const Ctor of adapters) discoverAdapter(Ctor, node)
+  walkAtsCandidates(SPEC_ORDER, node, isRegistered, (index, el) => new ADAPTER_CLASSES[index](el).init())
 }

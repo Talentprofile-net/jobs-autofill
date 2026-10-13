@@ -5,19 +5,10 @@ import { fillTypeahead, typeaheadScope } from '~/core/typeahead'
 import { UnsupportedFillError } from '~/field/unsupportedFill'
 import { isDialCodeValue } from '~/core/match'
 import { GenericBaseField } from './GenericBaseField'
+import { TEXT_INPUT_SELECTOR } from './dom'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 150
-
-const TEXT_INPUT_SELECTOR = [
-  "input[type='text']",
-  "input[type='email']",
-  "input[type='tel']",
-  "input[type='url']",
-  "input[type='number']",
-  "input[type='search']",
-  'input:not([type])',
-].join(', ')
 
 export class GenericTextInput extends GenericBaseField {
   override fieldType = 'TextInput'

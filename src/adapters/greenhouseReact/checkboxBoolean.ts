@@ -2,19 +2,16 @@ import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement } from '~/core/getElements'
 import { sleep } from '~/core/async'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
-import { xpaths } from './xpaths'
 import { CheckboxWrapperContainer } from './checkboxWrapper'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 80
 
 export class CheckboxBoolean extends GreenhouseReactBaseInput {
-  static XPATH = xpaths.CHECKBOX_BOOLEAN
-  override fieldType = 'SingleCheckbox'
-
-  override get labelElement(): HTMLElement | null {
-    return getElement(this.element, `.//legend`)
-  }
+  static XPATH = specs.checkboxBoolean.xpath
+  override fieldType = specs.checkboxBoolean.fieldType
+  protected override readonly spec = specs.checkboxBoolean
 
   private get checkbox(): CheckboxWrapperContainer | null {
     const el = getElement(this.element, `.//div[@class="checkbox__wrapper"]`)

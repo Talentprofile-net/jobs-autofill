@@ -4,9 +4,7 @@ import { padToWidth } from '~/core/padToWidth'
 import { isValidDay, isValidMonth, isValidYear } from '~/core/dateValidation'
 import { PART_MARKER_ATTR, widthFor } from '~/core/dateUtils'
 import { GenericBaseField } from './GenericBaseField'
-import { resolveLabel } from './labelResolver'
-import { groupLabelWithContainerFallback } from './groupLabel'
-import type { DatePart } from './dateGroups'
+import { dateGroupFieldName, dateGroupFieldType, datePartsOf, type DatePart } from './dateGroups'
 import type { ProfileValue } from '~/field/types'
 
 const VERIFY_SETTLE_MS = 100
@@ -50,14 +48,8 @@ export class GenericDateGroup extends GenericBaseField {
     this.parts = parts
     this.container = container
     this.hasDay = parts.day !== null
-    if (!this.hasDay) {
-      this.fieldType = 'MonthYear'
-    }
-    for (const part of [parts.month, parts.day, parts.year]) {
-      if (part && part !== anchor) {
-        part.setAttribute(PART_MARKER_ATTR, this.uuid)
-      }
-    }
+    this.fieldType = dateGroupFieldType({ parts })
+    for (const part of datePartsOf({ anchor, parts })) part.setAttribute(PART_MARKER_ATTR, this.uuid)
   }
 
   override destroy(): void {
@@ -70,9 +62,7 @@ export class GenericDateGroup extends GenericBaseField {
   }
 
   override get fieldName(): string {
-    const containerLabel = resolveLabel(this.container)
-    if (containerLabel) return containerLabel
-    return groupLabelWithContainerFallback(this.element as HTMLInputElement)
+    return dateGroupFieldName({ anchor: this.element as HTMLInputElement, container: this.container })
   }
 
   currentValue(): string[] {

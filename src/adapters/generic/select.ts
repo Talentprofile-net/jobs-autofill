@@ -7,6 +7,7 @@ const SELECT_SETTLE_MS = 300
 const SELECT_POLL_MS = 25
 import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { GenericBaseField } from './GenericBaseField'
+import { selectFieldType } from './plan'
 import type { ProfileValue } from '~/field/types'
 
 export class GenericSelect extends GenericBaseField {
@@ -16,10 +17,8 @@ export class GenericSelect extends GenericBaseField {
 
   constructor(element: HTMLElement) {
     super(element)
-    if ((element as HTMLSelectElement).multiple) {
-      this.fieldType = 'MultiSelect'
-      this.destructiveByDefault = false
-    }
+    this.fieldType = selectFieldType(element)
+    if (this.fieldType === 'MultiSelect') this.destructiveByDefault = false
   }
 
   get selectElement(): HTMLSelectElement {

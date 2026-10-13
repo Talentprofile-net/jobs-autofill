@@ -1,13 +1,14 @@
 import fieldFillerQueue from '~/core/asyncQueue'
-import { getElement, getElements } from '~/core/getElements'
+import { getElement } from '~/core/getElements'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 export class Select extends GreenhouseBaseInput {
-  static XPATH = xpaths.BASIC_SELECT
-  override fieldType = 'SimpleDropdown'
+  static XPATH = specs.select.xpath
+  override fieldType = specs.select.fieldType
+  protected override readonly spec = specs.select
 
   get selectElement(): HTMLSelectElement | null {
     return getElement(this.element, './/select') as HTMLSelectElement | null

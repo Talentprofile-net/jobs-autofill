@@ -4,9 +4,9 @@ import { createKeyboardEvent } from '~/core/events'
 import { findUniqueOption, optionMatches, optionMatchesRelaxed } from '~/core/match'
 import { sleep } from '~/core/async'
 import { GreenhouseBaseInput } from './GreenhouseBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 const CHIP_SETTLE_MS = 80
 
@@ -30,8 +30,9 @@ const chipRemoveLink = (chip: HTMLElement): HTMLElement | null =>
   getElement(chip, ".//a[contains(@class, 'select2-search-choice-close')]")
 
 export class DropdownMulti extends GreenhouseBaseInput {
-  static XPATH = xpaths.DROPDOWN_MULTI
-  override fieldType = 'MultiSearchableDropdown'
+  static XPATH = specs.dropdownMulti.xpath
+  override fieldType = specs.dropdownMulti.fieldType
+  protected override readonly spec = specs.dropdownMulti
 
   private get select2Container(): HTMLElement | null {
     return getElement(

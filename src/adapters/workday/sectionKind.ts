@@ -78,6 +78,19 @@ export const indexSectionContainers = (classify: (container: HTMLElement) => Sec
   return byKind
 }
 
+export const sectionWith = (
+  el: HTMLElement,
+  classify: (container: HTMLElement) => SectionKind,
+  indexOf: (container: HTMLElement, kind: SectionKind) => number | null,
+): string => {
+  const container = findSectionContainer(el)
+  if (!container || countFormFields(container) < MIN_FIELDS_FOR_SECTION) return ''
+  const kind = classify(container)
+  if (kind === 'other') return ''
+  const index = indexOf(container, kind)
+  return index === null ? '' : `${kind} ${index + 1}`
+}
+
 export const createSectionReader = (): ((el: HTMLElement) => string) => {
   const kinds = new WeakMap<HTMLElement, SectionKind>()
   const classify = (container: HTMLElement): SectionKind => {
@@ -88,13 +101,10 @@ export const createSectionReader = (): ((el: HTMLElement) => string) => {
     return kind
   }
   let peers: Map<SectionKind, HTMLElement[]> | null = null
-  return (el) => {
-    const container = findSectionContainer(el)
-    if (!container || countFormFields(container) < MIN_FIELDS_FOR_SECTION) return ''
-    const kind = classify(container)
-    if (kind === 'other') return ''
+  const indexOf = (container: HTMLElement, kind: SectionKind): number | null => {
     peers ??= indexSectionContainers(classify)
     const index = peers.get(kind)?.indexOf(container) ?? -1
-    return index < 0 ? '' : `${kind} ${index + 1}`
+    return index < 0 ? null : index
   }
+  return (el) => sectionWith(el, classify, indexOf)
 }

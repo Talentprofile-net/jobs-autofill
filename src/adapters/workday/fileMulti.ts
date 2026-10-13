@@ -1,15 +1,12 @@
 import { getElement, getElements } from '~/core/getElements'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 export class FileMulti extends WorkdayBaseInput {
-  static XPATH = xpaths.MULTI_FILE_UPLOAD
-  override fieldType = 'MultiFileUpload'
-
-  protected override canFill(): boolean {
-    return false
-  }
+  static XPATH = specs.fileMulti.xpath
+  override fieldType = specs.fileMulti.fieldType
+  protected override readonly spec = specs.fileMulti
 
   private get uploadedFileElements(): HTMLElement[] {
     return getElements(

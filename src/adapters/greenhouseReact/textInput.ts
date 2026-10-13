@@ -5,10 +5,12 @@ import { writeVerifiedText } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
 import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 export class TextInput extends GreenhouseReactBaseInput {
-  static XPATH = xpaths.TEXT_INPUT
-  override fieldType = 'TextInput'
+  static XPATH = specs.textInput.xpath
+  override fieldType = specs.textInput.fieldType
+  protected override readonly spec = specs.textInput
 
   get inputElement(): HTMLInputElement | null {
     return getElement(this.element, xpaths.TEXT_LIKE_INPUT) as HTMLInputElement | null

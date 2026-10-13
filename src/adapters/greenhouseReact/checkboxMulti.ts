@@ -1,24 +1,18 @@
 import fieldFillerQueue from '~/core/asyncQueue'
-import { getElement, getElements } from '~/core/getElements'
+import { getElements } from '~/core/getElements'
 import { planSelection, verifySelectedSet } from '~/core/multiChoiceSelection'
 import { sleep } from '~/core/async'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
-import { xpaths } from './xpaths'
 import { CheckboxWrapperContainer } from './checkboxWrapper'
 import type { ProfileValue } from '~/field/types'
+import { specs } from './specs'
 
 const VERIFY_SETTLE_MS = 80
 
 export class CheckboxMulti extends GreenhouseReactBaseInput {
-  static XPATH = xpaths.CHECKBOX_MULTI
-  override fieldType = 'MultiCheckbox'
-
-  override get labelElement(): HTMLElement | null {
-    return getElement(
-      this.element,
-      `.//legend[starts-with(@class, "label")]`,
-    )
-  }
+  static XPATH = specs.checkboxMulti.xpath
+  override fieldType = specs.checkboxMulti.fieldType
+  protected override readonly spec = specs.checkboxMulti
 
   private get choiceElements(): CheckboxWrapperContainer[] {
     return getElements(

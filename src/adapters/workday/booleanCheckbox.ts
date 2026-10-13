@@ -1,13 +1,14 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { getElement, waitForElement } from '~/core/getElements'
 import { WorkdayBaseInput } from './WorkdayBaseInput'
-import { xpaths } from './xpaths'
 import type { ProfileValue } from '~/field/types'
 import { activateControl } from '~/core/activate'
+import { specs } from './specs'
 
 export class BooleanCheckbox extends WorkdayBaseInput {
-  static XPATH = xpaths.SINGLE_CHECKBOX
-  override fieldType = 'SingleCheckbox'
+  static XPATH = specs.booleanCheckbox.xpath
+  override fieldType = specs.booleanCheckbox.fieldType
+  protected override readonly spec = specs.booleanCheckbox
 
   private get checkboxElement(): HTMLInputElement | null {
     return getElement(this.element, ".//input[@type='checkbox']") as HTMLInputElement | null

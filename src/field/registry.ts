@@ -14,7 +14,7 @@ import {
   sendFieldDescriptor,
 } from '~/bridge/mainBridge'
 import { detectAts as detectAtsHost } from '~/core/ats'
-import { getElement } from '~/core/getElements'
+import { detectFormContainer } from './formContainer'
 import {
   composedContains,
   createShadowRootObserver,
@@ -54,28 +54,7 @@ let currentMode: ResolvedOriginMode = 'notesOnly'
 
 export const getCurrentMode = (): ResolvedOriginMode => currentMode
 
-const FORM_CONTAINER_XPATHS: Record<Exclude<AtsName, 'generic'>, string> = {
-  greenhouseClassic: ".//form[@id='application_form'] | .//div[@id='application']",
-  greenhouseReact:
-    ".//div[contains(concat(' ', normalize-space(@class), ' '), ' application--container ')]",
-  workday:
-    ".//div[@data-automation-id='applicationPage' or @data-automation-id='jobApplyPage' or @role='main']",
-}
-
-const GENERIC_FORM_CONTAINER_XPATH = ".//form | .//div[@role='form']"
-
-export const detectFormContainer = (): HTMLElement => {
-  const ats = detectAts()
-  if (ats !== 'generic') {
-    const xpath = FORM_CONTAINER_XPATHS[ats]
-    const container = getElement(document, xpath)
-    if (container) return container
-  } else {
-    const container = getElement(document, GENERIC_FORM_CONTAINER_XPATH)
-    if (container) return container
-  }
-  return document.documentElement
-}
+export { detectFormContainer }
 
 export const discoverAll = (node: Node = detectFormContainer()): void => {
   const ats = detectAts()

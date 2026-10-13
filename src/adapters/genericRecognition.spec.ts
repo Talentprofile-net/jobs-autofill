@@ -1252,18 +1252,40 @@ describe('Lever demographic survey location select', () => {
   })
 })
 
-const { claimBoundFields, snapshotFieldAllowlist } = await import('~/bridge/fieldBinding')
+const { claimBoundFields, createServedFields, snapshotFieldAllowlist } = await import('~/bridge/fieldBinding')
+const { describeFields } = await import('~/field/describe/describeFields')
+const { shimXPath } = await import('~/core/__fixtures__/domGlobals')
+const { detectFormContainer } = await import('~/field/formContainer')
 
-describe('confirmed fill allowlist over the recognized fixture forms', () => {
-  it('binds every registered field descriptor that has a name, exactly as the adapter reports it', () => {
-    for (const html of [ASHBY, ASHBY_LOCATION, BUNQ, FILES, LEVER, WORKABLE]) {
+describe('content-owned field descriptions over the recognized fixture forms', () => {
+  const FIXTURES = { ASHBY, ASHBY_LOCATION, BUNQ, FILES, LEVER, WORKABLE }
+
+  it('describes exactly the fields the adapters register, with the same name, type, section and visibility', () => {
+    for (const [name, html] of Object.entries(FIXTURES)) {
       mount(html)
-      RegisterInputs(document)
+      shimXPath()
+      RegisterInputs(detectFormContainer('generic'))
+      const order = Array.from(document.querySelectorAll('*'))
+      const row = (d: { element: Element; fieldName: string; fieldType: string; fillable: boolean; section: string; visible: boolean }) =>
+        `${order.indexOf(d.element)}|${d.fieldName}|${d.fieldType}|${d.section}|${d.visible}|${d.fillable}`
+      const registered = allFields()
+        .map((f) => row({ element: f.element, fieldName: f.fieldName, fieldType: f.fieldType, fillable: f.isFillable(), section: f.section, visible: f.isDisplayed() }))
+        .sort()
+      const described = describeFields('generic').map(row).sort()
+      expect({ described, name }).toEqual({ described: registered, name })
+    }
+  })
+
+  it('binds every registered field descriptor that has a name, exactly as the adapter reports it', () => {
+    for (const html of Object.values(FIXTURES)) {
+      mount(html)
+      shimXPath()
+      RegisterInputs(detectFormContainer('generic'))
       const allowlist = snapshotFieldAllowlist('generic')
       const asks = allFields()
-        .filter((field) => field.fieldName.trim() !== '')
+        .filter((field) => field.fieldName.trim() !== '' && field.isFillable() && field.isDisplayed())
         .map((field) => ({ fieldName: field.fieldName, fieldType: field.fieldType, requestId: field.uuid, section: field.section }))
-      const bound = claimBoundFields(asks, allowlist, new Set())
+      const bound = claimBoundFields(asks, allowlist, snapshotFieldAllowlist('generic'), createServedFields())
       expect(asks.length).toBeGreaterThan(0)
       expect(asks.filter((_, i) => bound[i] === null)).toEqual([])
     }

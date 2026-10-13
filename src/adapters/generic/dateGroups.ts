@@ -1,4 +1,7 @@
-import { isInsideRegistered, isVisible } from '~/field/baseField'
+import { domClaims, type Claims } from '~/field/claims'
+import { isVisible } from '~/field/fieldVisibility'
+import { groupLabelWithContainerFallback } from './groupLabel'
+import { resolveLabel } from './labelResolver'
 import { isConcealedControl } from '~/core/concealment'
 import { querySelectorAllDeep } from '~/core/shadowDom'
 
@@ -156,14 +159,14 @@ const buildGroupsFromCandidates = (
   return groups
 }
 
-export const discoverDateGroups = (root: ParentNode): DateGroup[] => {
+export const discoverDateGroups = (root: ParentNode, claims: Claims = domClaims): DateGroup[] => {
   const candidateInputs = Array.from(
     querySelectorAllDeep<HTMLInputElement>(
       root,
       'input[type="text"], input[type="number"], input:not([type])',
     ),
   ).filter((el) => {
-    if (isInsideRegistered(el)) return false
+    if (claims.isInside(el)) return false
     if (!isVisible(el)) return false
     if (isConcealedControl(el)) return false
     if (el.hasAttribute('disabled')) return false
@@ -215,3 +218,10 @@ export const discoverDateGroups = (root: ParentNode): DateGroup[] => {
 
   return allGroups
 }
+export const dateGroupFieldType = (group: Pick<DateGroup, 'parts'>): string => (group.parts.day === null ? 'MonthYear' : 'MonthDayYear')
+
+export const dateGroupFieldName = (group: Pick<DateGroup, 'anchor' | 'container'>): string =>
+  resolveLabel(group.container) || groupLabelWithContainerFallback(group.anchor)
+
+export const datePartsOf = (group: Pick<DateGroup, 'anchor' | 'parts'>): HTMLInputElement[] =>
+  [group.parts.month, group.parts.day, group.parts.year].filter((part): part is HTMLInputElement => part !== null && part !== group.anchor)

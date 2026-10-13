@@ -6,6 +6,7 @@ import { setNativeInputValue } from '~/core/reactProps'
 import { createKeyboardEvent } from '~/core/events'
 import { sleep } from '~/core/verify'
 import { GenericBaseField } from './GenericBaseField'
+import { COMBOBOX_SELECTOR, comboboxQualifies } from './dom'
 import type { ProfileValue } from '~/field/types'
 import { getElementByIdInScope, querySelectorDeep, rootQueryScope } from '~/core/shadowDom'
 import { activateControl } from '~/core/activate'
@@ -169,8 +170,6 @@ const findInternalInput = (combobox: HTMLElement): HTMLInputElement | null => {
   return querySelectorDeep<HTMLInputElement>(combobox, 'input')
 }
 
-const isSelectOnly = (el: HTMLElement): boolean =>
-  el.getAttribute('aria-haspopup') === 'listbox' || el.hasAttribute('aria-controls') || el.hasAttribute('aria-owns')
 
 const isDialCodeListbox = (options: HTMLElement[]): boolean =>
   isDialCodeOptionSet(
@@ -201,14 +200,10 @@ const readCommittedValue = (combobox: HTMLElement): string => {
 export class GenericCombobox extends GenericBaseField {
   override fieldType = 'SimpleDropdown'
 
-  static SELECTOR = '[role="combobox"]'
+  static SELECTOR = COMBOBOX_SELECTOR
 
   static qualifies(el: HTMLElement): boolean {
-    if (el.getAttribute('aria-disabled') === 'true') return false
-    if (el.hasAttribute('disabled')) return false
-    if (el.getAttribute('aria-readonly') === 'true') return false
-    if (el.hasAttribute('readonly') && !isSelectOnly(el)) return false
-    return true
+    return comboboxQualifies(el)
   }
 
   currentValue(): string {

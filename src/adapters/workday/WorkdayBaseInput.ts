@@ -1,12 +1,11 @@
 import { getElement } from '~/core/getElements'
 import { BaseField } from '~/field/baseField'
+import type { AtsFieldSpec } from '~/field/describe/atsSpec'
 import type { WidgetPlacement } from '~/ui/picker/iconMount'
 import {
   classifyFresh,
-  countFormFields,
-  findSectionContainer,
   indexSectionContainers,
-  MIN_FIELDS_FOR_SECTION,
+  sectionWith,
   type SectionKind,
 } from './sectionKind'
 
@@ -106,19 +105,18 @@ export abstract class WorkdayBaseInput extends BaseField {
     return 'field'
   }
 
-  private get sectionContainer(): HTMLElement | null {
-    return findSectionContainer(this.element)
+  protected abstract readonly spec: AtsFieldSpec
+
+  override get fieldName(): string {
+    return this.spec.fieldName(this.element)
+  }
+
+  protected override canFill(): boolean {
+    return this.spec.fillable(this.element)
   }
 
   override get section(): string {
     ensureSectionObserver()
-    const container = this.sectionContainer
-    if (!container) return ''
-    if (countFormFields(container) < MIN_FIELDS_FOR_SECTION) return ''
-    const kind = classifyContainer(container)
-    if (kind === 'other') return ''
-    const index = indexAmongPeers(container, kind)
-    if (index === null) return ''
-    return `${kind} ${index + 1}`
+    return sectionWith(this.element, classifyContainer, indexAmongPeers)
   }
 }
