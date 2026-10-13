@@ -143,15 +143,47 @@ export const isDialCodeOptionSet = (texts: string[], dialAttrs = 0): boolean => 
 
 export const isDialCodeValue = (value: string): boolean => DIAL_CODE_ONLY.test(value.trim())
 
+const dialCodeHits = <T>(
+  options: T[],
+  getText: (option: T) => string,
+  code: string,
+  getDialAttr: (option: T) => string | null,
+): T[] => {
+  if (!isDialCodeValue(code)) return []
+  const digits = code.trim().slice(1)
+  const token = new RegExp(`(^|[\\s(])\\+${digits}(?!\\d)`)
+  return options.filter((o) => getDialAttr(o) === digits || token.test(getText(o)))
+}
+
 export const findUniqueDialCodeOption = <T>(
   options: T[],
   getText: (option: T) => string,
   code: string,
   getDialAttr: (option: T) => string | null = () => null,
 ): T | null => {
-  if (!isDialCodeValue(code)) return null
-  const digits = code.trim().slice(1)
-  const token = new RegExp(`(^|[\\s(])\\+${digits}(?!\\d)`)
-  const hits = options.filter((o) => getDialAttr(o) === digits || token.test(getText(o)))
+  const hits = dialCodeHits(options, getText, code, getDialAttr)
   return hits.length === 1 ? hits[0] : null
+}
+
+const DIAL_CODE_TOKEN = /\(?\s*\+\d{1,4}\s*\)?/g
+
+export const withoutDialCode = (text: string): string => text.replace(DIAL_CODE_TOKEN, ' ').replace(/\s+/g, ' ').trim()
+
+export const findDialSelectorOption = <T>(
+  options: T[],
+  getText: (option: T) => string,
+  candidates: string[],
+  getDialAttr: (option: T) => string | null = () => null,
+): T | null => {
+  const names = candidates.filter((candidate) => !isDialCodeValue(candidate))
+  const byName = (pool: T[]): T | null =>
+    names.map((name) => findUniqueOption(pool, (o) => withoutDialCode(getText(o)), name)).find((hit) => hit !== null) ?? null
+  const dials = candidates.filter(isDialCodeValue)
+  if (dials.length === 0) return byName(options)
+  for (const dial of dials) {
+    const hits = dialCodeHits(options, getText, dial, getDialAttr)
+    if (hits.length === 1) return hits[0]
+    if (hits.length > 1) return byName(hits)
+  }
+  return null
 }

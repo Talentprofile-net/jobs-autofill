@@ -275,6 +275,59 @@ describe('phone fields rendered as dropdowns', () => {
   })
 })
 
+describe('city and country as separate profile fields', () => {
+  const place = (location: string | null, city: string | null): Profile => ({ ...profile(location), city })
+  const answer = (label: string, fieldType: string, p: Profile) => {
+    const value = resolveField(label, fieldType, '', p).value
+    return value.kind === 'string' ? value.value : value.kind === 'choice' ? value.preferred : null
+  }
+
+  it('fills both the country and the city from Thailand and Bangkok', () => {
+    const p = place('Thailand', 'Bangkok')
+    expect(['Country', 'Country*', 'Country of residence'].map((label) => answer(label, 'SimpleDropdown', p))).toEqual(['Thailand', 'Thailand', 'Thailand'])
+    expect(answer('City', 'TextInput', p)).toBe('Bangkok')
+    expect(answer('Location (City)*', 'SimpleDropdown', p)).toBe('Bangkok')
+    expect(answer('Current location', 'TextInput', p)).toBe('Bangkok, Thailand')
+  })
+
+  it('fills the country and leaves the city empty when the profile has no city', () => {
+    const p = place('Thailand', null)
+    expect(answer('Country', 'SimpleDropdown', p)).toBe('Thailand')
+    expect(answer('City', 'TextInput', p)).toBeNull()
+    expect(answer('Location (City)*', 'SimpleDropdown', p)).toBeNull()
+  })
+
+  it('fills the city and leaves the country empty when the profile has no country', () => {
+    const p = place(null, 'Bangkok')
+    expect(answer('City', 'TextInput', p)).toBe('Bangkok')
+    expect(answer('Country', 'SimpleDropdown', p)).toBeNull()
+    expect(answer('Current location', 'TextInput', p)).toBe('Bangkok')
+  })
+
+  it('does not repeat a city that a legacy location already contains', () => {
+    expect(answer('Current location', 'TextInput', place('Bangkok, Thailand', 'Bangkok'))).toBe('Bangkok, Thailand')
+  })
+})
+
+describe('country dropdowns next to a phone number', () => {
+  const thai = (phoneNumber: string): Profile => ({ ...profile('Thailand'), user: { email: 'audit.tester@example.invalid', phoneNumber } })
+
+  it('offers the profile country without a dial code when the phone is in national format', () => {
+    const value = resolveField('Country*', 'SimpleDropdown', '', thai('0995503642')).value
+    expect(value.kind === 'choice' && value.preferred).toBe('Thailand')
+    expect(value.kind === 'choice' && value.fallbacks.some((fallback) => fallback.startsWith('+'))).toBe(false)
+  })
+
+  it('adds the explicit phone dial code after the country names', () => {
+    const value = resolveField('Country*', 'SimpleDropdown', '', thai('+44 20 7946 0000')).value
+    expect(value.kind === 'choice' && [value.preferred, value.fallbacks.at(-1)]).toEqual(['Thailand', '+44'])
+  })
+
+  it('never answers the city from a country-only profile', () => {
+    expect(resolveField('Location (City)*', 'SimpleDropdown', '', thai('0995503642')).value).toEqual({ kind: 'unsupported' })
+  })
+})
+
 describe('file fields and self-assessment questions', () => {
   it('never resolves a profile text value for a file upload question', () => {
     for (const type of ['FileUpload', 'SingleFileUpload', 'MultiFileUpload']) {

@@ -5,7 +5,7 @@ import { getReactProps } from '~/core/reactProps'
 import { sleep, verifySelection } from '~/core/verify'
 import { GreenhouseReactBaseInput } from './GreenhouseReactBaseInput'
 import type { ProfileValue } from '~/field/types'
-import { findUniqueOption } from '~/core/match'
+import { findDialSelectorOption, findUniqueOption, isDialCodeOptionSet, optionMatches } from '~/core/match'
 import { activateControl } from '~/core/activate'
 import { specs } from './specs'
 
@@ -133,6 +133,16 @@ export class DropdownSearchable extends GreenhouseReactBaseInput {
           let filled = false
           try {
             this.openDropdown()
+            const visible = await this.getVisibleChoices()
+            if (isDialCodeOptionSet(visible.map((choice) => choice.innerText))) {
+              const match = findDialSelectorOption(visible, (choice) => choice.innerText, candidates)
+              if (!match) return false
+              const text = match.innerText
+              activateControl(match)
+              await sleep(SELECTION_SETTLE_MS)
+              filled = optionMatches(this.currentValue(), text)
+              return filled
+            }
             for (const candidate of candidates) {
               let match = await this.findInVisible(candidate)
               if (!match) match = await this.findViaSearch(candidate)

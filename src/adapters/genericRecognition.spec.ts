@@ -601,6 +601,30 @@ describe('ATS single-choice adapters never pick one of several relaxed matches',
   }
 })
 
+describe('Greenhouse React phone country picker', () => {
+  const PHONE_COUNTRIES = ['United States +1', 'Canada +1', 'Thailand +66', 'Guernsey +44', 'Jersey +44', 'United Kingdom +44', 'Germany +49']
+  const choice = (preferred: string, fallbacks: string[]): ProfileValue => ({ fallbacks, kind: 'choice', preferred })
+
+  it('selects the profile country, follows a consistent phone dial code, and selects nothing when the phone contradicts the country', async () => {
+    const rows: Array<[ProfileValue, string | null]> = [
+      [choice('Thailand', ['TH', 'THA']), 'Thailand +66'],
+      [choice('Thailand', ['TH', 'THA', '+66']), 'Thailand +66'],
+      [choice('United Kingdom', ['GB', 'GBR', '+44']), 'United Kingdom +44'],
+      [choice('Thailand', ['TH', 'THA', '+44']), null],
+    ]
+    for (const [value, expected] of rows) {
+      const dom = mount(`<html><body>${reactSelectMarkup(true)()}</body></html>`)
+      Object.assign(dom.window, { scrollTo: () => {} })
+      xpathAsCss(REACT_SELECT_XPATHS)
+      const picks: string[] = []
+      const { field, selected } = reactSelect(ReactDropdown, true)(picks, PHONE_COUNTRIES)
+      const before = selected()
+      await field.fillFromResolved(value)
+      expect({ picks, selected: selected() }).toEqual({ picks: expected ? [expected] : [], selected: expected ?? before })
+    }
+  })
+})
+
 type Suggest = { results: string[]; delayMs?: number; sync?: boolean; revertAfterMs?: number }
 
 const leverTypeahead = (suggest: Suggest) => {

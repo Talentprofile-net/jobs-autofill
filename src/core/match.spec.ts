@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { findUniqueOption, isPlaceholderText } from './match'
+import { findDialSelectorOption, findUniqueOption, isPlaceholderText } from './match'
 
 type Option = { text: string; value: string }
 const options = (...pairs: [string, string][]): Option[] => pairs.map(([text, value]) => ({ text, value }))
@@ -32,6 +32,30 @@ describe('findUniqueOption', () => {
 
   it('does not match an empty candidate', () => {
     expect(pick(options(['', '']), '  ')).toBeNull()
+  })
+})
+
+describe('findDialSelectorOption', () => {
+  const PHONE_COUNTRIES = ['United States +1', 'Canada +1', 'Thailand +66', 'Guernsey +44', 'Jersey +44', 'United Kingdom +44', 'Germany +49', 'Georgia +995']
+  const pickDial = (candidates: string[], list = PHONE_COUNTRIES) => findDialSelectorOption(list, (text) => text, candidates)
+
+  it('selects the profile country by name when the phone carries no dial code', () => {
+    expect(pickDial(['Thailand', 'TH', 'THA'])).toBe('Thailand +66')
+    expect(pickDial(['Thailand'], ['United States (+1)', 'Thailand (+66)', 'Germany (+49)'])).toBe('Thailand (+66)')
+  })
+
+  it('follows the phone dial code and uses the country only to choose among countries sharing it', () => {
+    expect(pickDial(['Thailand', 'TH', '+66'])).toBe('Thailand +66')
+    expect(pickDial(['United Kingdom', 'GB', '+44'])).toBe('United Kingdom +44')
+    expect(pickDial(['United States', 'US', '+1'])).toBe('United States +1')
+  })
+
+  it('refuses a country that contradicts the phone dial code, an ambiguous code alone, and a full phone number', () => {
+    expect(pickDial(['Thailand', 'TH', '+44'])).toBeNull()
+    expect(pickDial(['+44'])).toBeNull()
+    expect(pickDial(['+1'])).toBeNull()
+    expect(pickDial(['+15555550123'])).toBeNull()
+    expect(pickDial(['Atlantis'])).toBeNull()
   })
 })
 

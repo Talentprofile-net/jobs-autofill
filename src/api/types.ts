@@ -57,6 +57,7 @@ export type Profile = {
   jobTitle: string | null
   description: string | null
   location: string | null
+  city?: string | null
   totalExperience: string | null
   hourlyRate: string | null
   monthlyRate: string | null

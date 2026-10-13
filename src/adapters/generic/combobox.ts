@@ -1,6 +1,6 @@
 import fieldFillerQueue from '~/core/asyncQueue'
 import { waitForElement } from '~/core/getElements'
-import { findUniqueDialCodeOption, findUniqueOption, isDialCodeOptionSet, isDialCodeValue, optionMatchesRelaxed, optionMatches } from '~/core/match'
+import { findDialSelectorOption, findUniqueDialCodeOption, findUniqueOption, isDialCodeOptionSet, isDialCodeValue, optionMatchesRelaxed, optionMatches } from '~/core/match'
 import { UnsupportedFillError } from '~/field/unsupportedFill'
 import { setNativeInputValue } from '~/core/reactProps'
 import { createKeyboardEvent } from '~/core/events'
@@ -256,6 +256,21 @@ export class GenericCombobox extends GenericBaseField {
     let dialCodeMismatch = false
     const done = await fieldFillerQueue.enqueue(async () => {
       try {
+        if (candidates.some((candidate) => this.isMatched(candidate))) return true
+        const initial = await this.openMenu()
+        const initialOptions = initial ? await waitForOptions(initial, OPTION_WAIT_MS) : []
+        if (isDialCodeListbox(initialOptions)) {
+          const match = findDialSelectorOption(initialOptions, (o) => o.innerText ?? '', candidates, (o) => o.getAttribute('data-dial-code'))
+          if (!match) {
+            dialCodeMismatch = true
+            return false
+          }
+          const text = match.innerText ?? ''
+          activateControl(match)
+          await sleep(SELECTION_SETTLE_MS)
+          selected = optionMatches(this.currentValue(), text)
+          return selected
+        }
         for (const candidate of candidates) {
           if (this.isMatched(candidate)) return true
 

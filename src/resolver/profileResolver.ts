@@ -231,14 +231,24 @@ const regionToValue = (
   return choice(parsed.region, [])
 }
 
+const profileCity = (profile: Profile): string => profile.city?.trim() ?? ''
+
+const fullLocation = (profile: Profile): string => {
+  const city = profileCity(profile)
+  const location = profile.location?.trim() ?? ''
+  if (!city) return location
+  if (!location) return city
+  return location.toLowerCase().includes(city.toLowerCase()) ? location : `${city}, ${location}`
+}
+
 const rawLocationToValue = (
   profile: Profile,
   fieldType: string,
 ): ProfileValue => {
-  const raw = profile.location ?? ''
+  const raw = fullLocation(profile)
   if (!raw) return { kind: 'unsupported' }
   if (TEXT_FIELD_TYPES.has(fieldType)) return str(raw)
-  const country = countryToValue(parseLocation(raw), fieldType)
+  const country = countryToValue(parseLocation(profile.location), fieldType)
   if (country.kind !== 'choice') return choice(raw, [])
   const fallbacks = [country.preferred, ...country.fallbacks].filter((v) => v !== raw)
   return choice(raw, fallbacks)
@@ -251,14 +261,20 @@ const resolveCountryGeneric = (
   const raw = profile.location ?? ''
   if (!raw) return { kind: 'unsupported' }
   const parsed = parseLocation(raw)
-  if (parsed?.country) return countryToValue(parsed, fieldType)
-  return { kind: 'unsupported' }
+  if (!parsed?.country) return { kind: 'unsupported' }
+  const value = countryToValue(parsed, fieldType)
+  const dialCode = explicitDialCode(profilePhone(profile))
+  return value.kind === 'choice' && dialCode ? choice(value.preferred, [...value.fallbacks, dialCode]) : value
 }
 
 const resolveCityGeneric = (
   profile: Profile,
   fieldType: string,
-): ProfileValue => cityToValue(parseLocation(profile.location), fieldType)
+): ProfileValue => {
+  const city = profileCity(profile)
+  if (!city) return cityToValue(parseLocation(profile.location), fieldType)
+  return TEXT_FIELD_TYPES.has(fieldType) ? str(city) : choice(city, [])
+}
 
 const resolveRegionGeneric = (
   profile: Profile,

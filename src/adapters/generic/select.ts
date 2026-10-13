@@ -1,5 +1,5 @@
 import fieldFillerQueue from '~/core/asyncQueue'
-import { findUniqueDialCodeOption, findUniqueOption, isDialCodeOptionSet, isDialCodeValue, isPlaceholderText } from '~/core/match'
+import { findDialSelectorOption, findUniqueOption, isDialCodeOptionSet, isPlaceholderText } from '~/core/match'
 import { UnsupportedFillError } from '~/field/unsupportedFill'
 import { holdsFor } from '~/core/verify'
 
@@ -36,18 +36,13 @@ export class GenericSelect extends GenericBaseField {
     if (value.kind !== 'choice') return false
     const select = this.selectElement
     const dialCodes = isDialCodeOptionSet(Array.from(select.options).map((o) => o.text))
-    const candidates = [value.preferred, ...value.fallbacks].filter((c) => !dialCodes || isDialCodeValue(c))
+    const candidates = [value.preferred, ...value.fallbacks]
     const options = Array.from(select.options).filter(
       (o) => !o.disabled && !(o.value === '' && isPlaceholderText(o.text)),
     )
-    const option =
-      candidates
-        .map((candidate) =>
-          dialCodes
-            ? findUniqueDialCodeOption(options, (o) => o.text, candidate)
-            : findUniqueOption(options, (o) => o.text, candidate, (o) => o.value),
-        )
-        .find((o) => o !== null) ?? null
+    const option = dialCodes
+      ? findDialSelectorOption(options, (o) => o.text, candidates)
+      : candidates.map((candidate) => findUniqueOption(options, (o) => o.text, candidate, (o) => o.value)).find((o) => o !== null) ?? null
     if (!option) throw new UnsupportedFillError('no unique safe option')
     const selected = await fieldFillerQueue.enqueue(async () => {
       if (select.selectedIndex === option.index && select.value === option.value) return true
