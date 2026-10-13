@@ -625,6 +625,48 @@ describe('Greenhouse React phone country picker', () => {
   })
 })
 
+describe('Greenhouse React form for a profile with a country and no city', () => {
+  const THAILAND_NO_CITY: Profile = {
+    city: null,
+    description: null,
+    education: null,
+    experience: null,
+    hourlyRate: null,
+    id: 'audit-profile',
+    isAvailableForHire: null,
+    isInterestedInRelocation: null,
+    jobTitle: null,
+    languages: null,
+    links: null,
+    location: 'Thailand',
+    monthlyRate: null,
+    profileName: 'Audit Tester',
+    rateCurrency: null,
+    skills: null,
+    talentAnswers: null,
+    talentNotes: null,
+    totalExperience: null,
+    user: { email: 'audit.tester@example.invalid', phoneNumber: '0995503642' },
+  }
+
+  const fillWith = async (Ctor: new (el: HTMLElement) => Fillable, flyout: boolean, label: string, options: string[]) => {
+    const dom = mount(`<html><body>${reactSelectMarkup(flyout)().replace('Location (City)', label)}</body></html>`)
+    Object.assign(dom.window, { scrollTo: () => {} })
+    xpathAsCss(REACT_SELECT_XPATHS)
+    const picks: string[] = []
+    const { field, selected } = reactSelect(Ctor, flyout)(picks, options)
+    const outcome = await field.fillFromResolved(resolveField(label, 'SimpleDropdown', '', THAILAND_NO_CITY).value)
+    return { outcome, picks, selected: selected() }
+  }
+
+  it('selects Thailand in the phone Country picker and leaves Location (City) empty', async () => {
+    const country = await fillWith(ReactDropdown, true, 'Country*', ['United States +1', 'Canada +1', 'Thailand +66', 'United Kingdom +44', 'Jersey +44', 'Germany +49'])
+    expect({ picks: country.picks, selected: country.selected }).toEqual({ picks: ['Thailand +66'], selected: 'Thailand +66' })
+    const city = await fillWith(ReactAddress, false, 'Location (City)*', ['Bangkok, Thailand', 'Chiang Mai, Thailand'])
+    expect(city).toEqual({ outcome: { status: 'unsupported' }, picks: [], selected: '' })
+  })
+})
+
 type Suggest = { results: string[]; delayMs?: number; sync?: boolean; revertAfterMs?: number }
 
 const leverTypeahead = (suggest: Suggest) => {
