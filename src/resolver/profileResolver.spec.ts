@@ -286,7 +286,8 @@ describe('city and country as separate profile fields', () => {
     const p = place('Thailand', 'Bangkok')
     expect(['Country', 'Country*', 'Country of residence'].map((label) => answer(label, 'SimpleDropdown', p))).toEqual(['Thailand', 'Thailand', 'Thailand'])
     expect(answer('City', 'TextInput', p)).toBe('Bangkok')
-    expect(answer('Location (City)*', 'SimpleDropdown', p)).toBe('Bangkok')
+    expect(answer('Location (City)*', 'SimpleDropdown', p)).toBe('Bangkok, Thailand')
+    expect(resolveField('Location (City)*', 'SimpleDropdown', '', p).value).toEqual({ fallbacks: [], kind: 'choice', preferred: 'Bangkok, Thailand' })
     expect(answer('Current location', 'TextInput', p)).toBe('Bangkok, Thailand')
   })
 
@@ -300,6 +301,7 @@ describe('city and country as separate profile fields', () => {
   it('fills the city and leaves the country empty when the profile has no country', () => {
     const p = place(null, 'Bangkok')
     expect(answer('City', 'TextInput', p)).toBe('Bangkok')
+    expect(answer('Location (City)*', 'SimpleDropdown', p)).toBe('Bangkok')
     expect(answer('Country', 'SimpleDropdown', p)).toBeNull()
     expect(answer('Current location', 'TextInput', p)).toBe('Bangkok')
   })

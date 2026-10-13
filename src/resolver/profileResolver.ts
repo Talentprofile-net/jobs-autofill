@@ -12,6 +12,19 @@ import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { isNamePronunciationQuestion } from './namePronunciation'
 import { isAuthorizationQuestion } from './countryScopedAnswers'
 import { combineNameWording, isRefusedSection, isSensitiveTopic, isThirdPartyQuestion } from './questionTopics'
+import {
+  defaultResolveContext,
+  desiredCompensationAnswer,
+  inferredCity,
+  isDesiredCompensationQuestion,
+  isRecentEmployerQuestion,
+  isReferralSourceQuestion,
+  minimumAgeAnswer,
+  recentEmployerAnswer,
+  referralSourceAnswer,
+  type DerivedAnswer,
+  type ResolveContext,
+} from './derivedAnswers'
 
 const TEXT_FIELD_TYPES = new Set(['TextInput', 'ContentEditable'])
 const FILE_FIELD_TYPES = new Set(['FileUpload', 'SingleFileUpload', 'MultiFileUpload'])
@@ -231,7 +244,7 @@ const regionToValue = (
   return choice(parsed.region, [])
 }
 
-const profileCity = (profile: Profile): string => profile.city?.trim() ?? ''
+const profileCity = (profile: Profile): string => profile.city?.trim() || inferredCity(profile) || ''
 
 const fullLocation = (profile: Profile): string => {
   const city = profileCity(profile)
@@ -273,7 +286,9 @@ const resolveCityGeneric = (
 ): ProfileValue => {
   const city = profileCity(profile)
   if (!city) return cityToValue(parseLocation(profile.location), fieldType)
-  return TEXT_FIELD_TYPES.has(fieldType) ? str(city) : choice(city, [])
+  if (TEXT_FIELD_TYPES.has(fieldType)) return str(city)
+  const country = parseLocation(profile.location)?.country?.englishName
+  return choice(country ? `${city}, ${country}` : city, [])
 }
 
 const resolveRegionGeneric = (
@@ -327,12 +342,21 @@ const skillsOrLanguagesValue = (
   return multiChoice(names, [])
 }
 
+const fromDerived = (answer: DerivedAnswer | null): ResolveResult =>
+  answer ? withField(answer.value, answer.profileField) : withField({ kind: 'unsupported' }, null)
+
 const resolveGeneric = (
   question: string,
   fieldType: string,
   profile: Profile,
+  context: ResolveContext,
 ): ResolveResult | null => {
+  if (isReferralSourceQuestion(question)) return fromDerived(referralSourceAnswer(fieldType))
+  if (isDesiredCompensationQuestion(question)) return fromDerived(desiredCompensationAnswer(question, fieldType, profile))
+  if (isRecentEmployerQuestion(question)) return fromDerived(recentEmployerAnswer(fieldType, profile))
   if (isThirdPartyQuestion(question) || isSensitiveTopic(question)) return withField({ kind: 'unsupported' }, null)
+  const minimumAge = minimumAgeAnswer(question, fieldType, profile, context)
+  if (minimumAge) return fromDerived(minimumAge)
   const fieldName = combineNameWording(question)
   if (re.firstName.test(fieldName)) {
     const first = splitName(profile.profileName).first
@@ -546,6 +570,7 @@ export const resolveField = (
   fieldType: string,
   section: string,
   profile: Profile,
+  context: ResolveContext = defaultResolveContext(),
 ): ResolveResult => {
   const trimmed = (fieldName ?? '').trim()
   if (!trimmed || isAlternateIdentityQuestion(trimmed) || isNamePronunciationQuestion(trimmed)) return unsupported()
@@ -571,7 +596,7 @@ export const resolveField = (
     return finalizeResult(expResult)
   }
 
-  const generic = resolveGeneric(trimmed, fieldType, profile)
+  const generic = resolveGeneric(trimmed, fieldType, profile, context)
   if (generic) return finalizeResult(generic)
 
   return unsupported()

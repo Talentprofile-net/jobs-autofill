@@ -30,17 +30,10 @@ const findFirstFieldRow = (container: HTMLElement): HTMLElement | null => {
     isVisible(el),
   )
   if (candidates.length === 0) return null
-  const first = candidates[0]
-  let node: Node = first
-  let depth = 0
-  while (node !== container && depth < 6) {
-    const parent = composedParent(node)
-    if (!parent) break
-    if (parent === container) return node instanceof HTMLElement ? node : first
-    node = parent
-    depth++
+  for (let node: Node = candidates[0], parent = composedParent(node); parent; node = parent, parent = composedParent(node)) {
+    if (parent === container) return node instanceof HTMLElement ? node : null
   }
-  return first.getRootNode() === document ? first : null
+  return null
 }
 
 const countVisibleFields = (container: HTMLElement): number => {

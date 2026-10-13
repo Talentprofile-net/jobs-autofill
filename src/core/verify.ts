@@ -15,11 +15,28 @@ export const verifyTextValue = async (
 ): Promise<boolean> => {
   await sleep(settleMs)
   if (input.value === target) return true
+  if (samePhoneNumber(input.value, target)) return true
   if (!NUMERIC.test(input.value) || !NUMERIC.test(target)) return false
   return Number(input.value) === Number(target)
 }
 
 const NUMERIC = /^\s*[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?\s*$/i
+
+const PHONE_TEXT = /^\+?[\d\s().-]+$/
+const MIN_PHONE_DIGITS = 7
+
+const digitsOf = (text: string): string => text.replace(/\D/g, '')
+
+const samePhoneNumber = (shown: string, wanted: string): boolean => {
+  if (!PHONE_TEXT.test(shown.trim()) || !PHONE_TEXT.test(wanted.trim())) return false
+  const got = digitsOf(shown)
+  const want = digitsOf(wanted)
+  if (got.length < MIN_PHONE_DIGITS) return false
+  if (got === want) return true
+  if (want.startsWith('0') && got === want.slice(1)) return true
+  const dialPrefix = want.length - got.length
+  return wanted.trim().startsWith('+') && dialPrefix >= 1 && dialPrefix <= 3 && want.endsWith(got)
+}
 
 export const writeVerifiedText = async (
   input: HTMLInputElement | HTMLTextAreaElement,

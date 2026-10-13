@@ -11,6 +11,8 @@ import { specs } from './specs'
 
 const MENU_WAIT_TIMEOUT_MS = 500
 const SELECTION_SETTLE_MS = 150
+const OPTIONS_WAIT_TIMEOUT_MS = 4000
+const OPTIONS_POLL_MS = 150
 
 export class AddressSearchable extends GreenhouseReactBaseInput {
   static XPATH = specs.addressSearchable.xpath
@@ -83,10 +85,15 @@ export class AddressSearchable extends GreenhouseReactBaseInput {
   }
 
   private async findMenuOption(candidate: string): Promise<HTMLElement | null> {
-    const dd = await this.waitForMenu()
-    if (!dd) return null
-    const options = getElements(dd, `.//div[starts-with(@class, "select__option")]`)
-    return findUniqueOption(options, (o) => o.innerText, candidate)
+    const deadline = Date.now() + OPTIONS_WAIT_TIMEOUT_MS
+    for (;;) {
+      const dd = await this.waitForMenu()
+      const options = dd ? getElements(dd, `.//div[starts-with(@class, "select__option")]`) : []
+      if (options.length > 0 || Date.now() >= deadline) {
+        return findUniqueOption(options, (o) => o.innerText, candidate)
+      }
+      await sleep(OPTIONS_POLL_MS)
+    }
   }
 
   private async searchAndFind(candidate: string): Promise<HTMLElement | null> {

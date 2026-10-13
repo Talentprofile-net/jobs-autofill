@@ -2339,6 +2339,14 @@ export default defineBackground(() => {
     }
   };
 
+  const handleSameDocumentNavigation = (tabId: number, frameId: number): void => {
+    if (frameId === 0) {
+      purgeFrameAutoModeForTab(tabId);
+    } else {
+      purgeFrameAutoModeForFrame(tabId, frameId);
+    }
+  };
+
   // The orphan rule, stated explicitly because it is a judgement call.
   //
   // A staged batch is committed when its own tab commits a TOP-LEVEL navigation
@@ -2383,7 +2391,7 @@ export default defineBackground(() => {
 
   if (browser.webNavigation?.onHistoryStateUpdated) {
     browser.webNavigation.onHistoryStateUpdated.addListener((details) => {
-      handleFrameDisposal(details.tabId, details.frameId);
+      handleSameDocumentNavigation(details.tabId, details.frameId);
       void followApplicationNavigation(applicationContextStorage, details);
     });
   }

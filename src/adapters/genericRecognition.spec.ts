@@ -1118,6 +1118,34 @@ describe('dial-code selectors and site-provided dial prefixes', () => {
     expect(input.value).toBe('+1')
   })
 
+  it('verifies a phone the page reformats, drops the national 0 from, or shows without its dial code', async () => {
+    mount('<html><body><form><label for="ph">Phone</label><input id="ph" type="tel"></form></body></html>')
+    const input = document.querySelector<HTMLInputElement>('#ph')!
+    const rows: [string, string, boolean][] = [
+      ['99 550 3642', '0995503642', true],
+      ['99 550 3642', '+66 99 550 3642', true],
+      ['(099) 550-3642', '0995503642', true],
+      ['12 345', '0995503642', false],
+      ['99 550 3643', '0995503642', false],
+      ['5 550 3642', '0995503642', false],
+    ]
+    for (const [shown, wanted, verified] of rows) {
+      input.value = shown
+      expect([shown, wanted, await verifyTextValue(input, wanted, 0)]).toEqual([shown, wanted, verified])
+    }
+  })
+
+  it('keeps a national phone number that a Workable-style widget reformats after the dial-code selector', async () => {
+    mount('<html><body><form><label for="ph">Phone</label><input id="ph" type="tel"></form></body></html>')
+    const input = document.querySelector<HTMLInputElement>('#ph')!
+    input.addEventListener('input', () => {
+      const digits = input.value.replace(/\D/g, '').replace(/^0/, '')
+      input.value = `${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5)}`
+    })
+    const outcome = await new GenericTextInput(input).fillFromResolved({ confidence: 'exact', kind: 'string', value: '0995503642' })
+    expect({ outcome, value: input.value }).toEqual({ outcome: { status: 'filled' }, value: '99 550 3642' })
+  })
+
   it('does not verify a text value that kept only the numeric dial prefix', async () => {
     mount('<html><body><form><label for="ph">Phone</label><input id="ph" type="tel"></form></body></html>')
     const input = document.querySelector<HTMLInputElement>('#ph')!
@@ -1272,6 +1300,70 @@ describe('Ashby id-less location combobox next to the email field', () => {
     expect(email).not.toBe(combo)
     expect(email.fieldName).toBe('Email')
     expect([standard(email), standard(combo)]).toEqual(['email', null])
+  })
+})
+
+describe('Ashby type-to-search location combobox', () => {
+  const searchable = (results: string[], delayMs: number) => {
+    mount(ASHBY_LOCATION)
+    const input = document.querySelector<HTMLInputElement>('[role="combobox"]')!
+    let timer: ReturnType<typeof setTimeout> | null = null
+    input.addEventListener('input', () => {
+      if (timer) clearTimeout(timer)
+      document.getElementById('loc-list')?.remove()
+      if (!input.value) return
+      timer = setTimeout(() => {
+        const list = document.createElement('div')
+        list.id = 'loc-list'
+        list.setAttribute('role', 'listbox')
+        for (const text of results) {
+          const option = document.createElement('div')
+          option.setAttribute('role', 'option')
+          option.textContent = text
+          option.addEventListener('click', () => {
+            input.value = text
+            input.setAttribute('aria-expanded', 'false')
+            list.remove()
+          })
+          list.appendChild(option)
+        }
+        document.body.appendChild(list)
+        setRect(list, { height: 120, width: 300, x: 100, y: 130 })
+        for (const option of Array.from(list.children)) setRect(option, { height: 20, width: 300, x: 100, y: 130 })
+        input.setAttribute('aria-controls', 'loc-list')
+        input.setAttribute('aria-expanded', 'true')
+      }, delayMs)
+    })
+    RegisterInputs(document)
+    xpathAsCss({ './/*[@role="option"]': '[role="option"]' })
+    return { field: fieldFor(input)!, input }
+  }
+
+  it('types into a combobox that shows no list until typing, waits for slow results and picks the first of identical exact options', async () => {
+    const { field, input } = searchable(['Bangkok, Thailand', 'Bangkok, Thailand', 'Isan, Thailand', 'Highland Park, Michigan, United States'], 900)
+    expect(await field.fillFromResolved({ fallbacks: [], kind: 'choice', preferred: 'Bangkok, Thailand' })).toEqual({ status: 'filled' })
+    expect(input.value).toBe('Bangkok, Thailand')
+  })
+
+  it('picks nothing when only regions of the country come back', async () => {
+    const { field, input } = searchable(['Isan, Thailand', 'Northern Thailand, Thailand', 'Southern Thailand, Thailand'], 100)
+    const outcome = await field.fillFromResolved({ fallbacks: [], kind: 'choice', preferred: 'Thailand' })
+    expect(outcome.status).not.toBe('filled')
+    expect(input.value).toBe('')
+  })
+
+  it('gives up within one shared wait and leaves the box empty when the search never answers', async () => {
+    const { field, input } = searchable([], 60_000)
+    const started = Date.now()
+    const outcome = await field.fillFromResolved({ fallbacks: ['Thailand', 'TH', 'THA'], kind: 'choice', preferred: 'Bangkok, Thailand' })
+    expect([outcome.status === 'filled', input.value, Date.now() - started < 4900]).toEqual([false, '', true])
+  })
+
+  it('still refuses two different relaxed matches', async () => {
+    const { field, input } = searchable(['Bangkok, Central Java, Indonesia', 'Bangkok, West Sumatra, Indonesia'], 100)
+    const outcome = await field.fillFromResolved({ fallbacks: [], kind: 'choice', preferred: 'Bangkok' })
+    expect(outcome.status).not.toBe('filled')
+    expect(input.value).toBe('')
   })
 })
 

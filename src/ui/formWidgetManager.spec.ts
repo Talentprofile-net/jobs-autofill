@@ -3,13 +3,13 @@ import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { installDom, setRect, shimXPath } from '~/core/__fixtures__/domGlobals'
 import { querySelectorAllDeep } from '~/core/shadowDom'
 
-type Mounted = { container: HTMLElement; destroyed: boolean }
+type Mounted = { anchorRow: HTMLElement; container: HTMLElement; destroyed: boolean }
 const mounts: Mounted[] = []
 
 mock.module('./picker/iconMount', () => ({ mountPickerIcon: () => null }))
 mock.module('./formWidgetMount', () => ({
-  mountFormFillButton: ({ container }: { container: HTMLElement }) => {
-    const entry: Mounted = { container, destroyed: false }
+  mountFormFillButton: ({ anchorRow, container }: { anchorRow: HTMLElement; container: HTMLElement }) => {
+    const entry: Mounted = { anchorRow, container, destroyed: false }
     mounts.push(entry)
     return { destroy: () => (entry.destroyed = true) }
   },
@@ -125,5 +125,25 @@ describe('fill widget for minimal applications without <form>', () => {
     setFormWidgetMode('notesOnly')
     refreshFormWidgets()
     expect(live()).toHaveLength(0)
+  })
+})
+
+describe('fill widget placement', () => {
+  afterEach(() => {
+    destroyAllFormWidgets()
+    clearFields()
+    mounts.length = 0
+  })
+
+  it('anchors above the first section of a deeply nested form, never inside the first input', () => {
+    const nested = (id: string, label: string) =>
+      `<div class="fields"><label class="row"><div class="title">${label}</div><div class="control"><div class="box"><input id="${id}" type="text"></div></div></label></div>`
+    mount(
+      `<form id="application"><div id="intro">Required fields</div><section id="personal"><h2>Personal information</h2><div class="section-fields">${nested('first', 'First name')}${nested('last', 'Last name')}${nested('email', 'Email')}</div></section></form>`,
+    )
+    discover()
+    setFormWidgetMode('application')
+    refreshFormWidgets()
+    expect(live().map((m) => [m.container.id, m.anchorRow.id])).toEqual([['application', 'personal']])
   })
 })

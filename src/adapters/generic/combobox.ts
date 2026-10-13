@@ -14,6 +14,7 @@ import { activateControl } from '~/core/activate'
 const OPEN_SETTLE_MS = 150
 const LISTBOX_WAIT_MS = 600
 const OPTION_WAIT_MS = 600
+const SEARCH_RESULTS_WAIT_MS = 3000
 const SELECTION_SETTLE_MS = 150
 const OBSERVER_SCOPE_MAX_DEPTH = 8
 
@@ -171,6 +172,16 @@ const findInternalInput = (combobox: HTMLElement): HTMLInputElement | null => {
 }
 
 
+const isSearchOnly = (combobox: HTMLElement): boolean => {
+  const input = findInternalInput(combobox)
+  return input !== null && !input.readOnly && !input.disabled
+}
+
+const pickSearchResult = (options: HTMLElement[], candidate: string): HTMLElement | null =>
+  findUniqueOption(options, (o) => o.innerText, candidate) ??
+  options.find((o) => optionMatches(o.innerText ?? '', candidate)) ??
+  null
+
 const isDialCodeListbox = (options: HTMLElement[]): boolean =>
   isDialCodeOptionSet(
     options.map((o) => o.innerText ?? o.textContent ?? ''),
@@ -271,19 +282,25 @@ export class GenericCombobox extends GenericBaseField {
           selected = optionMatches(this.currentValue(), text)
           return selected
         }
+        const searchDeadline = Date.now() + SEARCH_RESULTS_WAIT_MS
+        let searched = false
         for (const candidate of candidates) {
           if (this.isMatched(candidate)) return true
+          if (searched && Date.now() >= searchDeadline) break
 
           const initialListbox = await this.openMenu()
-          if (!initialListbox) continue
+          const searchOnly = !initialListbox && isSearchOnly(this.element)
+          if (!initialListbox && !searchOnly) continue
+          searched = searched || searchOnly
 
           await this.typeIntoCombobox(candidate)
 
           const liveListbox =
-            (await waitForListboxByRelation(this.element, LISTBOX_WAIT_MS)) ??
+            (await waitForListboxByRelation(this.element, searchOnly ? Math.max(searchDeadline - Date.now(), 0) : LISTBOX_WAIT_MS)) ??
             initialListbox
+          if (!liveListbox) continue
 
-          const options = await waitForOptions(liveListbox, OPTION_WAIT_MS)
+          const options = await waitForOptions(liveListbox, searchOnly ? Math.max(searchDeadline - Date.now(), OPTION_WAIT_MS) : OPTION_WAIT_MS)
           if (options.length === 0) continue
           const dialCodes = isDialCodeListbox(options)
           if (dialCodes && !isDialCodeValue(candidate)) {
@@ -293,7 +310,9 @@ export class GenericCombobox extends GenericBaseField {
 
           const match = dialCodes
             ? findUniqueDialCodeOption(options, (o) => o.innerText ?? '', candidate, (o) => o.getAttribute('data-dial-code'))
-            : findUniqueOption(options, (o) => o.innerText, candidate)
+            : searchOnly
+              ? pickSearchResult(options, candidate)
+              : findUniqueOption(options, (o) => o.innerText, candidate)
           if (!match) continue
 
           activateControl(match)
