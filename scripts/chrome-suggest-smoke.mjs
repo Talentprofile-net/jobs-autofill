@@ -284,8 +284,8 @@ const PHONE_REGISTRY = `(() => {
 })()`
 
 const SEARCHABLE_ROWS = {
-  'address-ambiguous': { expected: null, label: 'City', location: 'Berlin, Germany', offered: 'Berlin', options: ['Berlin, NH, United States', 'Berlin, CT, United States'], toggle: false },
-  'address-unique': { expected: 'Berlin, Germany', label: 'City', location: 'Berlin, Germany', offered: 'Berlin', options: ['Berlin, Germany', 'Hamburg, Germany'], toggle: false },
+  'address-ambiguous': { expected: null, label: 'City', location: 'Berlin, Germany', offered: 'Berlin, Germany', options: ['Berlin, Germany', 'Berlin, Germany'], toggle: false },
+  'address-unique': { expected: 'Berlin, Germany', label: 'City', location: 'Berlin, Germany', offered: 'Berlin, Germany', options: ['Berlin, Germany', 'Hamburg, Germany'], toggle: false },
   'dropdown-ambiguous': { expected: null, label: 'Country of residence', location: 'Example City, Germany', offered: 'Germany', options: ['Germany, North', 'Germany, South', 'France'], toggle: true },
   'dropdown-unique': { expected: 'Germany', label: 'Country of residence', location: 'Example City, Germany', offered: 'Germany', options: ['France', 'Germany', 'Spain'], toggle: true },
 }

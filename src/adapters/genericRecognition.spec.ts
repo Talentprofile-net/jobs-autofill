@@ -1449,3 +1449,33 @@ describe('content-owned field descriptions over the recognized fixture forms', (
     }
   })
 })
+
+describe('date answers in single text inputs', () => {
+  const START = { day: '01', kind: 'date' as const, month: '11', year: '2026' }
+  const fillDate = async (markup: string) => {
+    mount(`<html><body><form>${markup}</form></body></html>`)
+    const input = document.querySelector<HTMLInputElement>('#start')!
+    const outcome = await new GenericTextInput(input).fillFromResolved(START)
+    return { outcome, value: input.value }
+  }
+
+  it('writes the react-datepicker default month/day/year format', async () => {
+    expect(await fillDate('<label for="start">When is the soonest you could start?</label><div class="react-datepicker__input-container"><input id="start" type="text" placeholder="Pick date..."></div>')).toEqual({ outcome: { status: 'filled' }, value: '11/01/2026' })
+  })
+
+  it('follows a day/month/year placeholder and an ISO date input', async () => {
+    expect(await fillDate('<label for="start">Start date</label><input id="start" type="text" placeholder="DD/MM/YYYY">')).toEqual({ outcome: { status: 'filled' }, value: '01/11/2026' })
+    expect(await fillDate('<label for="start">Start date</label><input id="start" type="text" placeholder="yyyy-mm-dd">')).toEqual({ outcome: { status: 'filled' }, value: '2026-11-01' })
+  })
+
+  it('writes an unambiguous long date when the input gives no format', async () => {
+    expect(await fillDate('<label for="start">When can you start?</label><input id="start" type="text">')).toEqual({ outcome: { status: 'filled' }, value: 'November 1, 2026' })
+  })
+
+  it('does not write a date without a day into a text input', async () => {
+    mount('<html><body><form><label for="start">Start</label><input id="start" type="text"></form></body></html>')
+    const input = document.querySelector<HTMLInputElement>('#start')!
+    const outcome = await new GenericTextInput(input).fillFromResolved({ kind: 'date', month: '11', year: '2026' })
+    expect([outcome.status, input.value]).toEqual(['unsupported', ''])
+  })
+})

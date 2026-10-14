@@ -6,6 +6,7 @@ import {
   unregisterFieldFromCapture,
 } from '~/capture/captureBuffer'
 import { isPlaceholderText } from '~/core/match'
+import { dateTextFor } from '~/core/dateText'
 import type { PickerMode, ProfileValue, FillOutcome } from './types'
 import { mountPickerIcon, type WidgetPlacement } from '~/ui/picker/iconMount'
 import { isAttached } from '~/core/shadowDom'
@@ -295,10 +296,17 @@ export abstract class BaseField {
 
   abstract fill(value: ProfileValue): Promise<boolean>
 
+  private asFieldValue(value: ProfileValue): ProfileValue {
+    if (value.kind !== 'date' || this.fieldType !== 'TextInput') return value
+    const text = dateTextFor(this.element, value)
+    return text ? { confidence: 'exact', kind: 'string', value: text } : { kind: 'unsupported' }
+  }
+
   async fillFromResolved(
-    value: ProfileValue,
+    resolved: ProfileValue,
     force = false,
   ): Promise<FillOutcome> {
+    const value = this.asFieldValue(resolved)
     if (this.fillBusy) {
       return { status: 'skipped', reason: 'busy' }
     }

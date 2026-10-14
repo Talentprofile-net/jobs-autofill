@@ -44,8 +44,13 @@ describe('stored profile entries', () => {
     expect([entry?.company, entry?.startDate, entry?.endDate, entry?.isCurrent]).toEqual(['Northwind', '2020-01', null, true])
   })
 
-  it('lets the age rule read the stored education start date', () => {
-    const value = resolveField('Are you 25 years of age or older?', 'RadioGroup', '', normalizeProfile(stored), { now: new Date('2026-10-14T00:00:00Z') }).value
-    expect(value).toEqual({ fallbacks: ['True'], kind: 'choice', preferred: 'Yes' })
+  it('passes the application-detail fields through unchanged', () => {
+    const profile = normalizeProfile({ ...stored, availableFrom: '2026-11-01', noticePeriodDays: 30, postalCode: '10110' })
+    expect([profile.availableFrom, profile.noticePeriodDays, profile.postalCode]).toEqual(['2026-11-01', 30, '10110'])
+  })
+
+  it('leaves age questions unanswered even with stored education dates', () => {
+    const value = resolveField('Are you 25 years of age or older?', 'RadioGroup', '', normalizeProfile(stored), { now: new Date('2026-10-14T00:00:00Z'), referredByTalentProfile: false }).value
+    expect(value).toEqual({ kind: 'unsupported' })
   })
 })

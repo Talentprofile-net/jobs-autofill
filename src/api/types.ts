@@ -58,6 +58,12 @@ export type Profile = {
   description: string | null
   location: string | null
   city?: string | null
+  region?: string | null
+  postalCode?: string | null
+  addressLine1?: string | null
+  addressLine2?: string | null
+  availableFrom?: string | null
+  noticePeriodDays?: number | null
   totalExperience: string | null
   hourlyRate: string | null
   monthlyRate: string | null

@@ -8,6 +8,7 @@ import { parseLocation, type ParsedLocation } from './parseLocation'
 import { parseDate, type ParsedDate } from './parseDate'
 import { parseSection, type ParsedSection } from './sectionParser'
 import { findProfileLink, profileEmail, profilePhone, websiteLink } from './profileContacts'
+import { postalCodeFromAddress } from './postalCode'
 import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { isNamePronunciationQuestion } from './namePronunciation'
 import { isAuthorizationQuestion } from './countryScopedAnswers'
@@ -15,13 +16,15 @@ import { combineNameWording, isRefusedSection, isSensitiveTopic, isThirdPartyQue
 import {
   defaultResolveContext,
   desiredCompensationAnswer,
-  inferredCity,
   isDesiredCompensationQuestion,
+  isNoticePeriodQuestion,
   isRecentEmployerQuestion,
   isReferralSourceQuestion,
-  minimumAgeAnswer,
+  isStartDateQuestion,
+  noticePeriodAnswer,
   recentEmployerAnswer,
   referralSourceAnswer,
+  startDateAnswer,
   type DerivedAnswer,
   type ResolveContext,
 } from './derivedAnswers'
@@ -157,6 +160,8 @@ const re = {
   postalCode: /\b(zip|postal)\s*code\b/i,
   location: /\b(location|where.*based|current.*residence)\b/i,
   streetAddress: /\baddress\b/i,
+  addressLine1: /\b(address\s*line\s*1|line\s*1|street)\b/i,
+  addressLine2: /\b(address\s*line\s*2|line\s*2|apartment|apt|suite|unit)\b/i,
   locationExclusions: /\b(code|prefix|dialing|line\s*\d|street|apt|apartment|suite)\b/i,
   relocate: /\brelocat(e|ion)\b/i,
   relocateTarget: /\b(relocat\w*|move|moving)\s+(to|in|within|near)\b|\bbased in\b/i,
@@ -244,7 +249,8 @@ const regionToValue = (
   return choice(parsed.region, [])
 }
 
-const profileCity = (profile: Profile): string => profile.city?.trim() || inferredCity(profile) || ''
+const profileCity = (profile: Profile): string =>
+  profile.city?.trim() || cityFromParsed(parseLocation(profile.location)) || ''
 
 const fullLocation = (profile: Profile): string => {
   const city = profileCity(profile)
@@ -285,7 +291,7 @@ const resolveCityGeneric = (
   fieldType: string,
 ): ProfileValue => {
   const city = profileCity(profile)
-  if (!city) return cityToValue(parseLocation(profile.location), fieldType)
+  if (!city) return { kind: 'unsupported' }
   if (TEXT_FIELD_TYPES.has(fieldType)) return str(city)
   const country = parseLocation(profile.location)?.country?.englishName
   return choice(country ? `${city}, ${country}` : city, [])
@@ -294,7 +300,32 @@ const resolveCityGeneric = (
 const resolveRegionGeneric = (
   profile: Profile,
   fieldType: string,
-): ProfileValue => regionToValue(parseLocation(profile.location), fieldType)
+): ProfileValue => {
+  const region = profile.region?.trim()
+  if (!region) return regionToValue(parseLocation(profile.location), fieldType)
+  return TEXT_FIELD_TYPES.has(fieldType) ? str(region) : choice(region, [])
+}
+
+const textOrChoice = (value: string, fieldType: string): ProfileValue =>
+  TEXT_FIELD_TYPES.has(fieldType) ? str(value) : choice(value, [])
+
+const resolveAddressGeneric = (fieldName: string, fieldType: string, profile: Profile): ResolveResult => {
+  const line1 = profile.addressLine1?.trim() ?? ''
+  const line2 = profile.addressLine2?.trim() ?? ''
+  const explicitPostal = profile.postalCode?.trim() ?? ''
+  if (re.postalCode.test(fieldName)) {
+    const postal = explicitPostal || postalCodeFromAddress(profile) || ''
+    return postal ? withField(textOrChoice(postal, fieldType), 'postalCode') : withField({ kind: 'unsupported' }, null)
+  }
+  if (!TEXT_FIELD_TYPES.has(fieldType)) return withField({ kind: 'unsupported' }, null)
+  if (re.addressLine2.test(fieldName)) return withField(str(line2), 'addressLine2')
+  if (re.addressLine1.test(fieldName)) return withField(str(line1), 'addressLine1')
+  if (!line1) return withField({ kind: 'unsupported' }, null)
+  const country = parseLocation(profile.location)?.country?.englishName ?? profile.location?.trim() ?? ''
+  const regionPostal = [profile.region?.trim() ?? '', explicitPostal].filter(Boolean).join(' ')
+  const full = [line1, line2, profileCity(profile), regionPostal, country].filter(Boolean).join(', ')
+  return withField(str(full), 'addressLine1')
+}
 
 const resolveEntryLocationField = (
   fieldName: string,
@@ -351,12 +382,12 @@ const resolveGeneric = (
   profile: Profile,
   context: ResolveContext,
 ): ResolveResult | null => {
-  if (isReferralSourceQuestion(question)) return fromDerived(referralSourceAnswer(fieldType))
+  if (isReferralSourceQuestion(question)) return fromDerived(referralSourceAnswer(fieldType, context))
   if (isDesiredCompensationQuestion(question)) return fromDerived(desiredCompensationAnswer(question, fieldType, profile))
   if (isRecentEmployerQuestion(question)) return fromDerived(recentEmployerAnswer(fieldType, profile))
   if (isThirdPartyQuestion(question) || isSensitiveTopic(question)) return withField({ kind: 'unsupported' }, null)
-  const minimumAge = minimumAgeAnswer(question, fieldType, profile, context)
-  if (minimumAge) return fromDerived(minimumAge)
+  if (isNoticePeriodQuestion(question)) return fromDerived(noticePeriodAnswer(fieldType, profile))
+  if (isStartDateQuestion(question)) return fromDerived(startDateAnswer(fieldType, profile, context))
   const fieldName = combineNameWording(question)
   if (re.firstName.test(fieldName)) {
     const first = splitName(profile.profileName).first
@@ -415,7 +446,7 @@ const resolveGeneric = (
     return withField({ kind: 'unsupported' }, null)
   }
   if (isStreetAddressField(fieldName)) {
-    return withField({ kind: 'unsupported' }, null)
+    return resolveAddressGeneric(fieldName, fieldType, profile)
   }
   if (isCountryField(fieldName)) {
     return withField(resolveCountryGeneric(profile, fieldType), 'location')

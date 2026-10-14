@@ -28,65 +28,49 @@ const profile = (overrides: Partial<Profile> = {}): Profile => ({
   ...overrides,
 })
 
-const resolve = (question: string, fieldType: string, p: Profile = profile()) =>
-  resolveField(question, fieldType, '', p, { now: NOW })
+const referred = { now: NOW, referredByTalentProfile: true }
+const direct = { now: NOW, referredByTalentProfile: false }
+const resolve = (question: string, fieldType: string, p: Profile = profile(), context = direct) =>
+  resolveField(question, fieldType, '', p, context)
 
 describe('how did you hear about this opportunity', () => {
-  it('answers TalentProfile in a text field', () => {
-    expect(resolve('How did you hear about this opportunity?', 'TextInput')).toEqual({
+  it('answers TalentProfile in a text field when the tab came from a TalentProfile apply handoff', () => {
+    expect(resolve('How did you hear about this opportunity?', 'TextInput', profile(), referred)).toEqual({
       profileField: 'applicationSource',
       value: { confidence: 'exact', kind: 'string', value: 'TalentProfile' },
     })
   })
 
   it('offers TalentProfile with job-board fallbacks for dropdowns and multi-select lists', () => {
-    expect(resolve('How did you hear about us?', 'SimpleDropdown').value).toEqual({
+    expect(resolve('How did you hear about us?', 'SimpleDropdown', profile(), referred).value).toEqual({
       fallbacks: ['TalentProfile.net', 'Talent Profile', 'Job board', 'Job Board', 'Job boards', 'Online job board'],
       kind: 'choice',
       preferred: 'TalentProfile',
     })
-    expect(resolve('How did you hear about this opportunity? (select all that apply)', 'MultiCheckbox').value.kind).toBe('multiChoice')
-    expect(resolve('How did you hear about this opportunity?', 'MultiSearchableDropdown').value.kind).toBe('multiChoice')
+    expect(resolve('How did you hear about this opportunity? (select all that apply)', 'MultiCheckbox', profile(), referred).value.kind).toBe('multiChoice')
+    expect(resolve('How did you hear about this opportunity?', 'MultiSearchableDropdown', profile(), referred).value.kind).toBe('multiChoice')
   })
 
   it('answers even when the wording names the company or a referral', () => {
-    expect(resolve('How did you hear about our company? (e.g. referral, LinkedIn)', 'TextInput').value).toEqual({ confidence: 'exact', kind: 'string', value: 'TalentProfile' })
+    expect(resolve('How did you hear about our company? (e.g. referral, LinkedIn)', 'TextInput', profile(), referred).value).toEqual({ confidence: 'exact', kind: 'string', value: 'TalentProfile' })
+  })
+
+  it('leaves the question alone without a verified TalentProfile handoff', () => {
+    expect(resolve('How did you hear about this opportunity?', 'TextInput').value).toEqual({ kind: 'unsupported' })
   })
 
   it('does not treat a referrer name question as a source question', () => {
-    expect(resolve('Who referred you?', 'TextInput').value).toEqual({ kind: 'unsupported' })
+    expect(resolve('Who referred you?', 'TextInput', profile(), referred).value).toEqual({ kind: 'unsupported' })
   })
 })
 
-describe('minimum age questions', () => {
-  it('answers Yes when the earliest dated entry proves the age', () => {
-    expect(resolve('Are you 25 years of age or older?', 'RadioGroup')).toEqual({
-      profileField: 'experience.startDate',
-      value: { fallbacks: ['True'], kind: 'choice', preferred: 'Yes' },
-    })
-    expect(resolve('Are you at least 18 years old?', 'SimpleDropdown').value).toEqual({ fallbacks: ['True'], kind: 'choice', preferred: 'Yes' })
-    expect(resolve('Are you over the age of 21?', 'SingleCheckbox').value).toEqual({ kind: 'boolean', value: true })
-  })
-
-  it('never answers when the dates cannot prove the age', () => {
-    const recent = profile({ education: null, experience: [{ company: 'Northwind', description: null, employmentType: null, endDate: null, id: 'e', isCurrent: true, location: null, startDate: '2020-01', title: 'Engineer' }] })
-    expect(resolve('Are you 25 years of age or older?', 'RadioGroup', recent).value).toEqual({ kind: 'unsupported' })
-    expect(resolve('Are you 25 years of age or older?', 'RadioGroup', profile({ education: null })).value).toEqual({ kind: 'unsupported' })
-  })
-
-  it('refuses negated, compound, hour and experience thresholds', () => {
-    for (const question of [
-      'Are you under 18 years of age?',
-      'Are you at least 18 years of age and authorized to work in the US?',
-      'Can you work 40+ hours per week?',
-      'Do you have at least 10 years of experience?',
-    ]) {
-      expect([question, resolve(question, 'RadioGroup').value]).toEqual([question, { kind: 'unsupported' }])
+describe('age questions', () => {
+  it('abstains without an explicit birth date, whatever the education and job dates say', () => {
+    for (const question of ['Are you 25 years of age or older?', 'Are you at least 18 years old?']) {
+      for (const fieldType of ['RadioGroup', 'SimpleDropdown', 'SingleCheckbox']) {
+        expect([question, fieldType, resolve(question, fieldType).value]).toEqual([question, fieldType, { kind: 'unsupported' }])
+      }
     }
-  })
-
-  it('does not answer a free-text age field', () => {
-    expect(resolve('Are you 25 years of age or older?', 'TextInput').value).toEqual({ kind: 'unsupported' })
   })
 })
 
@@ -145,26 +129,120 @@ describe('most recent employer', () => {
   })
 })
 
-describe('city inferred from the latest job', () => {
-  const job = (location: string | null, startDate: string) => ({ company: 'Co', description: null, employmentType: null, endDate: null, id: startDate, isCurrent: false, location, startDate, title: 'Engineer' })
+describe('start date and notice period', () => {
+  const asked = 'When is the soonest you could start?'
 
-  it('uses the city of the latest job when its country matches the profile country', () => {
-    const p = profile({ city: null, experience: [job('London, UK', '2021-01'), job('Bangkok, Thailand', '2022-10-31')] })
-    expect(resolve('City', 'TextInput', p).value).toEqual({ confidence: 'exact', kind: 'string', value: 'Bangkok' })
-    expect(resolve('Location (City)*', 'SimpleDropdown', p).value).toEqual({ fallbacks: [], kind: 'choice', preferred: 'Bangkok, Thailand' })
-    const location = resolve('Location', 'SimpleDropdown', p).value
-    expect(location.kind === 'choice' && location.preferred).toBe('Bangkok, Thailand')
+  it('answers the available-from date when it is in the future', () => {
+    expect(resolve(asked, 'TextInput', profile({ availableFrom: '2026-11-01' }))).toEqual({ profileField: 'availableFrom', value: { day: '01', kind: 'date', month: '11', year: '2026' } })
   })
 
-  it('keeps the profile city when it is set', () => {
-    const p = profile({ city: 'Chiang Mai', experience: [job('Bangkok, Thailand', '2022-10-31')] })
-    expect(resolve('City', 'TextInput', p).value).toEqual({ confidence: 'exact', kind: 'string', value: 'Chiang Mai' })
+  it('answers today when the available-from date has passed', () => {
+    expect(resolve('Earliest start date', 'MonthDayYear', profile({ availableFrom: '2026-01-15' })).value).toEqual({ day: '13', kind: 'date', month: '10', year: '2026' })
   })
 
-  it('infers nothing when the latest job is in another country or has no city', () => {
-    for (const location of ['London, UK', 'Thailand', null]) {
-      const p = profile({ city: null, experience: [job(location, '2022-10-31')] })
-      expect([location, resolve('City', 'TextInput', p).value]).toEqual([location, { kind: 'unsupported' }])
-    }
+  it('adds the notice period to today when no available-from date is set', () => {
+    expect(resolve(asked, 'TextInput', profile({ noticePeriodDays: 30 }))).toEqual({ profileField: 'noticePeriodDays', value: { day: '12', kind: 'date', month: '11', year: '2026' } })
+  })
+
+  it('abstains without either fact', () => {
+    expect(resolve(asked, 'TextInput').value).toEqual({ kind: 'unsupported' })
+  })
+
+  it('words the notice period for text and choice fields', () => {
+    expect(resolve('What is your notice period?', 'TextInput', profile({ noticePeriodDays: 14 })).value).toEqual({ confidence: 'exact', kind: 'string', value: '2 weeks' })
+    expect(resolve('Notice period', 'SimpleDropdown', profile({ noticePeriodDays: 30 })).value).toEqual({ fallbacks: ['30 days'], kind: 'choice', preferred: '1 month' })
+    expect(resolve('Notice period', 'SimpleDropdown', profile({ noticePeriodDays: 0 })).value).toEqual({ fallbacks: ['Immediate', 'Immediately available', 'None', '0 days'], kind: 'choice', preferred: 'Immediately' })
+    expect(resolve('Notice period', 'TextInput').value).toEqual({ kind: 'unsupported' })
+  })
+
+  it('answers a start-date dropdown with the notice period wording', () => {
+    expect(resolve('When can you start?', 'SimpleDropdown', profile({ noticePeriodDays: 14 })).value).toEqual({ fallbacks: ['14 days'], kind: 'choice', preferred: '2 weeks' })
+  })
+
+  it('leaves employment-section start dates to the experience entries', () => {
+    const p = profile({ availableFrom: '2026-11-01', experience: [{ company: 'Northwind', description: null, employmentType: null, endDate: null, id: 'e', isCurrent: true, location: null, startDate: '2020-01-15', title: 'Engineer' }] })
+    expect(resolveField('Start date', 'MonthDayYear', 'Employment 1', p, direct).value).toEqual({ day: '15', kind: 'date', month: '01', year: '2020' })
+  })
+})
+
+describe('address, region and postal code', () => {
+  const home = profile({ addressLine1: '99 Sukhumvit Road', addressLine2: 'Unit 12', city: 'Bangkok', postalCode: '10110', region: 'Bangkok' })
+
+  it('fills explicit address parts, region and postal code', () => {
+    expect(resolve('Address line 1', 'TextInput', home).value).toEqual({ confidence: 'exact', kind: 'string', value: '99 Sukhumvit Road' })
+    expect(resolve('Street address', 'TextInput', home).value).toEqual({ confidence: 'exact', kind: 'string', value: '99 Sukhumvit Road' })
+    expect(resolve('Address line 2 (apartment, suite, unit)', 'TextInput', home).value).toEqual({ confidence: 'exact', kind: 'string', value: 'Unit 12' })
+    expect(resolve("What's your postal code?", 'TextInput', home)).toEqual({ profileField: 'postalCode', value: { confidence: 'exact', kind: 'string', value: '10110' } })
+    expect(resolve('What is the zip code of your primary residence?', 'TextInput', home).value).toEqual({ confidence: 'exact', kind: 'string', value: '10110' })
+    expect(resolve('State / Province', 'TextInput', home).value).toEqual({ confidence: 'exact', kind: 'string', value: 'Bangkok' })
+  })
+
+  it('composes a single address field from the explicit parts', () => {
+    expect(resolve('Address', 'TextInput', home).value).toEqual({ confidence: 'exact', kind: 'string', value: '99 Sukhumvit Road, Unit 12, Bangkok, Bangkok 10110, Thailand' })
+  })
+
+  it('abstains on address and postal code without explicit values', () => {
+    expect(resolve('Address', 'TextInput').value).toEqual({ kind: 'unsupported' })
+    expect(resolve('Zip code', 'TextInput', profile({ city: 'Bangkok' })).value).toEqual({ kind: 'unsupported' })
+  })
+
+  it('never infers the city from the latest job', () => {
+    const p = profile({ city: null, experience: [{ company: 'Co', description: null, employmentType: null, endDate: null, id: 'e', isCurrent: false, location: 'Bangkok, Thailand', startDate: '2022-10-31', title: 'Engineer' }] })
+    expect(resolve('City', 'TextInput', p).value).toEqual({ kind: 'unsupported' })
+  })
+
+  it('still reads the city from a legacy combined location', () => {
+    const legacy = profile({ city: null, location: 'Bangkok, Thailand' })
+    expect(resolve('City', 'TextInput', legacy).value).toEqual({ confidence: 'exact', kind: 'string', value: 'Bangkok' })
+    expect(resolve('Location (City)*', 'SimpleDropdown', legacy).value).toEqual({ fallbacks: [], kind: 'choice', preferred: 'Bangkok, Thailand' })
+    expect(resolve('Address', 'TextInput', profile({ addressLine1: '99 Sukhumvit Road', city: null, location: 'Bangkok, Thailand' })).value).toEqual({ confidence: 'exact', kind: 'string', value: '99 Sukhumvit Road, Bangkok, Thailand' })
+  })
+})
+
+describe('postal code from an explicit address', () => {
+  const postal = (overrides: Partial<Profile>) => resolve('Postal code', 'TextInput', profile(overrides)).value
+
+  it('takes the one postal code written in the address lines for the profile country', () => {
+    expect(postal({ addressLine1: '99 Sukhumvit Road', addressLine2: 'Khlong Toei 10110' })).toEqual({ confidence: 'exact', kind: 'string', value: '10110' })
+  })
+
+  it('prefers the explicit postal code', () => {
+    expect(postal({ addressLine2: 'Khlong Toei 10110', postalCode: '10120' })).toEqual({ confidence: 'exact', kind: 'string', value: '10120' })
+  })
+
+  it('ignores a leading house number and refuses two different candidates', () => {
+    expect(postal({ addressLine1: '10110 Sukhumvit Road' })).toEqual({ kind: 'unsupported' })
+    expect(postal({ addressLine1: '1 Road', addressLine2: '10110 or 10120' })).toEqual({ kind: 'unsupported' })
+  })
+
+  it('never derives a postal code from the country or city alone', () => {
+    expect(postal({ city: 'Bangkok' })).toEqual({ kind: 'unsupported' })
+    expect(postal({ addressLine2: 'Khlong Toei 10110', location: null })).toEqual({ kind: 'unsupported' })
+  })
+})
+
+describe('phone number stored in E.164 form', () => {
+  const thai = profile({ phoneNumber: '+66995503642' })
+
+  it('writes the international format into a text field', () => {
+    expect(resolve('Phone', 'TextInput', thai).value).toEqual({ confidence: 'exact', kind: 'string', value: '+66 99 550 3642' })
+  })
+
+  it('offers the stored dial code to a country selector', () => {
+    const country = resolve('Country', 'SimpleDropdown', thai).value
+    expect(country.kind === 'choice' && country.fallbacks.at(-1)).toBe('+66')
+  })
+
+  it('combines a legacy national number with the explicit profile country', () => {
+    expect(resolve('Phone', 'TextInput', profile({ phoneNumber: '0995554433' })).value).toEqual({ confidence: 'exact', kind: 'string', value: '+66 99 555 4433' })
+  })
+
+  it('keeps a legacy national number unchanged without a profile country', () => {
+    expect(resolve('Phone', 'TextInput', profile({ location: null, phoneNumber: '0995554433' })).value).toEqual({ confidence: 'exact', kind: 'string', value: '0995554433' })
+  })
+
+  it('never takes the phone country from a job location', () => {
+    const p = profile({ experience: [{ company: 'Co', description: null, employmentType: null, endDate: null, id: 'e', isCurrent: true, location: 'Bangkok, Thailand', startDate: '2022-01', title: 'Engineer' }], location: null, phoneNumber: '0995554433' })
+    expect(resolve('Phone', 'TextInput', p).value).toEqual({ confidence: 'exact', kind: 'string', value: '0995554433' })
   })
 })

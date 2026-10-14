@@ -44,6 +44,7 @@ import {
   type ConnectAttempt,
 } from "~/auth/connectAttempt";
 import { resolveField } from "~/resolver/profileResolver";
+import type { ResolveContext } from "~/resolver/derivedAnswers";
 import { profileEmail } from "~/resolver/profileContacts";
 import { calculateProfileScore } from "~/resolver/profileScore";
 import {
@@ -84,6 +85,7 @@ import { browser } from "wxt/browser";
 import {
   clearApplicationContextForTab,
   followApplicationNavigation,
+  isTalentProfileReferralTab,
   readApplicationContextForTab,
   registerApplicationHandoff,
   registerOpenedApplicationTab,
@@ -801,6 +803,15 @@ export default defineBackground(() => {
   };
   const stageStore = createStageStore(sessionStorage);
   const applicationContextStorage = sessionStorage;
+
+  const resolveContextForTab = async (
+    tabId: number | undefined,
+  ): Promise<ResolveContext> => ({
+    now: new Date(),
+    referredByTalentProfile:
+      typeof tabId === "number" &&
+      (await isTalentProfileReferralTab(applicationContextStorage, tabId)),
+  });
 
   const stageDeps = (): StageDeps => ({
     commit: (stage) => commitStage(stage),
@@ -1907,6 +1918,7 @@ export default defineBackground(() => {
             message.fieldType,
             message.section,
             profile,
+            await resolveContextForTab(sender.tab?.id),
           );
           return { ok: true, data: result };
         } catch (e) {
@@ -1925,6 +1937,7 @@ export default defineBackground(() => {
         }
         try {
           const profile = await getProfile(false);
+          const context = await resolveContextForTab(sender.tab?.id);
           const cv = message.fields.some(isCvFileRequest)
             ? await getOwnCvValue(profile).catch(() => null)
             : null;
@@ -1937,7 +1950,7 @@ export default defineBackground(() => {
                 }
               : {
                   requestId: f.requestId,
-                  ...resolveField(f.fieldName, f.fieldType, f.section, profile),
+                  ...resolveField(f.fieldName, f.fieldType, f.section, profile, context),
                 },
           );
           return { ok: true, data: out };

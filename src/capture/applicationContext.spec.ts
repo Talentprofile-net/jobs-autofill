@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   clearApplicationContextForTab,
   followApplicationNavigation,
+  isTalentProfileReferralTab,
   readApplicationContextForTab,
   readJobCountryForTab,
   registerApplicationHandoff,
@@ -255,5 +256,28 @@ describe('application context after navigation', () => {
 
   it('reports _unknown for a tab that was never handed off', async () => {
     expect(await readJobCountryForTab(storage(), 20)).toBe('_unknown')
+  })
+
+  it('keeps the TalentProfile source across same-origin navigation and drops it on another origin or tab close', async () => {
+    const area = storage()
+    await registerApplicationHandoff(area, 10, 'application-1', 'https://jobs.ats.example/acme/1', 100)
+    await registerOpenedApplicationTab(area, 10, 20, 'https://jobs.ats.example/acme/1', 101)
+    await followApplicationNavigation(area, { frameId: 0, tabId: 20, url: 'https://jobs.ats.example/acme/1/application' })
+    expect([await readApplicationContextForTab(area, 20), await isTalentProfileReferralTab(area, 20)]).toEqual([null, true])
+    await followApplicationNavigation(area, { frameId: 1, tabId: 20, url: 'https://elsewhere.example/' })
+    expect(await isTalentProfileReferralTab(area, 20)).toBe(true)
+    await followApplicationNavigation(area, { frameId: 0, tabId: 20, url: 'https://elsewhere.example/' })
+    expect(await isTalentProfileReferralTab(area, 20)).toBe(false)
+
+    await registerApplicationHandoff(area, 11, 'application-2', 'https://jobs.ats.example/acme/2', 200)
+    await registerOpenedApplicationTab(area, 11, 21, 'https://jobs.ats.example/acme/2', 201)
+    await clearApplicationContextForTab(area, 21)
+    expect(await isTalentProfileReferralTab(area, 21)).toBe(false)
+  })
+
+  it('marks no source on a tab that was not opened from a handoff', async () => {
+    const area = storage()
+    await registerOpenedApplicationTab(area, 10, 20, 'https://jobs.ats.example/acme/1', 100)
+    expect(await isTalentProfileReferralTab(area, 20)).toBe(false)
   })
 })

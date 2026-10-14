@@ -314,10 +314,15 @@ describe('city and country as separate profile fields', () => {
 describe('country dropdowns next to a phone number', () => {
   const thai = (phoneNumber: string): Profile => ({ ...profile('Thailand'), user: { email: 'audit.tester@example.invalid', phoneNumber } })
 
-  it('offers the profile country without a dial code when the phone is in national format', () => {
+  it('combines a national phone with the profile country into the dial code', () => {
     const value = resolveField('Country*', 'SimpleDropdown', '', thai('0995503642')).value
-    expect(value.kind === 'choice' && value.preferred).toBe('Thailand')
-    expect(value.kind === 'choice' && value.fallbacks.some((fallback) => fallback.startsWith('+'))).toBe(false)
+    expect(value.kind === 'choice' && [value.preferred, value.fallbacks.at(-1)]).toEqual(['Thailand', '+66'])
+    expect(resolveField('Phone', 'TextInput', '', thai('0995503642')).value).toEqual({ confidence: 'exact', kind: 'string', value: '+66 99 550 3642' })
+  })
+
+  it('keeps a national phone without a dial code when the profile has no country', () => {
+    const p = { ...thai('0995503642'), location: null }
+    expect(resolveField('Phone', 'TextInput', '', p).value).toEqual({ confidence: 'exact', kind: 'string', value: '0995503642' })
   })
 
   it('adds the explicit phone dial code after the country names', () => {

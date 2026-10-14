@@ -29,6 +29,15 @@ const handoffKey = (openerTabId: number) =>
 const pendingTabKey = (openerTabId: number) =>
   `tp.applicationContext.pendingTab.${openerTabId}`
 const tabKey = (tabId: number) => `tp.applicationContext.tab.${tabId}`
+const sourceKey = (tabId: number) => `tp.applicationContext.source.${tabId}`
+
+const originOf = (value: string): string | null => {
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
+}
 
 const normalizedDestination = (value: string): string | null => {
   try {
@@ -89,7 +98,10 @@ const bind = async (
     destinationUrl,
     jobCountry: normalizeJobCountry(handoff.jobCountry),
   }
-  await storage.set({ [tabKey(pendingTab.tabId)]: context })
+  await storage.set({
+    [sourceKey(pendingTab.tabId)]: { origin: originOf(destinationUrl) },
+    [tabKey(pendingTab.tabId)]: context,
+  })
   await storage.remove([handoffKey(openerTabId), pendingTabKey(openerTabId)])
 }
 
@@ -154,11 +166,18 @@ export const readJobCountryForTab = async (
   tabId: number,
 ): Promise<string> => normalizeJobCountry((await readBound(storage, tabId))?.jobCountry)
 
+export const isTalentProfileReferralTab = async (
+  storage: ApplicationContextStorage,
+  tabId: number,
+): Promise<boolean> => (await read<{ origin: string | null }>(storage, sourceKey(tabId)))?.origin != null
+
 export const followApplicationNavigation = async (
   storage: ApplicationContextStorage,
   navigation: TopFrameNavigation,
 ): Promise<void> => {
   if (navigation.frameId !== 0) return
+  const source = await read<{ origin: string | null }>(storage, sourceKey(navigation.tabId))
+  if (source && source.origin !== originOf(navigation.url)) await storage.remove(sourceKey(navigation.tabId))
   const key = tabKey(navigation.tabId)
   const value = (await storage.get(key))[key]
   if (value === undefined) return
@@ -169,4 +188,4 @@ export const followApplicationNavigation = async (
 export const clearApplicationContextForTab = (
   storage: ApplicationContextStorage,
   tabId: number,
-): Promise<void> => storage.remove(tabKey(tabId))
+): Promise<void> => storage.remove([tabKey(tabId), sourceKey(tabId)])
