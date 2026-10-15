@@ -253,6 +253,8 @@ export type ContentToBackground =
     }
   | { kind: 'learnedAnswers.delete'; answerId: string }
   | { kind: 'classifier.suggest'; request: unknown }
+  | { kind: 'coverLetter.available' }
+  | { kind: 'coverLetter.draft'; question: string }
   | { kind: 'auth.status' }
   | { kind: 'auth.openConnectPage' }
   | { kind: 'auth.openDashboard' }

@@ -10,6 +10,7 @@ import {
 } from '~/resolver/learnedAnswerMatcher'
 import type { AbstentionReason, AnswerKind, ClassifierInput, Decision } from './contract'
 import { answersForJob } from '~/resolver/countryScopedAnswers'
+import { answersForApplication } from '~/resolver/coverLetter'
 import { isAlternateIdentityQuestion } from '~/resolver/alternateIdentity'
 import { isNamePronunciationQuestion } from '~/resolver/namePronunciation'
 import { isRefusedQuestion, isStandardField, type StandardField } from '~/resolver/standardField'
@@ -174,10 +175,15 @@ export const suggestAnswer = async (
   allAnswers: TalentAnswer[],
   jobCountry: string,
   dependencies: SuggestionDependencies,
+  applicationId: string | null = null,
 ): Promise<Suggestion> => {
   if (isAlternateIdentityQuestion(request.questionText)) return { reason: 'alternate_identity', status: 'refused' }
   const pronunciation = isNamePronunciationQuestion(request.questionText)
-  const answers = answersForJob(allAnswers, request.questionText, jobCountry)
+  const answers = answersForApplication(
+    answersForJob(allAnswers, request.questionText, jobCountry),
+    request.questionText,
+    applicationId,
+  )
   const match = (pronunciation ? findExactLearnedAnswer : findLearnedAnswer)(request.questionText, request.fieldType, answers)
   if (match && match.method !== 'classifier') {
     const value = learnedAnswerToProfileValue(match, request.fieldType)

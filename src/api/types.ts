@@ -62,7 +62,6 @@ export type Profile = {
   postalCode?: string | null
   addressLine1?: string | null
   addressLine2?: string | null
-  availableFrom?: string | null
   noticePeriodDays?: number | null
   totalExperience: string | null
   hourlyRate: string | null

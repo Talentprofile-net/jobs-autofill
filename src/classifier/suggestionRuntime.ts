@@ -1,7 +1,7 @@
 import { browser } from 'wxt/browser'
 
 import type { Profile } from '~/api/types'
-import type { ApplicationContextStorage } from '~/capture/applicationContext'
+import { readApplicationContextForTab, type ApplicationContextStorage } from '~/capture/applicationContext'
 import { standardFieldValue } from '~/resolver/standardFieldValue'
 import { createAnswerLabels } from './answerLabels'
 import { tabJobCountry } from '~/capture/tabJobCountry'
@@ -49,6 +49,8 @@ export const browserSuggestionService = (
   createSuggestionService({
     answerLabels,
     answers: async () => (await profile())?.talentAnswers ?? [],
+    applicationId: async (tabId) =>
+      tabId === undefined ? null : readApplicationContextForTab(contextStorage, tabId),
     classify: classifyWithRuntime,
     enabled: () => readClassifierSuggestions(browser.storage.local),
     jobCountry: (tabId) => tabJobCountry(contextStorage, tabId),

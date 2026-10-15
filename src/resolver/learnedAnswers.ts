@@ -2,6 +2,7 @@ import type { Profile } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
 import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { answersForJob } from './countryScopedAnswers'
+import { answersForApplication } from './coverLetter'
 import { findExactLearnedAnswer, findLearnedAnswer, learnedAnswerToProfileValue } from './learnedAnswerMatcher'
 import { isNamePronunciationQuestion } from './namePronunciation'
 import { isRefusedSection } from './questionTopics'
@@ -23,6 +24,7 @@ export const resolveLearnedAnswersBatch = (
   requests: LearnedAnswerRequest[],
   profile: Profile,
   jobCountry: string,
+  applicationId: string | null = null,
 ): LearnedAnswerResult[] => {
   const answers = profile.talentAnswers ?? []
   if (answers.length === 0) {
@@ -38,7 +40,8 @@ export const resolveLearnedAnswersBatch = (
       return { requestId: r.requestId, value: { kind: 'unsupported' }, matchedAnswerId: null }
     }
     const find = isNamePronunciationQuestion(r.fieldName) ? findExactLearnedAnswer : findLearnedAnswer
-    const match = find(r.fieldName, r.fieldType, answersForJob(answers, r.fieldName, jobCountry))
+    const reusable = answersForApplication(answersForJob(answers, r.fieldName, jobCountry), r.fieldName, applicationId)
+    const match = find(r.fieldName, r.fieldType, reusable)
     if (!match) {
       return {
         requestId: r.requestId,

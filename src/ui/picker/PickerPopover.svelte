@@ -10,6 +10,7 @@
   import type { PickerApi } from './pickerApi'
   import type { PickerFieldContext } from './protocol'
   import type { Profile, ProfileNote } from '~/api/types'
+  import { createDraftFlow, type DraftState } from './coverLetterDraft'
   import {
     createSuggestionLoader,
     rowForField,
@@ -73,6 +74,22 @@
   const suggestionLoader = createSuggestionLoader((request) => api.suggest(request), (next) => {
     suggestion = next
   })
+  let draftAvailable = $state(false)
+  let draftState = $state<DraftState>({ status: 'idle' })
+  let draftText = $state('')
+  let draftTextarea: HTMLTextAreaElement | null = $state(null)
+  const drafting = $derived(draftState.status !== 'idle')
+  const draftFlow = createDraftFlow({
+    draft: (question) => api.draftCoverLetter(question),
+    insert: (text) => api.insert(text),
+    show: (next) => {
+      draftState = next
+      if (next.status === 'ready') {
+        draftText = next.draft
+        void tick().then(() => draftTextarea?.focus())
+      }
+    },
+  })
 
   let listSwipeGesture: DragGesture | null = null
   let swipeStartX = 0
@@ -111,6 +128,7 @@
       }
       authState = 'authenticated'
       void loadSuggestion()
+      if (context.coverLetterDraft) void loadDraftAvailability()
       await loadProfile()
     } catch (e) {
       loadError = (e as Error).message
@@ -127,6 +145,39 @@
       }),
     )
 
+  const loadDraftAvailability = async () => {
+    draftAvailable = await api.coverLetterAvailable().catch(() => false)
+  }
+
+  const startDraft = () => {
+    search = ''
+    searchVisible = false
+    void draftFlow.start(ctx.fieldName)
+  }
+
+  const cancelDraft = () => {
+    draftFlow.cancel()
+    draftText = ''
+  }
+
+  const insertDraft = async () => {
+    const result = await draftFlow.insert(draftText)
+    if (!result) return
+    draftText = ''
+    if (result.truncated && result.maxLength) {
+      showTruncationToast(result.maxLength)
+      return
+    }
+    onClose()
+  }
+
+  const handleDraftKey = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      void insertDraft()
+    }
+  }
+
   const applySuggestion = async () => {
     const row = suggestionRow
     if (!row) return
@@ -139,6 +190,7 @@
 
     return () => {
       suggestionLoader.close()
+      draftFlow.close()
       if (truncationTimer) clearTimeout(truncationTimer)
       if (flashTimer) clearTimeout(flashTimer)
       listSwipeGesture?.destroy()
@@ -227,7 +279,7 @@
   }
 
   const showTruncationToast = (maxLength: number) => {
-    truncationToast = `Note truncated to ${maxLength} characters to fit field.`
+    truncationToast = `Truncated to ${maxLength} characters to fit field.`
     if (truncationTimer) clearTimeout(truncationTimer)
     truncationTimer = setTimeout(() => {
       truncationToast = null
@@ -257,6 +309,10 @@
   }
 
   const handleBack = async () => {
+    if (drafting) {
+      cancelDraft()
+      return
+    }
     if (mode === 'compose') {
       mode = 'browse'
       composeError = null
@@ -475,6 +531,7 @@
 
   const headerTitle = $derived.by(() => {
     if (authState === 'unauthenticated') return 'TalentProfile'
+    if (drafting) return 'Cover letter'
     if (mode === 'compose') {
       return composeTarget.kind === 'edit' ? 'Edit note' : 'New note'
     }
@@ -486,6 +543,7 @@
   const showBackButton = $derived(
     authState === 'authenticated' &&
       (mode === 'compose' ||
+        drafting ||
         path.length > 0 ||
         !!search.trim() ||
         searchVisible),
@@ -514,6 +572,13 @@
         return
       }
       if (mode === 'compose') return
+      if (drafting) {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          cancelDraft()
+        }
+        return
+      }
       handleKey(e)
     }
     el.addEventListener('keydown', onKey)
@@ -633,7 +698,7 @@
       <span class="header-logo">{@html ICON_LOGO}</span>
     {/if}
     <span class="title">{headerTitle}</span>
-    {#if authState === 'authenticated' && mode === 'browse'}
+    {#if authState === 'authenticated' && mode === 'browse' && !drafting}
       <button
         class="icon-btn"
         type="button"
@@ -658,6 +723,66 @@
         onmousedown={(e) => e.preventDefault()}
         onclick={handleSignInClick}>Sign in</button
       >
+    </div>
+  {:else if mode === 'browse' && drafting}
+    <div class="compose" data-tp-draft={draftState.status}>
+      {#if draftState.status === 'loading'}
+        <div class="empty" role="status">Drafting…</div>
+        <div class="compose-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={cancelDraft}>Cancel</button
+          >
+        </div>
+      {:else if draftState.status === 'failed'}
+        <div class="compose-error" role="alert">{draftState.message}</div>
+        <div class="compose-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={cancelDraft}>Cancel</button
+          >
+          <button
+            type="button"
+            class="btn btn-primary"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={startDraft}>Try again</button
+          >
+        </div>
+      {:else if draftState.status === 'ready'}
+        <textarea
+          bind:this={draftTextarea}
+          bind:value={draftText}
+          onkeydown={handleDraftKey}
+          aria-label="Cover letter draft"
+          spellcheck="true"
+        ></textarea>
+        {#if draftState.issues.length > 0}
+          <ul class="draft-issues">
+            {#each draftState.issues as issue, i (i)}
+              <li>{issue}</li>
+            {/each}
+          </ul>
+        {/if}
+        <div class="compose-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={cancelDraft}>Cancel</button
+          >
+          <button
+            type="button"
+            class="btn btn-primary"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={insertDraft}
+            disabled={!draftText.trim()}>Insert</button
+          >
+        </div>
+      {/if}
     </div>
   {:else if mode === 'browse'}
     <div class="search-row" data-tp-shown={searchVisible ? 'true' : 'false'}>
@@ -689,6 +814,20 @@
       {:else if !tree}
         <div class="empty">Loading…</div>
       {:else}
+        {#if context.coverLetterDraft && draftAvailable && path.length === 0 && !search.trim()}
+          <button
+            type="button"
+            class="item"
+            data-tp-draft-action="true"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={startDraft}
+          >
+            <span class="item-icon">{@html ICON_PENCIL}</span>
+            <div class="item-label">
+              <span class="label-text">Draft cover letter</span>
+            </div>
+          </button>
+        {/if}
         {#if suggestionRow && path.length === 0 && !search.trim()}
           <button
             type="button"

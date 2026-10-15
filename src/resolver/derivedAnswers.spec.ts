@@ -132,19 +132,15 @@ describe('most recent employer', () => {
 describe('start date and notice period', () => {
   const asked = 'When is the soonest you could start?'
 
-  it('answers the available-from date when it is in the future', () => {
-    expect(resolve(asked, 'TextInput', profile({ availableFrom: '2026-11-01' }))).toEqual({ profileField: 'availableFrom', value: { day: '01', kind: 'date', month: '11', year: '2026' } })
-  })
-
-  it('answers today when the available-from date has passed', () => {
-    expect(resolve('Earliest start date', 'MonthDayYear', profile({ availableFrom: '2026-01-15' })).value).toEqual({ day: '13', kind: 'date', month: '10', year: '2026' })
-  })
-
-  it('adds the notice period to today when no available-from date is set', () => {
+  it('adds the notice period to today', () => {
     expect(resolve(asked, 'TextInput', profile({ noticePeriodDays: 30 }))).toEqual({ profileField: 'noticePeriodDays', value: { day: '12', kind: 'date', month: '11', year: '2026' } })
   })
 
-  it('abstains without either fact', () => {
+  it('answers today for an immediate start', () => {
+    expect(resolve('Earliest start date', 'MonthDayYear', profile({ noticePeriodDays: 0 })).value).toEqual({ day: '13', kind: 'date', month: '10', year: '2026' })
+  })
+
+  it('abstains without a notice period', () => {
     expect(resolve(asked, 'TextInput').value).toEqual({ kind: 'unsupported' })
   })
 
@@ -160,7 +156,7 @@ describe('start date and notice period', () => {
   })
 
   it('leaves employment-section start dates to the experience entries', () => {
-    const p = profile({ availableFrom: '2026-11-01', experience: [{ company: 'Northwind', description: null, employmentType: null, endDate: null, id: 'e', isCurrent: true, location: null, startDate: '2020-01-15', title: 'Engineer' }] })
+    const p = profile({ noticePeriodDays: 30, experience: [{ company: 'Northwind', description: null, employmentType: null, endDate: null, id: 'e', isCurrent: true, location: null, startDate: '2020-01-15', title: 'Engineer' }] })
     expect(resolveField('Start date', 'MonthDayYear', 'Employment 1', p, direct).value).toEqual({ day: '15', kind: 'date', month: '01', year: '2020' })
   })
 })

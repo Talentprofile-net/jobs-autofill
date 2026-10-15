@@ -11,6 +11,7 @@ export type SuggestionServiceDependencies = {
   enabled: () => Promise<boolean>
   answers: () => Promise<TalentAnswer[]>
   jobCountry: (tabId: number | undefined) => Promise<string>
+  applicationId: (tabId: number | undefined) => Promise<string | null>
   labelNames: () => Promise<Map<string, string>>
   release: () => Promise<void>
   classify: SuggestionDependencies['classify']
@@ -24,13 +25,23 @@ const suggestSafely = async (
   tabId: number | undefined,
 ): Promise<Suggestion> => {
   try {
-    const [answers, jobCountry] = await Promise.all([dependencies.answers(), dependencies.jobCountry(tabId)])
-    return await suggestAnswer(request, answers, jobCountry, {
-      answerLabels: dependencies.answerLabels,
-      classify: dependencies.classify,
-      labelName: async (labelEnumId) => (await dependencies.labelNames()).get(labelEnumId) ?? labelEnumId,
-      standardValue: dependencies.standardValue,
-    })
+    const [answers, jobCountry, applicationId] = await Promise.all([
+      dependencies.answers(),
+      dependencies.jobCountry(tabId),
+      dependencies.applicationId(tabId),
+    ])
+    return await suggestAnswer(
+      request,
+      answers,
+      jobCountry,
+      {
+        answerLabels: dependencies.answerLabels,
+        classify: dependencies.classify,
+        labelName: async (labelEnumId) => (await dependencies.labelNames()).get(labelEnumId) ?? labelEnumId,
+        standardValue: dependencies.standardValue,
+      },
+      applicationId,
+    )
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error), status: 'unavailable' }
   }

@@ -467,6 +467,46 @@ describe('persistent picker frame', () => {
   })
 })
 
+describe('cover-letter draft in the picker', () => {
+  const coverTarget = (id: string, fieldName: string, fieldType: string) => ({
+    ...fieldTarget(id),
+    descriptor: { ...descriptor(`uuid-${id}`), fieldName, fieldType },
+  })
+
+  it('offers the draft action only for a cover-letter text field', () => {
+    const cases: Array<[string, string, boolean]> = [
+      ['Cover letter', 'TextArea', true],
+      ['Motivation letter', 'TextInput', true],
+      ['Cover letter', 'FileUpload', false],
+      ['Phone', 'TextInput', false],
+    ]
+    for (const [fieldName, fieldType, offered] of cases) {
+      openPicker(coverTarget('first', fieldName, fieldType))
+      ready()
+      expect(contextOf(lastActivation())?.coverLetterDraft).toBe(offered)
+      closePicker()
+    }
+    expect(inserted).toEqual([])
+  })
+
+  it('inserts exactly the edited draft relayed by the picker and nothing on cancel', () => {
+    openPicker(coverTarget('first', 'Cover letter', 'TextArea'))
+    ready()
+    const activation = lastActivation()
+    expect(relay(activation, { type: 'dismiss' })).toEqual({ ok: true })
+    expect(inserted).toEqual([])
+    openPicker(coverTarget('first', 'Cover letter', 'TextArea'))
+    const current = lastActivation()
+    expect(relay(activation, { text: 'Stale draft', type: 'insert' })).toBeNull()
+    expect(relay(current, { text: 'Dear Acme team, edited', type: 'insert' })).toEqual({
+      data: { inserted: true, maxLength: null, truncated: false },
+      ok: true,
+    })
+    expect(inserted).toEqual(['Dear Acme team, edited'])
+    expect(fills).toEqual([])
+  })
+})
+
 describe('real picker text insertion', () => {
   it('truncates an inserted picker value to the input maxlength with the real insertion module', () => {
     const dom = installDom('<html><body><form><label for="short">Initials</label><input id="short" type="text"></form></body></html>')

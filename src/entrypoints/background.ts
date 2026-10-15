@@ -93,6 +93,9 @@ import {
   type ApplicationContextStorage,
 } from "~/capture/applicationContext";
 import { tabJobCountry, withJobCountry } from "~/capture/tabJobCountry";
+import { tabDraftSource } from "~/capture/tabDraftSource";
+import { coverLetterDraftRequest } from "~/api/coverLetter";
+import { draftFailure, requestCoverLetterDraft } from "~/api/coverLetterDraft";
 import { closeOffscreenDocument } from "~/classifier/offscreenClient";
 import {
   CLASSIFIER_SUGGESTIONS_KEY,
@@ -1655,17 +1658,31 @@ export default defineBackground(() => {
     }
   };
 
+  const isPickerSender = (sender: Browser.runtime.MessageSender): boolean =>
+    !!sender.url &&
+    new URL(sender.url).protocol === "chrome-extension:" &&
+    new URL(sender.url).pathname === PICKER_PAGE;
+
+  const pickerDraftRequest = async (
+    sender: Browser.runtime.MessageSender,
+    question: string,
+  ) => {
+    const tabId = sender.tab?.id;
+    if (!isPickerSender(sender) || typeof tabId !== "number") return null;
+    if (!(await ensureAuthenticated())) return null;
+    return coverLetterDraftRequest(
+      await tabDraftSource(applicationContextStorage, tabId),
+      question,
+    );
+  };
+
   const relayPickerAction = async (
     message: PickerRelay,
     sender: Browser.runtime.MessageSender,
   ): Promise<BackgroundResponse> => {
     const tabId = sender.tab?.id;
     const frameId = sender.frameId;
-    const fromPicker =
-      !!sender.url &&
-      new URL(sender.url).protocol === "chrome-extension:" &&
-      new URL(sender.url).pathname === PICKER_PAGE;
-    if (!fromPicker || typeof tabId !== "number" || typeof frameId !== "number") {
+    if (!isPickerSender(sender) || typeof tabId !== "number" || typeof frameId !== "number") {
       return { ok: false, error: "Invalid picker sender" };
     }
     const owner = await pickerFrameOwner(tabId, frameId);
@@ -2124,10 +2141,14 @@ export default defineBackground(() => {
           const { resolveLearnedAnswersBatch } = await import(
             "~/resolver/learnedAnswers"
           );
+          const tabId = sender?.tab?.id;
           const results = resolveLearnedAnswersBatch(
             message.fields,
             profile,
-            await tabJobCountry(applicationContextStorage, sender?.tab?.id),
+            await tabJobCountry(applicationContextStorage, tabId),
+            tabId === undefined
+              ? null
+              : await readApplicationContextForTab(applicationContextStorage, tabId),
           );
           return { ok: true, data: results };
         } catch {
@@ -2245,6 +2266,21 @@ export default defineBackground(() => {
       }
       case "picker.relay": {
         return relayPickerAction(message, sender);
+      }
+      case "coverLetter.available": {
+        return { ok: true, data: (await pickerDraftRequest(sender, "")) !== null };
+      }
+      case "coverLetter.draft": {
+        const request = await pickerDraftRequest(
+          sender,
+          typeof message.question === "string" ? message.question : "",
+        );
+        if (!request) return { ok: false, error: "draft_failed" };
+        try {
+          return { ok: true, data: await requestCoverLetterDraft(request) };
+        } catch (e) {
+          return { ok: false, error: draftFailure(e) };
+        }
       }
       case "learnedAnswers.delete": {
         if (!(await ensureAuthenticated())) {

@@ -11,6 +11,7 @@ import type { FieldDescriptor } from "~/bridge/types";
 import type { ProfileValue } from "~/field/types";
 import { readOptionLabels } from "~/capture/optionLabels";
 import { findIconDonor, readDonorAppearance } from "~/ui/donorStyle";
+import { isCoverLetterDraftField } from "./coverLetterDraft";
 import { insertIntoField } from "./insertion";
 import { readStandardField } from "./standardField";
 import {
@@ -214,6 +215,7 @@ export const openPicker = (target: PickerTarget): void => {
   const optionLabels = readOptionLabels(target.field);
   const context: PickerFieldContext = {
     ...layout,
+    coverLetterDraft: isCoverLetterDraftField(target.descriptor),
     descriptor: target.descriptor,
     kind: "field",
     optionLabels,

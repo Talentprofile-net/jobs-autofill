@@ -77,6 +77,10 @@ its own. The fill and capture paths do not call it.
   authorization, sponsorship, citizenship, visas, export control and similar),
   and none when the country is `_unknown`. Other answers are reused across
   countries.
+- Cover letters: `answersForApplication` (`resolver/coverLetter.ts`) keeps an
+  answer whose own question or the live question is a cover letter only when
+  its `talentJobApplicationId` equals the tab's bound application id. Both must
+  be set. The fill path and the picker suggestion use the same rule.
 - Runtime identity: the classifier worker hashes the bytes of every staged
   file (`model.onnx`, `tokenizer.json`, `labels.json`, `selective_policy.json`,
   `preprocessing.json`, `model-version.json`) and the runtime contract constants

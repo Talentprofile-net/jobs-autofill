@@ -12,6 +12,7 @@ import { postalCodeFromAddress } from './postalCode'
 import { isAlternateIdentityQuestion } from './alternateIdentity'
 import { isNamePronunciationQuestion } from './namePronunciation'
 import { isAuthorizationQuestion } from './countryScopedAnswers'
+import { COVER_LETTER_QUESTION } from './coverLetter'
 import { combineNameWording, isRefusedSection, isSensitiveTopic, isThirdPartyQuestion } from './questionTopics'
 import {
   defaultResolveContext,
@@ -170,7 +171,7 @@ const re = {
   availability: /\b(availab(le|ility)|open\s*to\s*work)\b/i,
   availabilityExclusions: /\b(date|start|when|day|month|year|time)\b/i,
   summaryProfile: /\b(summary|bio|about\s*you|about\s*me|about\s*yourself|self[\s-]*description)\b/i,
-  coverLetter: /\b(cover|motivation(al)?)\s*letter\b|\bletter\s+of\s+(interest|intent|motivation)\b/i,
+  coverLetter: COVER_LETTER_QUESTION,
   hourlyRate: /\bhourly\s*rate\b/i,
   monthlyRate: /\bmonthly\s*rate\b/i,
   currency: /\b(currency|preferred\s*currency)\b/i,

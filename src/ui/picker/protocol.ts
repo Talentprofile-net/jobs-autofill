@@ -8,6 +8,7 @@ export const PICKER_PAGE = '/picker.html'
 export type PickerFieldContext = {
   kind: 'field'
   descriptor: FieldDescriptor
+  coverLetterDraft: boolean
   optionLabels: string[] | null
   standardField: StandardField | null
   mobile: boolean

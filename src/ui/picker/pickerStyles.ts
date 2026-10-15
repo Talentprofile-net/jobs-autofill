@@ -388,4 +388,11 @@ html[data-tp-mobile="true"] .popover {
   color: hsl(0 72% 51%);
   font-size: 11px;
 }
+.draft-issues {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: hsl(240 3.8% 46.1%);
+}
 `

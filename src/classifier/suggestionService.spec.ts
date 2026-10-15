@@ -30,6 +30,7 @@ const recording = (enabled: boolean, over: Partial<SuggestionServiceDependencies
       called.push('answers')
       return [talentAnswer()]
     },
+    applicationId: async () => null,
     classify: async () => {
       called.push('classify')
       return { decisions: [accepted], runtimeId: 'runtime-1' }

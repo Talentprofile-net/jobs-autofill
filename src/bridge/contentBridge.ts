@@ -39,6 +39,7 @@ import { browser } from "wxt/browser";
 import { focusedFieldTarget } from "~/ui/picker/focusTarget";
 import { whenDocumentVisible } from "~/core/visibility";
 import { pageJobCountry } from "~/capture/pageJobCountry";
+import { pageJob } from "~/capture/pageJob";
 
 type Envelope<T> = {
   magic: typeof BRIDGE_MAGIC;
@@ -476,6 +477,10 @@ export const startContentBridge = (ats: AtsName): void => {
     };
     if (m.kind === "page.jobCountry") {
       sendResponse(pageJobCountry(document));
+      return undefined;
+    }
+    if (m.kind === "page.job") {
+      sendResponse(pageJob(document, location.href));
       return undefined;
     }
     if (m.kind === "picker.relay") {

@@ -1,6 +1,5 @@
 import type { Profile, ProfileExperienceEntry } from '~/api/types'
 import type { ProfileValue } from '~/field/types'
-import { parseDate } from './parseDate'
 
 export type ResolveContext = { now: Date; referredByTalentProfile: boolean }
 
@@ -132,11 +131,6 @@ const isoDay = (date: Date): string => date.toISOString().slice(0, 10)
 
 export const earliestStartDate = (profile: Profile, now: Date): string | null => {
   const today = isoDay(now)
-  const from = parseDate(profile.availableFrom)
-  if (from?.month && from.day) {
-    const available = `${from.year}-${from.month}-${from.day}`
-    return available > today ? available : today
-  }
   const days = noticeDays(profile)
   return days === null ? null : isoDay(new Date(Date.parse(today) + days * DAY_MS))
 }
@@ -148,5 +142,5 @@ export const startDateAnswer = (fieldType: string, profile: Profile, context: Re
   const start = earliestStartDate(profile, context.now)
   if (!start) return null
   const [year, month, day] = start.split('-')
-  return { profileField: profile.availableFrom ? 'availableFrom' : 'noticePeriodDays', value: { day, kind: 'date', month, year } }
+  return { profileField: 'noticePeriodDays', value: { day, kind: 'date', month, year } }
 }

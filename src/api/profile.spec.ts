@@ -45,8 +45,14 @@ describe('stored profile entries', () => {
   })
 
   it('passes the application-detail fields through unchanged', () => {
-    const profile = normalizeProfile({ ...stored, availableFrom: '2026-11-01', noticePeriodDays: 30, postalCode: '10110' })
-    expect([profile.availableFrom, profile.noticePeriodDays, profile.postalCode]).toEqual(['2026-11-01', 30, '10110'])
+    const profile = normalizeProfile({ ...stored, noticePeriodDays: 30, postalCode: '10110' })
+    expect([profile.noticePeriodDays, profile.postalCode]).toEqual([30, '10110'])
+  })
+
+  it('ignores a stale available-from date from an older profile payload', () => {
+    const legacy = { ...stored, availableFrom: '2026-01-15', noticePeriodDays: 30 }
+    const value = resolveField('When is the soonest you could start?', 'TextInput', '', normalizeProfile(legacy), { now: new Date('2026-10-14T00:00:00Z'), referredByTalentProfile: false }).value
+    expect(value).toEqual({ day: '13', kind: 'date', month: '11', year: '2026' })
   })
 
   it('leaves age questions unanswered even with stored education dates', () => {

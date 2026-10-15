@@ -5,6 +5,7 @@ import type { AuthStatus, BackgroundResponse, ContentToBackground } from '~/brid
 import type { Suggestion, SuggestionRequest } from '~/classifier/suggest'
 import { requestSuggestionRow, type SuggestionRow } from '~/classifier/suggestClient'
 import type { ProfileValue } from '~/field/types'
+import { readDraftResult, type DraftResult } from './coverLetterDraft'
 import type { InsertResult, PickerAction, PickerContextData } from './protocol'
 
 const send = async <T = unknown>(message: ContentToBackground): Promise<BackgroundResponse<T>> => {
@@ -32,6 +33,10 @@ export const createPickerApi = (hostId: string, activation: string) => {
       const res = await relay<PickerContextData>({ type: 'context' })
       return res.ok && res.data ? res.data : null
     },
+    coverLetterAvailable: async (): Promise<boolean> => {
+      const res = await send<boolean>({ kind: 'coverLetter.available' })
+      return res.ok && res.data === true
+    },
     createNote: async (content: string): Promise<{ note: ProfileNote | null; error?: string }> => {
       const res = await send<ProfileNote>({ content, kind: 'note.create' })
       return res.ok ? { note: res.data ?? null } : { error: res.error, note: null }
@@ -41,6 +46,8 @@ export const createPickerApi = (hostId: string, activation: string) => {
       return res.ok ? { deletedId: noteId } : { deletedId: null, error: res.error }
     },
     confirmFill: async (): Promise<boolean> => (await relay({ type: 'confirmFill' })).ok,
+    draftCoverLetter: async (question: string): Promise<DraftResult> =>
+      readDraftResult(await send({ kind: 'coverLetter.draft', question })),
     dismiss: (): void => {
       void relay({ type: 'dismiss' })
     },

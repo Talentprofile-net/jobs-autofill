@@ -23,6 +23,7 @@ let observing = 0
 
 const fieldContext = (fieldName: string): PickerContextData => ({
   appearance: null,
+  coverLetterDraft: false,
   descriptor: {
     fieldName,
     fieldType: 'TextInput',

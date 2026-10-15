@@ -168,6 +168,37 @@ describe('classifier suggestions', () => {
     })
   })
 
+  describe('a cover-letter answer', () => {
+    const letter = talentAnswer({
+      answerText: 'Letter for company A',
+      answerValue: { confidence: 'exact', kind: 'string', value: 'Letter for company A' },
+      fieldType: 'TextArea',
+      id: 'letter',
+      normalizedQuestion: 'cover-letter',
+      questionText: 'Cover letter',
+      talentJobApplicationId: 'app-a',
+    })
+    const why = { ...request, questionText: 'Why do you want to join us?' }
+
+    it('is matched on its own application only', async () => {
+      const same = await suggestAnswer({ ...request, questionText: 'Cover letter' }, [letter], 'US', dependencies(decision()), 'app-a')
+      const other = await suggestAnswer({ ...request, questionText: 'Cover letter' }, [letter], 'US', dependencies(decision()), 'app-b')
+
+      expect(same.status === 'matched' ? same.answer.id : same.status).toBe('letter')
+      expect(other.status).toBe('classified')
+    })
+
+    it('is never linked by the classifier on another or an unknown application', async () => {
+      for (const applicationId of ['app-b', null]) {
+        const deps = dependencies(decision(), { letter: 'label-education' })
+        const result = await suggestAnswer(why, [letter], 'US', deps, applicationId)
+
+        expect(deps.linked).toEqual([[]])
+        expect(result.status === 'classified' ? result.answer : result).toBeNull()
+      }
+    })
+  })
+
   it('classifies after slug and word overlap fail and passes the job country through', async () => {
     const deps = dependencies(decision(), { 'answer-1': 'label-education' })
     const result = await suggestAnswer(request, [talentAnswer()], 'DE', deps)
